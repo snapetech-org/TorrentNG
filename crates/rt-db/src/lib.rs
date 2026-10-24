@@ -7,6 +7,7 @@ pub mod projection_row;
 pub mod schema;
 pub mod settings_row;
 pub mod storage_row;
+pub mod swarm_switch_row;
 pub mod torrent_row;
 pub mod transfer_cutover_row;
 

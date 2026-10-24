@@ -3521,6 +3521,51 @@ pub async fn torrent_stop(
         }
     }
 }
+async fn forward_swarm_switch(
+    s: AppState,
+    hash: String,
+    action: &str,
+    body: serde_json::Value,
+) -> Response {
+    if !s.backend.capabilities().supports_swarm_switch {
+        return (StatusCode::NOT_IMPLEMENTED, Json(serde_json::json!({"error":{"message":"Swarm Switch requires a supporting TorrentNG engine"}}))).into_response();
+    }
+    if !matches!(hash.len(), 40 | 64) || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    match s.backend.swarm_switch(&hash.to_ascii_lowercase(), action, body).await {
+        Ok((code, value)) => {
+            if code < 300 && matches!(action, "public" | "restore") { emit_torrent_updated(&s, &hash).await; }
+            (StatusCode::from_u16(code).unwrap_or(StatusCode::BAD_GATEWAY), Json(value)).into_response()
+        }
+        Err(_) => (StatusCode::BAD_GATEWAY, Json(serde_json::json!({"error":{"message":"The TorrentNG engine could not complete this Swarm Switch request; refresh its status before retrying"}}))).into_response(),
+    }
+}
+
+pub async fn swarm_status(State(s): State<AppState>, Path(hash): Path<String>) -> Response {
+    forward_swarm_switch(s, hash, "status", serde_json::json!({})).await
+}
+
+pub async fn swarm_preview(
+    State(s): State<AppState>,
+    Path(hash): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    forward_swarm_switch(s, hash, "preview", body).await
+}
+
+pub async fn swarm_public(
+    State(s): State<AppState>,
+    Path(hash): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    forward_swarm_switch(s, hash, "public", body).await
+}
+
+pub async fn swarm_restore(State(s): State<AppState>, Path(hash): Path<String>) -> Response {
+    forward_swarm_switch(s, hash, "restore", serde_json::json!({})).await
+}
+
 pub async fn torrent_recheck(
     State(s): State<AppState>,
     Path(hash): Path<String>,

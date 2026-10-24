@@ -54,6 +54,8 @@ pub const MAX_REQUEST_URI_BYTES: usize = 16 * 1024;
 /// them independently from the larger multipart upload ceiling so malformed
 /// JSON cannot consume the upload budget before a handler validates fields.
 pub const MAX_JSON_BODY_BYTES: usize = 2 * 1024 * 1024;
+const MAX_SWARM_JSON_BODY_BYTES: usize = 12 * 1024 * 1024;
+static SWARM_UPLOADS: Semaphore = Semaphore::const_new(2);
 
 /// Form login carries only credentials. Keep it far below the global body
 /// limit so unauthenticated clients cannot force a large allocation in the
@@ -150,6 +152,10 @@ pub fn build_router(state: AppState) -> Router {
             post(handlers::torrent_start),
         )
         .route("/api/v1/torrents/{hash}/stop", post(handlers::torrent_stop))
+        .route("/api/v1/torrents/{hash}/swarm-switch", get(handlers::swarm_status))
+        .route("/api/v1/torrents/{hash}/swarm-switch/preview", post(handlers::swarm_preview).layer(DefaultBodyLimit::max(12 * 1024 * 1024)))
+        .route("/api/v1/torrents/{hash}/swarm-switch/public", post(handlers::swarm_public).layer(DefaultBodyLimit::max(12 * 1024 * 1024)))
+        .route("/api/v1/torrents/{hash}/swarm-switch/restore", post(handlers::swarm_restore))
         .route(
             "/api/v1/torrents/{hash}/recheck",
             post(handlers::torrent_recheck),
@@ -332,6 +338,23 @@ async fn request_uri_guard(req: Request<Body>, next: middleware::Next) -> Respon
     next.run(req).await
 }
 
+fn is_swarm_candidate_request(req: &Request<Body>) -> bool {
+    if req.method() != axum::http::Method::POST {
+        return false;
+    }
+    let Some((hash, action)) = req
+        .uri()
+        .path()
+        .strip_prefix("/api/v1/torrents/")
+        .and_then(|tail| tail.split_once("/swarm-switch/"))
+    else {
+        return false;
+    };
+    matches!(action, "preview" | "public")
+        && matches!(hash.len(), 40 | 64)
+        && hash.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 async fn json_body_guard(req: Request<Body>, next: middleware::Next) -> Response {
     if has_duplicate_content_type(req.headers()) {
         return (
@@ -343,8 +366,30 @@ async fn json_body_guard(req: Request<Body>, next: middleware::Next) -> Response
     if !is_json_content_type(req.headers()) {
         return next.run(req).await;
     }
+    let swarm = is_swarm_candidate_request(&req);
+    // Hold the permit before reading JSON, including while the upstream engine
+    // is probing. Large candidate files cannot exhaust ordinary API admission.
+    let _swarm_permit = if swarm {
+        match SWARM_UPLOADS.try_acquire() {
+            Ok(permit) => Some(permit),
+            Err(_) => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Swarm Switch capacity exhausted; retry later",
+                )
+                    .into_response()
+            }
+        }
+    } else {
+        None
+    };
+    let limit = if swarm {
+        MAX_SWARM_JSON_BODY_BYTES
+    } else {
+        MAX_JSON_BODY_BYTES
+    };
     let (mut parts, body) = req.into_parts();
-    let body = match to_bytes(body, MAX_JSON_BODY_BYTES).await {
+    let body = match to_bytes(body, limit).await {
         Ok(body) => body,
         Err(_) => {
             return (
@@ -544,5 +589,60 @@ mod tests {
 
         let uri: Uri = "/api/v1/torrents?limit=100".parse().unwrap();
         assert!(request_uri_is_bounded(&uri));
+    }
+    #[tokio::test]
+    async fn swarm_upload_limit_is_bounded_and_scoped_to_candidate_routes() {
+        use axum::{
+            body::Body,
+            http::{Request, StatusCode},
+            routing::post,
+            Router,
+        };
+        use tower::ServiceExt;
+        let app = Router::new()
+            .fallback(post(|| async { StatusCode::OK }))
+            .layer(axum::middleware::from_fn(super::json_body_guard));
+        let large = "x".repeat(MAX_JSON_BODY_BYTES + 1);
+        for (path, expected) in [
+            (
+                format!("/api/v1/torrents/{}/swarm-switch/preview", "a".repeat(40)),
+                StatusCode::OK,
+            ),
+            (
+                format!("/api/v1/torrents/{}/swarm-switch/public", "b".repeat(64)),
+                StatusCode::OK,
+            ),
+            (
+                format!("/api/v1/torrents/{}/swarm-switch/restore", "a".repeat(40)),
+                StatusCode::PAYLOAD_TOO_LARGE,
+            ),
+            (
+                "/api/v1/torrents/invalid/swarm-switch/preview".into(),
+                StatusCode::PAYLOAD_TOO_LARGE,
+            ),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::post(path)
+                        .header("content-type", "application/json")
+                        .body(Body::from(large.clone()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected);
+        }
+        let path = format!("/api/v1/torrents/{}/swarm-switch/preview", "a".repeat(40));
+        let response = app
+            .oneshot(
+                Request::post(path)
+                    .header("content-type", "application/json")
+                    .body(Body::from("x".repeat(super::MAX_SWARM_JSON_BODY_BYTES + 1)))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 }

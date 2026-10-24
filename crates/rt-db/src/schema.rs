@@ -7,7 +7,7 @@ use rusqlite::Connection;
 use crate::error::DbError;
 
 /// Current TorrentNG client database schema version.
-pub const CURRENT_SCHEMA_VERSION: u32 = 11;
+pub const CURRENT_SCHEMA_VERSION: u32 = 12;
 
 /// Apply all pending migrations to bring the database up to the current schema version.
 ///
@@ -384,6 +384,16 @@ const MIGRATIONS: &[(u32, &str)] = &[
                 CHECK (typeof(expected_v2_hash) = 'blob' AND length(expected_v2_hash) = 32)
         );
         ",
+    ),
+    (
+        12,
+        "CREATE TABLE swarm_switches (
+            original_hash TEXT PRIMARY KEY NOT NULL REFERENCES torrents(info_hash) ON DELETE RESTRICT,
+            public_hash TEXT UNIQUE NOT NULL,
+            phase TEXT NOT NULL CHECK(phase IN ('preparing','public','restoring')),
+            updated_at INTEGER NOT NULL,
+            CHECK(original_hash != public_hash)
+        );",
     ),
 ];
 

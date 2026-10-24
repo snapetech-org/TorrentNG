@@ -290,3 +290,48 @@ test('mobile viewport keeps primary actions reachable', async ({ page, isMobile 
   await expect(page.getByText('Storage', { exact: true }).last()).toBeVisible()
   await expect(page.getByText('/data/library').first()).toBeVisible()
 })
+
+test('Swarm Switch compares both identities before public use and private restore', async ({ page, isMobile }, testInfo) => {
+  const hash = torrents[0].hash
+  const publicHash = 'b'.repeat(40)
+  let linked = false
+  await page.route('**/api/v1/engine', route => route.fulfill({ json: { backend: { type: 'torrentng', capabilities: { supports_swarm_switch: true } } } }))
+  await page.route('**/swarm-switch{,/**}', async route => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith('/preview')) return route.fulfill({ json: {
+      candidate: { original_hash: hash, public_hash: publicHash, variant: 'remove_private', piece_length: 16384, piece_count: 1, files: 1, total_bytes: 4 },
+      private: [{ tracker: 'https://tracker.example', seeds: 2, leechers: 4, observed_at: Math.floor(Date.now() / 1000), fresh: true, status: 'scraped' }],
+      public: { discovered_peers: 15, seed_estimate: 8, peer_estimate: 17, sampled_peers: 12, reachable_peers: 9, observed_seeds: 6, observed_at: Math.floor(Date.now() / 1000), responding_nodes: 12, status: 'observed', bounded: true },
+    } })
+    if (path.endsWith('/public')) {
+      expect(route.request().postDataJSON().expected_public_hash).toBe(publicHash)
+      linked = true
+    }
+    if (path.endsWith('/restore')) linked = false
+    return route.fulfill({ json: { original_hash: hash, public_hash: linked ? publicHash : null, phase: linked ? 'public' : 'private', can_restore: linked, can_switch: !linked, dht_enabled: true, active_state: 'downloading', verified_bytes: 0, total_bytes: 4 } })
+  })
+  await page.reload()
+  if (isMobile) await page.getByRole('row', { name: /TorrentNG fixture 001/i }).click()
+  else await page.getByLabel(/Select TorrentNG fixture 001/i).first().click()
+  const panel = page.getByRole('region', { name: 'Swarm Switch' })
+  await panel.getByRole('button', { name: 'Swarm Switch', exact: true }).click()
+  const activate = panel.getByRole('button', { name: 'Use public swarm' })
+  await expect(activate).toBeDisabled()
+  await panel.getByRole('button', { name: 'Compare swarms', exact: true }).click()
+  await expect(panel.getByLabel('Swarm comparison')).toBeVisible()
+  await expect(panel.getByText('https://tracker.example', { exact: true })).toBeVisible()
+  await expect(panel.getByText('Estimated seeds').locator('..')).toHaveText(/8/)
+  await activate.scrollIntoViewIfNeeded()
+  for (const control of [activate, panel.getByRole('combobox')]) {
+    const bounds = await control.boundingBox()
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(page.viewportSize()!.width)
+  }
+  await testInfo.attach('swarm-comparison', { body: await page.screenshot({ path: testInfo.outputPath('swarm-comparison.png') }), contentType: 'image/png' })
+  await activate.click()
+  const restore = panel.getByRole('button', { name: 'Restore private swarm' })
+  await expect(restore).toBeDisabled()
+  await panel.getByRole('button', { name: 'Compare swarms', exact: true }).click()
+  await expect(restore).toBeEnabled()
+  await restore.click()
+  await expect(activate).toBeVisible()
+})

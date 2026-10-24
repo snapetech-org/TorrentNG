@@ -1,3 +1,4 @@
+import { SwarmSwitchPanel } from './SwarmSwitchPanel'
 import { LocalizedErrorText, LocalizedText } from '../lib/LocalizedText'
 import { interfaceTextProps, translateInterface } from '../lib/interfaceLocale'
 import { formatRegionalNumber, getRegionalLocale } from '../lib/localeFormat'
@@ -218,6 +219,8 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
           color: 'var(--muted)', padding: '3px 9px', fontSize: 11, cursor: 'pointer',
         }}><LocalizedText source="Hide panel" /></button>
       </div>
+
+      <SwarmSwitchPanel key={t.hash} hash={t.hash} onRemoved={onClose} />
 
       {/* Action buttons */}
       <div style={{

@@ -17,6 +17,10 @@ impl Engine {
         save_path: Option<PathBuf>,
         reply: oneshot::Sender<CmdResult<Option<String>>>,
     ) {
+        if let Err(error) = self.ensure_swarm_unlinked(&info_hash) {
+            let _ = reply.send(Err(error));
+            return;
+        }
         if let Some(name) = name.as_deref() {
             if let Err(error) = validate_text_bytes(name, MAX_ENGINE_NAME_BYTES, "torrent name") {
                 let _ = reply.send(Err(error));

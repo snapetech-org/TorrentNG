@@ -91,6 +91,10 @@ mod storage;
 mod storage_control;
 #[path = "subsystems.rs"]
 mod subsystems;
+#[path = "engine/swarm_probe.rs"]
+pub mod swarm_probe;
+#[path = "engine/swarm_switch.rs"]
+pub mod swarm_switch;
 use crate::tier::{DormantTorrentSnapshot, TierController, TierEvent, TierInput, TierPolicy};
 use crate::torrent_task::{
     persistent_hybrid_metadata_memory_bytes, persistent_torrent_metadata_memory_bytes, TorrentCmd,
@@ -1679,6 +1683,7 @@ pub struct Engine {
     /// another storage command could otherwise resume or re-quiesce the same
     /// torrent against a plan that is still being prepared.
     pending_storage_moves: HashMap<String, PendingStorageMove>,
+    swarm_switches: HashMap<String, rt_db::swarm_switch_row::SwarmSwitchRow>,
     shutdown_reply: Option<oneshot::Sender<()>>,
     #[cfg(not(test))]
     db_worker: DbWorker,
@@ -2128,6 +2133,7 @@ impl Engine {
                 storage_jobs,
             ),
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
             #[cfg(not(test))]
             db_worker,
@@ -3114,6 +3120,31 @@ impl Engine {
                 let _ = reply.send(result);
             }
 
+            EngineCmd::SwarmProbeContext { info_hash, reply } => {
+                let hash = info_hash.clone();
+                let result = self
+                    .run_db("swarm_trackers", move |db| {
+                        rt_db::list_torrent_trackers(db, &hash).map_err(|e| e.to_string())
+                    })
+                    .await
+                    .map(|trackers| swarm_probe::ProbeContext {
+                        bootstrap: self.config.dht.bootstrap_nodes.clone(),
+                        trackers,
+                        policy: OutboundEgressPolicy::from_config(&self.config.tracker),
+                        network: self.services.network_budget.clone(),
+                        registry: Arc::clone(&self.registry),
+                    });
+                let _ = reply.send(result);
+            }
+            EngineCmd::SwarmStatus { info_hash, reply } => {
+                let _ = reply.send(self.swarm_status_inner(&info_hash).await);
+            }
+            EngineCmd::SwitchToPublic { prepared, reply } => {
+                let _ = reply.send(self.switch_to_public_inner(*prepared).await);
+            }
+            EngineCmd::RestorePrivateSwarm { info_hash, reply } => {
+                let _ = reply.send(self.restore_private_swarm_inner(&info_hash).await);
+            }
             EngineCmd::PauseTorrent { info_hash, reply } => {
                 if let Err(error) = self.ensure_torrent_storage_idle(&info_hash).await {
                     let _ = reply.send(Err(error));
@@ -4807,6 +4838,7 @@ impl Engine {
         info_hash: &str,
         trackers: Vec<String>,
     ) -> CmdResult<()> {
+        self.ensure_swarm_unlinked(info_hash)?;
         self.ensure_torrent_not_deleting(info_hash)?;
         validate_tracker_urls(&trackers)?;
         let trackers = normalize_tracker_urls(trackers);
@@ -5255,6 +5287,7 @@ impl Engine {
         file_id: u32,
         new_path: String,
     ) -> CmdResult<()> {
+        self.ensure_swarm_unlinked(info_hash)?;
         self.ensure_torrent_jobs_idle(info_hash).await?;
         self.ensure_torrent_exists(info_hash).await?;
         let new_path = normalize_relative_path(&new_path)?;
@@ -5299,6 +5332,7 @@ impl Engine {
         old_path: String,
         new_path: String,
     ) -> CmdResult<()> {
+        self.ensure_swarm_unlinked(info_hash)?;
         self.ensure_torrent_jobs_idle(info_hash).await?;
         self.ensure_torrent_exists(info_hash).await?;
         let old_path = normalize_relative_path(&old_path)?;
@@ -5526,6 +5560,7 @@ impl Engine {
     /// owns its payload. Lifecycle commands may still control an active
     /// recheck job; storage work itself may not overlap.
     async fn ensure_torrent_storage_idle(&self, info_hash: &str) -> CmdResult<()> {
+        self.ensure_swarm_active(info_hash)?;
         self.ensure_torrent_not_deleting(info_hash)?;
         if let Some(error) = self.storage_move_pending_error(info_hash) {
             return Err(error);
@@ -5546,6 +5581,7 @@ impl Engine {
     /// is also an owner before its durable job exists, so its reservation must
     /// be checked before any new operation is admitted.
     async fn ensure_torrent_jobs_idle(&self, info_hash: &str) -> CmdResult<()> {
+        self.ensure_swarm_active(info_hash)?;
         self.ensure_torrent_not_deleting(info_hash)?;
         if let Some(error) = self.storage_move_pending_error(info_hash) {
             return Err(error);
@@ -5575,6 +5611,7 @@ impl Engine {
 
     async fn ensure_torrents_jobs_idle(&self, info_hashes: &[String]) -> CmdResult<()> {
         for info_hash in info_hashes {
+            self.ensure_swarm_unlinked(info_hash)?;
             self.ensure_torrent_jobs_idle(info_hash).await?;
         }
         Ok(())
@@ -6121,6 +6158,7 @@ impl Engine {
     }
 
     async fn resume_torrent_runtime(&self, info_hash: &str) -> CmdResult<()> {
+        self.ensure_swarm_active(info_hash)?;
         if let Some((job_id, kind)) = self.active_torrent_job(info_hash).await? {
             if kind == JOB_KIND_RECHECK {
                 let job_id_for_db = job_id.clone();
@@ -6612,6 +6650,11 @@ impl Engine {
         info_hash_hex: &str,
         action: TorrentPromotionAction,
     ) -> TorrentPromotionBegin {
+        if let Err(error) = self.ensure_swarm_active(info_hash_hex) {
+            self.fail_torrent_promotion_actions(info_hash_hex, vec![action], error)
+                .await;
+            return TorrentPromotionBegin::Rejected;
+        }
         if let Some(error) = self.storage_move_pending_error(info_hash_hex) {
             self.fail_torrent_promotion_actions(info_hash_hex, vec![action], error)
                 .await;
@@ -10061,7 +10104,6 @@ fn remove_staged_blob_path_best_effort(path: &Path, operation: &str) {
     }
 }
 
-#[cfg(test)]
 fn save_torrent_blob_from_config(
     config: &Config,
     info_hash: &str,
@@ -12903,6 +12945,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -12976,6 +13019,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -13157,6 +13201,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -13292,6 +13337,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -13378,6 +13424,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -13541,6 +13588,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
                 stats_cache: None,
             },
+            swarm_switches: HashMap::new(),
             pending_storage_moves: HashMap::from([(
                 info_hash,
                 PendingStorageMove {
@@ -13703,6 +13751,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -13859,6 +13908,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -13942,6 +13992,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -14026,6 +14077,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -14165,6 +14217,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -14265,6 +14318,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -14767,6 +14821,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
         engine.save_torrent_blob(&info_hash, &raw).unwrap();
@@ -14872,6 +14927,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
         // Exercise the production command path: the actor should only
@@ -15320,6 +15376,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -15397,6 +15454,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -15492,6 +15550,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -15554,6 +15613,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
         let magnet = MagnetLink {
@@ -15744,6 +15804,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
         std::fs::create_dir_all(torrent_blob_dir(&engine.config)).unwrap();
@@ -15975,6 +16036,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -16062,6 +16124,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -16136,6 +16199,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -16286,6 +16350,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -16441,6 +16506,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -16685,6 +16751,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -16733,6 +16800,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -16787,6 +16855,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -16927,6 +16996,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -16988,6 +17058,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -17065,6 +17136,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -17165,6 +17237,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -17208,6 +17281,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -17263,6 +17337,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -17306,6 +17381,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -17356,6 +17432,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -17413,6 +17490,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -17495,6 +17573,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -17593,6 +17672,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -17688,6 +17768,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -17771,6 +17852,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -17858,6 +17940,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -17930,6 +18013,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -18004,6 +18088,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -18065,6 +18150,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -18137,6 +18223,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -18212,6 +18299,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -18355,6 +18443,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
         let info_hash = "d".repeat(40);
@@ -18531,6 +18620,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -18579,6 +18669,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
         let plan = StoragePlan {
@@ -18917,6 +19008,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -19145,6 +19237,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -19286,6 +19379,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -19378,6 +19472,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
         let plan = rt_storage::plan_move(&rt_storage::MovePlanRequest {
@@ -19426,6 +19521,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -19566,6 +19662,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -19695,6 +19792,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -19818,6 +19916,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -19927,6 +20026,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -20082,6 +20182,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -20188,6 +20289,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -20271,6 +20373,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -20420,6 +20523,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -20560,6 +20664,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -20796,6 +20901,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -20938,6 +21044,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -21096,6 +21203,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -21214,6 +21322,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -21302,6 +21411,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -21450,6 +21560,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -21550,6 +21661,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -21652,6 +21764,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
         persist_test_torrent(&engine, &info_hash);
@@ -21805,6 +21918,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -21954,6 +22068,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -22057,6 +22172,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -22156,6 +22272,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
 
@@ -22236,6 +22353,7 @@ mod tests {
                 crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
             },
             pending_storage_moves: HashMap::new(),
+            swarm_switches: HashMap::new(),
             shutdown_reply: None,
         };
         {

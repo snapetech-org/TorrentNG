@@ -243,7 +243,7 @@ fn validate_native_storage_request(req: &StoragePlanRequest) -> Result<(), Strin
     Ok(())
 }
 
-fn validate_native_info_hash(info_hash: &str) -> Result<(), String> {
+pub(super) fn validate_native_info_hash(info_hash: &str) -> Result<(), String> {
     if info_hash.is_empty() {
         return Err("info hash must not be empty".to_owned());
     }
@@ -6713,6 +6713,7 @@ fn torrentng_client_webui_capabilities() -> serde_json::Value {
         "supports_file_rename": true,
         "supports_runtime_user_agent": true,
         "supports_crash_safety": true,
+        "supports_swarm_switch": true,
         "supports_config_overlay": false,
         "supports_restart": false,
     })
@@ -10021,7 +10022,7 @@ async fn control_torrent(
     response
 }
 
-fn require_mutation_auth(
+pub(super) fn require_mutation_auth(
     state: &AppState,
     headers: &HeaderMap,
 ) -> Option<axum::response::Response> {

@@ -7,7 +7,8 @@ use super::*;
 impl Engine {
     pub(super) async fn begin_torrent_add(&mut self, request: TorrentAddRequest) {
         let info_hash = meta_info_hash_hex(&request.meta);
-        if self.runtime.torrent_chans.contains_key(&info_hash)
+        if self.swarm_pair(&info_hash).is_some()
+            || self.runtime.torrent_chans.contains_key(&info_hash)
             || self.runtime.pending_torrent_adds.contains(&info_hash)
             || self.registry.read().await.get(&info_hash).is_some()
         {
@@ -1058,7 +1059,7 @@ impl Engine {
         cmd_tx
     }
 
-    async fn ensure_transfer_owner_record(
+    pub(super) async fn ensure_transfer_owner_record(
         &self,
         info_hash: &str,
     ) -> CmdResult<rt_db::TransferCutoverRow> {
@@ -1446,7 +1447,7 @@ impl Engine {
         Ok(())
     }
 
-    async fn spawn_transfer_actor_from_storage(
+    pub(super) async fn spawn_transfer_actor_from_storage(
         &mut self,
         info_hash: &str,
         owner: rt_db::TransferOwner,
@@ -1496,7 +1497,7 @@ impl Engine {
         Ok((cmd_tx, dht_info_hash, is_private))
     }
 
-    async fn quiesce_torrent_actor_for_cutover(
+    pub(super) async fn quiesce_torrent_actor_for_cutover(
         cmd_tx: &mpsc::Sender<TorrentCmd>,
     ) -> CmdResult<bool> {
         let (reply, quiesced) = oneshot::channel();
@@ -1513,7 +1514,10 @@ impl Engine {
             .map_err(|_| "old torrent actor stopped during drain".to_owned())?
     }
 
-    async fn stop_torrent_actor_for_cutover(&mut self, info_hash: &str) -> CmdResult<()> {
+    pub(super) async fn stop_torrent_actor_for_cutover(
+        &mut self,
+        info_hash: &str,
+    ) -> CmdResult<()> {
         if let Some(cmd_tx) = self.runtime.torrent_chans.get(info_hash).cloned() {
             let _ = tokio::time::timeout(Duration::from_secs(5), cmd_tx.send(TorrentCmd::Shutdown))
                 .await;
@@ -1651,6 +1655,7 @@ impl Engine {
         info_hash: &str,
         target: rt_db::TransferOwner,
     ) -> CmdResult<rt_db::TransferOwner> {
+        self.ensure_swarm_active(info_hash)?;
         if self
             .metadata_placeholder_row_checked(info_hash)
             .await?
@@ -2067,6 +2072,12 @@ impl Engine {
         info_hash: &str,
         delete_files: bool,
     ) -> CmdResult<Option<String>> {
+        if let Some(pair) = self.swarm_pair(info_hash).cloned() {
+            if pair.original_hash == info_hash && !delete_files {
+                return self.discard_private_copy(pair).await;
+            }
+            return Err("Shared payload is protected; restore the private swarm before removing the public torrent or deleting files".into());
+        }
         self.ensure_torrent_jobs_idle(info_hash).await?;
         let save_path = {
             let registry = self.registry.read().await;

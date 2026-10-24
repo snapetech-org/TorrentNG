@@ -1,3 +1,4 @@
+import { SwarmSwitchPanel } from './SwarmSwitchPanel'
 import { LocalizedErrorText, LocalizedText } from '../lib/LocalizedText'
 import { useInterfaceLanguage } from '../lib/interfaceLocale'
 import { useEffect, useState } from 'react'
@@ -6,7 +7,7 @@ import { api, type TorrentSummary, type TorrentFile, type Tracker } from '../api
 import { TrackerUrl } from '../lib/maskUrl'
 import { useDialogFocus } from '../hooks/useDialogFocus'
 
-type Tab = 'general' | 'trackers' | 'files' | 'limits'
+type Tab = 'general' | 'trackers' | 'files' | 'limits' | 'swarm'
 
 interface Props {
   torrent: TorrentSummary
@@ -103,7 +104,7 @@ export function TorrentPropertiesDialog({ torrent, onClose }: Props) {
 
         <div className="tng-properties-body" style={{ display: 'flex', minHeight: 0, flex: 1 }}>
           <nav className="tng-properties-tabs" role="tablist" aria-label={t("Torrent property sections")} style={{ width: 150, borderRight: '1px solid var(--border)', padding: 10 }} {...textProps("Torrent property sections")}>
-            {(['general', 'trackers', 'files', 'limits'] as Tab[]).map(item => (
+            {(['general', 'trackers', 'files', 'limits', 'swarm'] as Tab[]).map(item => (
               <button
                 key={item}
                 id={`torrent-properties-tab-${item}`}
@@ -113,7 +114,7 @@ export function TorrentPropertiesDialog({ torrent, onClose }: Props) {
                 aria-controls={`torrent-properties-panel-${item}`}
                 tabIndex={tab === item ? 0 : -1}
                 onKeyDown={event => {
-                  const tabs: Tab[] = ['general', 'trackers', 'files', 'limits']
+                  const tabs: Tab[] = ['general', 'trackers', 'files', 'limits', 'swarm']
                   const currentIndex = tabs.indexOf(item)
                   const nextIndex = event.key === 'ArrowDown' || event.key === 'ArrowRight'
                     ? (currentIndex + 1) % tabs.length
@@ -145,6 +146,7 @@ export function TorrentPropertiesDialog({ torrent, onClose }: Props) {
           </nav>
 
           <main className="tng-properties-main" role="tabpanel" id={`torrent-properties-panel-${tab}`} aria-labelledby={`torrent-properties-tab-${tab}`} tabIndex={0} style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
+            {tab === 'swarm' && <SwarmSwitchPanel key={torrent.hash} hash={torrent.hash} showUnsupported onRemoved={onClose} />}
             {tab === 'general' && (
               <div style={{ display: 'grid', gap: 12 }}>
                 <Field label="Name">

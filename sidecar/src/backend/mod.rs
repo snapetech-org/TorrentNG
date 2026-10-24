@@ -836,6 +836,7 @@ pub struct BackendCapabilities {
     pub supports_file_priority: bool,
     pub supports_tracker_edit: bool,
     pub supports_recheck: bool,
+    pub supports_swarm_switch: bool,
     pub supports_torrent_export: bool,
     pub supports_webseed_reads: bool,
     pub supports_piece_state_reads: bool,
@@ -875,6 +876,17 @@ pub enum RemoveOutcome {
 pub trait TorrentBackend: Send + Sync {
     fn backend_type(&self) -> BackendType;
     fn capabilities(&self) -> BackendCapabilities;
+
+    /// Native journaled swarm switching. External engines must not emulate it
+    /// by toggling a private flag without the storage/identity fencing contract.
+    async fn swarm_switch(
+        &self,
+        _hash: &str,
+        _action: &str,
+        _body: serde_json::Value,
+    ) -> Result<(u16, serde_json::Value)> {
+        bail!("Swarm Switch is unavailable for this backend")
+    }
 
     async fn health(&self) -> BackendStatus;
     async fn transfer_rates(&self) -> Result<TransferRates>;

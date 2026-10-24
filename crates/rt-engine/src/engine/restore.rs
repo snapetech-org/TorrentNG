@@ -5,6 +5,9 @@ use super::*;
 
 impl Engine {
     pub(super) async fn load_persisted_torrents(&mut self) -> anyhow::Result<()> {
+        self.recover_swarm_switches()
+            .await
+            .map_err(anyhow::Error::msg)?;
         let (mut rows, metadata_v2_hashes) = self
             .run_db("load_persisted_torrents", |db| {
                 let rows = rt_db::list_all(db).map_err(|error| error.to_string())?;
@@ -66,7 +69,8 @@ impl Engine {
                 continue;
             }
             let state = state_from_str(&row.state);
-            let mut start_task = state != TorrentState::Error
+            let mut start_task = self.ensure_swarm_active(&row.info_hash).is_ok()
+                && state != TorrentState::Error
                 && (!self.config.runtime.torrent_tiers_enabled
                     || should_start_task_on_restore(state));
             if self.is_metadata_placeholder_row(row) {

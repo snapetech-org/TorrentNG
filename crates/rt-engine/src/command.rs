@@ -1235,6 +1235,22 @@ pub struct TorrentDiagnostic {
 /// Engine-level commands (handled by the top-level EngineHandle).
 #[derive(Debug)]
 pub(crate) enum EngineCmd {
+    SwarmProbeContext {
+        info_hash: String,
+        reply: oneshot::Sender<CmdResult<crate::engine::swarm_probe::ProbeContext>>,
+    },
+    SwarmStatus {
+        info_hash: String,
+        reply: oneshot::Sender<CmdResult<crate::engine::swarm_switch::SwarmStatus>>,
+    },
+    SwitchToPublic {
+        prepared: Box<crate::engine::swarm_switch::PreparedSwarm>,
+        reply: oneshot::Sender<CmdResult<crate::engine::swarm_switch::SwarmStatus>>,
+    },
+    RestorePrivateSwarm {
+        info_hash: String,
+        reply: oneshot::Sender<CmdResult<crate::engine::swarm_switch::SwarmStatus>>,
+    },
     /// Add a torrent from parsed metainfo. save_path overrides config default.
     AddTorrent {
         add_guard: EngineAddTaskGuard,

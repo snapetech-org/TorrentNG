@@ -97,6 +97,7 @@ impl TorrentBackend for DelugeBackend {
             supports_file_priority: true,
             supports_tracker_edit: true,
             supports_recheck: true,
+            supports_swarm_switch: false,
             supports_torrent_export: false,
             supports_webseed_reads: false,
             supports_piece_state_reads: false,

@@ -27,6 +27,10 @@ With the TorrentNG Engine, TorrentNG manages transfers, storage, and saved
 state. See the [local MCP integration guide](docs/integrations/snapetech-mcp.md)
 for local assistant access.
 
+The Engine supports [Swarm Switch](docs/SWARM_SWITCH.md) in the WebUI: compare
+public and private swarm observations, use a compatible public counterpart with
+the same files, and restore the retained private torrent after verification.
+
 ## Choose what to install
 
 You normally need one of these:

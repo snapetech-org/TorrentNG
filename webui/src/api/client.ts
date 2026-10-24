@@ -55,6 +55,15 @@ export interface TorrentSummary {
   finalizing?: boolean
 }
 
+export type SwarmVariant = 'remove_private' | 'private_zero' | 'remove_private_and_source' | 'private_zero_without_source' | 'supplied'
+export interface SwarmCandidateRequest { variant: SwarmVariant; public_torrent_base64?: string; expected_public_hash?: string }
+export interface SwarmStatus { original_hash: string | null; public_hash: string | null; phase: string; can_switch: boolean; can_restore: boolean; dht_enabled: boolean; active_state: string; verified_bytes: number; total_bytes: number }
+export interface SwarmComparison {
+  candidate: { original_hash: string; public_hash: string; public_v2_hash: string | null; piece_length: number; piece_count: number; files: number; total_bytes: number; variant: SwarmVariant }
+  public: { status: string; observed_at: number; responding_nodes: number; discovered_peers: number | null; seed_estimate: number | null; peer_estimate: number | null; sampled_peers: number; reachable_peers: number; observed_seeds: number; bounded: boolean }
+  private: { tracker: string; status: string; observed_at: number | null; seeds: number | null; leechers: number | null; fresh: boolean }[]
+}
+
 export interface TorrentListResponse {
   snapshot?: number
   total: number
@@ -294,6 +303,18 @@ async function post<T = void>(path: string, body?: FormData | object): Promise<T
   const ct = res.headers.get('content-type') ?? ''
   if (ct.includes('application/json')) return res.json() as Promise<T>
   return undefined as T
+}
+
+async function swarmRequest<T>(hash: string, action: string, body?: object): Promise<T> {
+  const response = await fetch(`${BASE}/torrents/${hash}/swarm-switch${action}`, {
+    method: action ? 'POST' : 'GET', credentials: 'same-origin',
+    headers: action ? { 'Content-Type': 'application/json', 'X-TNG-CSRF': '1' } : undefined,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  if (response.status === 401) throw new AuthError()
+  const result = await response.json().catch(() => null)
+  if (!response.ok) throw new Error(result?.error?.message ?? `Swarm Switch request failed (${response.status}).`)
+  return result as T
 }
 
 async function put<T = void>(path: string, body: object): Promise<T> {
@@ -605,6 +626,7 @@ export interface BackendCapabilities {
   supports_file_rename: boolean
   supports_runtime_user_agent: boolean
   /** Present only when TorrentNG runs its own client (torrentngd). */
+  supports_swarm_switch?: boolean
   supports_crash_safety?: boolean
   supports_config_overlay: boolean
   supports_restart: boolean
@@ -983,6 +1005,12 @@ export const api = {
       normalizeTorrentList(await get<TorrentListResponse | TorrentNgTorrentListResponse | TorrentSummary[] | TorrentNgTorrentSummary[]>('/torrents', { limit: 1 }), { limit: 1 }),
   },
 
+  swarm: {
+    status: (hash: string) => swarmRequest<SwarmStatus>(hash, ''),
+    compare: (hash: string, request: SwarmCandidateRequest) => swarmRequest<SwarmComparison>(hash, '/preview', request),
+    public: (hash: string, request: SwarmCandidateRequest) => swarmRequest<SwarmStatus>(hash, '/public', request),
+    restore: (hash: string) => swarmRequest<SwarmStatus>(hash, '/restore'),
+  },
   torrents: {
     list: async (p: ListParams = {}): Promise<TorrentListResponse> =>
       normalizeTorrentList(

@@ -1,6 +1,7 @@
 pub mod error;
 pub mod magnet;
 pub mod parse;
+pub mod swarm;
 pub mod types;
 
 pub use error::MetainfoError;

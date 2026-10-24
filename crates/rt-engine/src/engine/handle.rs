@@ -43,7 +43,7 @@ impl EngineHandle {
     /// an API task forever. A bounded send is part of the fault-isolation
     /// contract: a dead or wedged actor must fail the caller, not turn every
     /// subsequent request into an unbounded waiter.
-    async fn send_command(&self, command: EngineCmd) -> CmdResult<()> {
+    pub(super) async fn send_command(&self, command: EngineCmd) -> CmdResult<()> {
         match timeout(ENGINE_COMMAND_SEND_TIMEOUT, self.tx.send(command)).await {
             Ok(Ok(())) => Ok(()),
             Ok(Err(_)) => Err("engine shut down".to_owned()),

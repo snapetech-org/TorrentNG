@@ -40,6 +40,9 @@ Supported features vary by client; the compatibility guides list the limits.
 - [Release-note fragments](../release-notes/README.md) - contribution and
   validation rules for the release notes published to GitHub and Discord.
 
+- [SWARM_SWITCH.md](SWARM_SWITCH.md) - public/private swarm comparison, compatible
+  payloads, reversible recovery sessions, and retained-copy deletion.
+
 ## Deploy And Operate
 
 - [TorrentNG client deployment guide](NATIVE_DEPLOYMENT.md) - production

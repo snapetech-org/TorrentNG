@@ -131,6 +131,7 @@ impl TorrentBackend for TorrentngBackend {
             supports_file_priority: true,
             supports_tracker_edit: true,
             supports_recheck: true,
+            supports_swarm_switch: true,
             supports_torrent_export: true,
             supports_webseed_reads: true,
             supports_piece_state_reads: true,
@@ -153,6 +154,44 @@ impl TorrentBackend for TorrentngBackend {
             supports_config_overlay: false,
             supports_restart: false,
         }
+    }
+
+    async fn swarm_switch(&self, hash: &str, action: &str, body: Value) -> Result<(u16, Value)> {
+        let suffix = match action {
+            "status" => "swarm-switch",
+            "preview" => "swarm-switch/preview",
+            "public" => "swarm-switch/public",
+            "restore" => "swarm-switch/restore",
+            _ => anyhow::bail!("Unknown Swarm Switch action"),
+        };
+        let method = if action == "status" {
+            reqwest::Method::GET
+        } else {
+            reqwest::Method::POST
+        };
+        let mut request = self
+            .request(method, &Self::torrent_path(hash, suffix))?
+            .timeout(std::time::Duration::from_secs(60));
+        if action != "status" {
+            request = request.json(&body);
+        }
+        let mut response = request.send().await.map_err(reqwest::Error::without_url)?;
+        let status = response.status().as_u16();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(reqwest::Error::without_url)?
+        {
+            if bytes.len().saturating_add(chunk.len()) > 1024 * 1024 {
+                anyhow::bail!("Swarm Switch response exceeds limit");
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok((
+            status,
+            serde_json::from_slice(&bytes).context("Invalid Swarm Switch response")?,
+        ))
     }
 
     async fn health(&self) -> BackendStatus {
@@ -1186,6 +1225,60 @@ mod tests {
         assert_eq!(mapped.peers_connected, 3);
         assert_eq!(mapped.peers_complete, 4);
         assert_eq!(mapped.message, "tracker rejected https://tracker.example/");
+    }
+
+    #[tokio::test]
+    async fn swarm_switch_proxy_preserves_action_auth_and_native_conflicts() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            let len = stream.read(&mut request).await.unwrap();
+            let request = String::from_utf8_lossy(&request[..len]);
+            assert!(request.starts_with(&format!(
+                "POST /api/v1/torrents/{}/swarm-switch/public HTTP/1.1",
+                "a".repeat(40)
+            )));
+            assert!(request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer test-token"));
+            let body = br#"{"error":{"code":"swarm_switch","message":"Piece hashes differ"}}"#;
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 409 Conflict\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+            stream.write_all(body).await.unwrap();
+        });
+        let backend = TorrentngBackend::new(&TorrentngConfig {
+            url: format!("http://{address}/"),
+            api_token: Some("test-token".into()),
+            ..TorrentngConfig::default()
+        })
+        .unwrap();
+        assert!(backend.capabilities().supports_swarm_switch);
+        let (status, value) = backend
+            .swarm_switch(
+                &"a".repeat(40),
+                "public",
+                json!({"expected_public_hash":"b".repeat(40)}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(status, 409);
+        assert_eq!(value["error"]["message"], "Piece hashes differ");
+        server.await.unwrap();
+        assert!(backend
+            .swarm_switch("a", "../start", json!({}))
+            .await
+            .is_err());
     }
 
     #[tokio::test]

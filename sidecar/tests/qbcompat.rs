@@ -245,6 +245,7 @@ impl TorrentBackend for SuccessfulBackend {
             supports_file_priority: true,
             supports_tracker_edit: true,
             supports_recheck: true,
+            supports_swarm_switch: false,
             supports_torrent_export: true,
             supports_webseed_reads: true,
             supports_piece_state_reads: true,

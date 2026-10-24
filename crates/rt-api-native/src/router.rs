@@ -68,6 +68,14 @@ pub fn build_router(state: AppState) -> Router {
                 .layer(DefaultBodyLimit::max(MAX_NATIVE_TORRENT_BODY_BYTES)),
         )
         .route("/api/v1/torrents/live", get(live_torrent_stats))
+        .route("/api/v1/torrents/:hash/swarm-switch", get(crate::swarm::status))
+        .route("/api/v1/torrents/:hash/swarm-switch/preview", post(crate::swarm::preview)
+            .layer::<_, Infallible>(GlobalConcurrencyLimitLayer::new(2))
+            .layer(DefaultBodyLimit::max(12 * 1024 * 1024)))
+        .route("/api/v1/torrents/:hash/swarm-switch/public", post(crate::swarm::public)
+            .layer::<_, Infallible>(GlobalConcurrencyLimitLayer::new(2))
+            .layer(DefaultBodyLimit::max(12 * 1024 * 1024)))
+        .route("/api/v1/torrents/:hash/swarm-switch/restore", post(crate::swarm::restore))
         .route(
             "/api/v1/torrents/:hash",
             get(get_torrent).put(update_torrent).delete(delete_torrent),
