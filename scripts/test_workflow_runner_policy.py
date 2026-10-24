@@ -92,6 +92,8 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                 "semgrep-community.yml",
                 "trivy-filesystem.yml",
                 "release.yml",
+                "release-aur.yml",
+                "release-copr.yml",
             }:
                 expressions = re.findall(r"(?m)^\s*runs-on: (?P<runner>[^\n]+)$", source)
                 routed = [expression for expression in expressions if "ng-shared-main-jit" in expression]
@@ -105,6 +107,11 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                         self.assertIn("github.ref_type == 'tag'", expression)
                         self.assertIn("startsWith(github.ref_name, 'v')", expression)
                         self.assertNotIn("workflow_dispatch", expression)
+                    elif workflow.name in {"release-aur.yml", "release-copr.yml"}:
+                        self.assertIn("github.event_name == 'workflow_dispatch'", expression)
+                        self.assertIn("github.ref == 'refs/heads/main'", expression)
+                        self.assertNotIn("pull_request", expression)
+                        self.assertIn("|| 'ubuntu-latest'", expression)
                     else:
                         self.assertIn("github.event_name == 'push'", expression)
                         self.assertIn("github.event_name == 'workflow_dispatch'", expression)
