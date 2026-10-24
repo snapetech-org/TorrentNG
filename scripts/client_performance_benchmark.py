@@ -270,15 +270,16 @@ def parse_cpu_set(value, name):
     return frozenset(cpus)
 
 
-def rate_preference_kib_per_second(rate_bps):
-    # qBittorrent app preferences use KiB/s, while this harness stores B/s.
+def qbittorrent_rate_limit_bps(rate_bps):
+    # qBittorrent's WebUI API takes B/s, then stores whole KiB/s internally.
+    # Use exact KiB multiples so its readback equals the requested B/s value.
     if rate_bps == -1:
-        return -1
+        return 0
     if rate_bps <= 0:
         raise ValueError("rate limit must be -1 (unlimited) or positive")
     if rate_bps % 1024:
-        raise ValueError("qBittorrent global rates must be an exact number of KiB/s")
-    return rate_bps // 1024
+        raise ValueError("qBittorrent global rates must be a whole-KiB multiple in B/s")
+    return rate_bps
 
 
 def render_benchmark_compose_override(
@@ -331,8 +332,8 @@ def seed_leecher_preferences(upload_limit_bps):
         "limit_lan_peers": True,
         "max_connec": MAX_PEERS,
         "max_connec_per_torrent": MAX_PEERS,
-        "dl_limit": rate_preference_kib_per_second(SEED_LEECHER_RATE_BPS),
-        "up_limit": rate_preference_kib_per_second(upload_limit_bps),
+        "dl_limit": qbittorrent_rate_limit_bps(SEED_LEECHER_RATE_BPS),
+        "up_limit": qbittorrent_rate_limit_bps(upload_limit_bps),
     }
 
 
@@ -1743,8 +1744,8 @@ class Benchmark:
                 "max_connec": MAX_PEERS,
                 "max_connec_per_torrent": MAX_PEERS,
                 "limit_lan_peers": True,
-                "dl_limit": rate_preference_kib_per_second(RATE_BPS),
-                "up_limit": rate_preference_kib_per_second(RATE_BPS),
+                "dl_limit": qbittorrent_rate_limit_bps(RATE_BPS),
+                "up_limit": qbittorrent_rate_limit_bps(RATE_BPS),
             }
             data = urllib.parse.urlencode({"json": json.dumps(values)}).encode()
             self.http(
@@ -2914,7 +2915,7 @@ class Benchmark:
         if applied_preferences.get("dl_limit") != preferences["dl_limit"]:
             raise RuntimeError(
                 "qBittorrent did not apply the requested global download limit: "
-                f"expected {preferences['dl_limit']} KiB/s, "
+                f"expected {preferences['dl_limit']} B/s, "
                 f"got {applied_preferences.get('dl_limit')!r}"
             )
         if applied_preferences.get("limit_lan_peers") is not True:
@@ -2922,7 +2923,7 @@ class Benchmark:
         if applied_preferences.get("up_limit") != preferences["up_limit"]:
             raise RuntimeError(
                 "qBittorrent did not apply the requested global upload limit: "
-                f"expected {preferences['up_limit']} KiB/s, "
+                f"expected {preferences['up_limit']} B/s, "
                 f"got {applied_preferences.get('up_limit')!r}"
             )
         self.qbittorrent_rate_readbacks[client] = {
@@ -3917,8 +3918,8 @@ class Benchmark:
             "seed file), copied into a separate seed path for each client."
         )
         qbit_rate_summary = "; ".join(
-            f"{name}: down={values['dl_limit']} KiB/s, "
-            f"up={values['up_limit']} KiB/s, LAN-limits={values['limit_lan_peers']}"
+            f"{name}: down={values['dl_limit']} B/s, "
+            f"up={values['up_limit']} B/s, LAN-limits={values['limit_lan_peers']}"
             for name, values in sorted(self.qbittorrent_rate_readbacks.items())
         ) or "no qBittorrent rate readback yet"
         build_description = (
@@ -3983,12 +3984,12 @@ class Benchmark:
             f"({RATE_BPS / 1048576:.1f} MiB/s); max peers {MAX_PEERS}",
             "- Controlled seed leecher receive limit: "
             + (
-                "unlimited; qBittorrent preference readback confirmed -1 and LAN rate "
+                "unlimited (qBittorrent readback 0 B/s); LAN rate "
                 "limiting is enabled."
                 if SEED_LEECHER_RATE_BPS == -1 else
                 f"{SEED_LEECHER_RATE_BPS:,} B/s "
                 f"({SEED_LEECHER_RATE_BPS / 1048576:.1f} MiB/s), shared across all seeders; "
-                "qBittorrent preference readback confirmed the value in KiB/s and LAN "
+                "qBittorrent preference readback confirmed the value in B/s and LAN "
                 "rate limiting is enabled."
             ),
             (
@@ -4792,9 +4793,9 @@ class Benchmark:
                     and (CONTROLLED_DOWNLOAD_SEED_UPLOAD_BPS < 1
                          or CONTROLLED_DOWNLOAD_SEED_UPLOAD_BPS % 1024 != 0))):
             raise RuntimeError(
-                "rate ceilings must be positive exact KiB/s values (except -1 for "
-                "unlimited leecher rate), peer ceiling must be positive, and sample "
-                "interval must be greater than zero"
+                "rate ceilings must be positive B/s values divisible by 1024 "
+                "(except -1 for unlimited leecher rate), peer ceiling must be "
+                "positive, and sample interval must be greater than zero"
             )
         if self.mode in ("transfer", "controlled-download") and DOWNLOAD_TIMEOUT < 60:
             raise RuntimeError("download timeout must be at least 60 seconds")

@@ -93,10 +93,10 @@ class CgroupCounterTests(unittest.TestCase):
         instance.http = mock.Mock(side_effect=http)
         instance.qbittorrent_rate_readbacks = {}
         instance._qbit_json = mock.Mock(return_value={
-            "dl_limit": benchmark.rate_preference_kib_per_second(
+            "dl_limit": benchmark.qbittorrent_rate_limit_bps(
                 benchmark.SEED_LEECHER_RATE_BPS,
             ),
-            "up_limit": benchmark.rate_preference_kib_per_second(benchmark.RATE_BPS),
+            "up_limit": benchmark.qbittorrent_rate_limit_bps(benchmark.RATE_BPS),
             "limit_lan_peers": True,
         })
         instance._add_torrent = mock.Mock()
@@ -1296,30 +1296,30 @@ class ControlledDownloadTests(unittest.TestCase):
     def test_fixed_downloader_seeder_upload_limit_is_explicit(self) -> None:
         preferences = benchmark.seed_leecher_preferences(4 * 1024 * 1024)
 
-        self.assertEqual(preferences["up_limit"], 4 * 1024)
+        self.assertEqual(preferences["up_limit"], 4 * 1024 * 1024)
         self.assertEqual(
             preferences["dl_limit"],
-            benchmark.rate_preference_kib_per_second(benchmark.SEED_LEECHER_RATE_BPS),
+            benchmark.qbittorrent_rate_limit_bps(benchmark.SEED_LEECHER_RATE_BPS),
         )
         self.assertTrue(preferences["limit_lan_peers"])
         self.assertFalse(preferences["dht"])
         self.assertFalse(preferences["pex"])
-        with self.assertRaisesRegex(ValueError, "exact number of KiB/s"):
-            benchmark.rate_preference_kib_per_second(4097)
+        with self.assertRaisesRegex(ValueError, "whole-KiB multiple in B/s"):
+            benchmark.qbittorrent_rate_limit_bps(4097)
         with self.assertRaisesRegex(ValueError, "must be positive"):
             benchmark.seed_leecher_preferences(0)
 
         with mock.patch.object(benchmark, "SEED_LEECHER_RATE_BPS", -1):
             unlimited = benchmark.seed_leecher_preferences(4 * 1024 * 1024)
-        self.assertEqual(unlimited["dl_limit"], -1)
+        self.assertEqual(unlimited["dl_limit"], 0)
 
-    def test_qbittorrent_rate_preferences_use_kib_and_read_back_lan_limits(self) -> None:
+    def test_qbittorrent_rate_preferences_use_bytes_and_read_back_lan_limits(self) -> None:
         instance = object.__new__(benchmark.Benchmark)
         instance.qbittorrent_rate_readbacks = {}
         instance.http = mock.Mock(return_value=SimpleNamespace(close=mock.Mock()))
         expected = {
-            "dl_limit": benchmark.RATE_BPS // 1024,
-            "up_limit": benchmark.RATE_BPS // 1024,
+            "dl_limit": benchmark.RATE_BPS,
+            "up_limit": benchmark.RATE_BPS,
             "limit_lan_peers": True,
         }
         instance._qbit_json = mock.Mock(return_value=expected)
@@ -1331,8 +1331,8 @@ class ControlledDownloadTests(unittest.TestCase):
                 instance.http.call_args.kwargs["data"].decode(),
             )["json"][0]
         )
-        self.assertEqual(values["dl_limit"], benchmark.RATE_BPS // 1024)
-        self.assertEqual(values["up_limit"], benchmark.RATE_BPS // 1024)
+        self.assertEqual(values["dl_limit"], benchmark.RATE_BPS)
+        self.assertEqual(values["up_limit"], benchmark.RATE_BPS)
         self.assertTrue(values["limit_lan_peers"])
         self.assertEqual(instance.qbittorrent_rate_readbacks["qbittorrent"], expected)
 
