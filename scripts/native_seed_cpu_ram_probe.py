@@ -55,6 +55,8 @@ SAFE_CONTROL_VALUES = {
     "GLIBC_TUNABLES", "LD_PRELOAD", "RUST_LOG",
 }
 DIAGNOSTIC_METRICS = {
+    "torrentng_stats_snapshot_generation",
+    "torrentng_stats_snapshot_age_milliseconds",
     "torrentng_storage_prepared_slot_allocations_total",
     "torrentng_storage_prepared_slot_reuses_total",
     "torrentng_storage_prepared_active_jobs",
@@ -493,6 +495,35 @@ def cpu_seconds_between(start, end, ticks_per_second):
     return (end["cpu_ticks_user_system"] - start["cpu_ticks_user_system"]) / ticks_per_second
 
 
+def collect_fresh_metrics(fetch, *, timeout=3.0, clock=time.monotonic, wait=time.sleep):
+    """Fence cached counters after this call without blocking the engine actor.
+
+    Age starts at collection start and rounds UP. Compare against time BEFORE
+    the request, so network/handler delay cannot make an older snapshot pass.
+    Older binaries remain comparable but their counters are explicitly unfenced.
+    """
+    started = clock()
+    attempts = 0
+    while True:
+        requested = clock()
+        text = fetch(max(0.001, timeout - (requested - started)))
+        attempts += 1
+        selected = parse_selected_metrics(text)
+        generation = selected.get("torrentng_stats_snapshot_generation")
+        age = selected.get("torrentng_stats_snapshot_age_milliseconds")
+        status = None
+        if generation is None or age is None:
+            status = "unsupported"
+        elif isinstance(generation, (int, float)) and isinstance(age, (int, float)):
+            if generation > 0 and 0 <= age <= (requested - started) * 1000:
+                status = "fresh"
+        elapsed = clock() - started
+        if status or elapsed >= timeout:
+            return text, {"status": status or "timeout", "attempts": attempts,
+                          "elapsed_seconds": elapsed, "generation": generation}
+        wait(min(0.05, timeout - elapsed))
+
+
 def collect_diagnostics(api_port, root_pid, directory, label):
     """Write process maps and optional TorrentNG metrics outside CPU windows."""
     directory.mkdir(parents=True, exist_ok=True)
@@ -542,10 +573,13 @@ def collect_diagnostics(api_port, root_pid, directory, label):
         request = urllib.request.Request(f"http://127.0.0.1:{api_port}/metrics",
             headers={"Authorization": f"Bearer {TOKEN}"})
         # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- URL host is a generated loopback API port and the route and scheme are fixed.
-        with urllib.request.urlopen(request, timeout=15) as response:
-            metrics_text = response.read().decode("utf-8", errors="replace")
+        def fetch(timeout):
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.read().decode("utf-8", errors="replace")
+        metrics_text, freshness = collect_fresh_metrics(fetch)
         metrics_path.write_text(metrics_text)
         result["metrics"] = parse_selected_metrics(metrics_text)
+        result["metrics_freshness"] = freshness
         result["metrics_path"] = str(metrics_path)
     except (OSError, urllib.error.URLError, UnicodeError) as error:
         result["metrics_error"] = str(error)

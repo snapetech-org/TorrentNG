@@ -292,6 +292,13 @@ impl SharedFileCatalogSnapshot {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EngineStats {
+    /// Generation of the last completed detached collection (zero is the
+    /// initial, partial projection). Diagnostic clients must not treat a
+    /// cached response as a fresh collection simply because it just arrived.
+    pub snapshot_generation: u64,
+    /// Age measured from collection START, rounded up to milliseconds. This
+    /// lets a client conservatively fence a snapshot after a workload phase.
+    pub snapshot_age_ms: u64,
     pub torrents_total: u64,
     pub torrents_seeding: u64,
     pub torrents_downloading: u64,

@@ -6636,6 +6636,17 @@ mod tests {
     fn mapped_upload_bounds_residency_and_truncation_is_an_io_error() {
         use std::io::Read;
         use std::os::fd::AsFd;
+        let denied_lock = std::env::var_os("TNG_TEST_DENY_MAPPED_MEMLOCK").is_some();
+        if denied_lock {
+            // This branch runs only in the isolated child below. Never lower
+            // process-wide limits in the parallel test runner.
+            let limit = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            // SAFETY: setrlimit reads a valid limit and affects only this child.
+            assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &limit) }, 0);
+        }
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("payload");
         std::fs::write(&path, vec![0x5a; 1024 * 1024]).unwrap();
@@ -6656,9 +6667,21 @@ mod tests {
             manager: &manager,
         };
         let mut cache = crate::mapped_upload::MappedUploadCache::default();
-        let first = cache.read(file.clone(), &path, 0, 4, 0, budget).unwrap();
+        // An unaligned multi-page request checks every requested page, not only
+        // the first page in the mapped window.
+        let first = cache.read(file.clone(), &path, 7, 8192, 0, budget).unwrap();
+        if denied_lock {
+            assert!(
+                first.is_none(),
+                "denied locking must select buffered fallback"
+            );
+            assert_eq!(cache.cached_bytes(), 0);
+            assert_eq!(manager.used_bytes.load(Ordering::Relaxed), 0);
+            println!("mapped-memlock-denial-verified");
+            return;
+        }
         let Some(first) = first else {
-            // Old kernels explicitly select the buffered fallback.
+            // A denied memory-lock allowance selects the buffered fallback.
             assert_eq!(cache.cached_bytes(), 0);
             return;
         };
@@ -6666,6 +6689,8 @@ mod tests {
             .read(file.clone(), &path, 256 * 1024, 4, 0, budget)
             .unwrap()
             .unwrap();
+        first.assert_resident_and_locked();
+        second.assert_resident_and_locked();
         assert_eq!(cache.cached_bytes(), 512 * 1024);
         assert!(cache
             .read(file.clone(), &path, 512 * 1024, 4, 0, budget)
@@ -6682,7 +6707,7 @@ mod tests {
         receiver.read_exact(&mut bytes).unwrap();
         assert_eq!(&bytes, b"hZZZZ");
         assert!(first
-            .try_send_frames(sender.as_fd(), &[(b"", 3, 2)])
+            .try_send_frames(sender.as_fd(), &[(b"", first.len() - 1, 2)])
             .is_err());
         std::fs::OpenOptions::new()
             .write(true)
@@ -6699,6 +6724,40 @@ mod tests {
         drop((first, second));
         assert_eq!(cache.reclaim(u64::MAX), 512 * 1024);
         assert_eq!(manager.used_bytes.load(Ordering::Relaxed), 0);
+    }
+
+    #[cfg(all(target_os = "linux", feature = "seed-mmap"))]
+    #[test]
+    fn mapped_upload_denied_memlock_releases_admission() {
+        // CAP_IPC_LOCK bypasses RLIMIT_MEMLOCK; exercise the limit only when
+        // this environment actually enforces it (including ordinary CI).
+        let status = std::fs::read_to_string("/proc/self/status").unwrap();
+        let capabilities = status
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("CapEff:")
+                    .and_then(|bits| u64::from_str_radix(bits.trim(), 16).ok())
+            })
+            .unwrap();
+        if capabilities & (1 << 14) != 0 {
+            return;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "scheduler::tests::mapped_upload_bounds_residency_and_truncation_is_an_io_error",
+                "--nocapture",
+            ])
+            .env("TNG_TEST_DENY_MAPPED_MEMLOCK", "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("mapped-memlock-denial-verified"));
     }
 
     #[cfg(all(target_os = "linux", feature = "seed-mmap"))]

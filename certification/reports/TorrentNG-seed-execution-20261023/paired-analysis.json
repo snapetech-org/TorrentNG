@@ -1,0 +1,1325 @@
+{
+  "format": "torrentng-seed-execution-qualified-v1",
+  "primary": "scoped-ordered-buffered",
+  "secondary": "scoped-ordered-mapped",
+  "cells": {
+    "scoped-ordered-buffered": {
+      "rows": [
+        {
+          "round": 1,
+          "cpu_seconds_per_gib": 3.435221904,
+          "peak_pss_mib": 12.154296875,
+          "peak_anonymous_mib": 4.71484375,
+          "payload_goodput_mib_s": 3.9999798561016537,
+          "max_peer_first_payload_ms": 1.2315260028117336,
+          "connection_wait_cpu_seconds": 0.000793816,
+          "setup_recheck_cpu_seconds": 0.06664927
+        },
+        {
+          "round": 2,
+          "cpu_seconds_per_gib": 3.229501872,
+          "peak_pss_mib": 11.7119140625,
+          "peak_anonymous_mib": 4.33203125,
+          "payload_goodput_mib_s": 3.9999792693580565,
+          "max_peer_first_payload_ms": 1.837864998378791,
+          "connection_wait_cpu_seconds": 0.000899773,
+          "setup_recheck_cpu_seconds": 0.063704474
+        },
+        {
+          "round": 3,
+          "cpu_seconds_per_gib": 3.237421904,
+          "peak_pss_mib": 11.5234375,
+          "peak_anonymous_mib": 4.203125,
+          "payload_goodput_mib_s": 3.9999802425966666,
+          "max_peer_first_payload_ms": 1.5476689950446598,
+          "connection_wait_cpu_seconds": 0.000725475,
+          "setup_recheck_cpu_seconds": 0.068434625
+        },
+        {
+          "round": 4,
+          "cpu_seconds_per_gib": 3.69852232,
+          "peak_pss_mib": 11.4716796875,
+          "peak_anonymous_mib": 4.34375,
+          "payload_goodput_mib_s": 3.999979399107049,
+          "max_peer_first_payload_ms": 3.205937005986925,
+          "connection_wait_cpu_seconds": 0.000967634,
+          "setup_recheck_cpu_seconds": 0.065744558
+        },
+        {
+          "round": 5,
+          "cpu_seconds_per_gib": 3.614208976,
+          "peak_pss_mib": 11.5185546875,
+          "peak_anonymous_mib": 4.265625,
+          "payload_goodput_mib_s": 3.999977372627416,
+          "max_peer_first_payload_ms": 2.2140719956951216,
+          "connection_wait_cpu_seconds": 0.000792503,
+          "setup_recheck_cpu_seconds": 0.078029586
+        },
+        {
+          "round": 6,
+          "cpu_seconds_per_gib": 3.303019568,
+          "peak_pss_mib": 11.4921875,
+          "peak_anonymous_mib": 4.265625,
+          "payload_goodput_mib_s": 3.999979444104746,
+          "max_peer_first_payload_ms": 1.6112099983729422,
+          "connection_wait_cpu_seconds": 0.000829749,
+          "setup_recheck_cpu_seconds": 0.075982386
+        },
+        {
+          "round": 7,
+          "cpu_seconds_per_gib": 4.086907424,
+          "peak_pss_mib": 11.53515625,
+          "peak_anonymous_mib": 4.27734375,
+          "payload_goodput_mib_s": 3.9999794706053304,
+          "max_peer_first_payload_ms": 1.4809069980401546,
+          "connection_wait_cpu_seconds": 0.000709251,
+          "setup_recheck_cpu_seconds": 0.069093585
+        },
+        {
+          "round": 8,
+          "cpu_seconds_per_gib": 3.795753536,
+          "peak_pss_mib": 11.52734375,
+          "peak_anonymous_mib": 4.21875,
+          "payload_goodput_mib_s": 3.999979028360844,
+          "max_peer_first_payload_ms": 1.6855639987625182,
+          "connection_wait_cpu_seconds": 0.000686175,
+          "setup_recheck_cpu_seconds": 0.075848153
+        },
+        {
+          "round": 9,
+          "cpu_seconds_per_gib": 3.310222064,
+          "peak_pss_mib": 11.76953125,
+          "peak_anonymous_mib": 4.296875,
+          "payload_goodput_mib_s": 3.9999807515922323,
+          "max_peer_first_payload_ms": 1.646753000386525,
+          "connection_wait_cpu_seconds": 0.000710162,
+          "setup_recheck_cpu_seconds": 0.068516964
+        },
+        {
+          "round": 10,
+          "cpu_seconds_per_gib": 3.3818872,
+          "peak_pss_mib": 11.34375,
+          "peak_anonymous_mib": 4.20703125,
+          "payload_goodput_mib_s": 3.999979194609282,
+          "max_peer_first_payload_ms": 1.7700110038276762,
+          "connection_wait_cpu_seconds": 0.000710804,
+          "setup_recheck_cpu_seconds": 0.065242939
+        }
+      ],
+      "metrics": {
+        "cpu_seconds_per_gib": {
+          "median": 3.408554552,
+          "min": 3.229501872,
+          "max": 4.086907424
+        },
+        "peak_pss_mib": {
+          "median": 11.525390625,
+          "min": 11.34375,
+          "max": 12.154296875
+        },
+        "peak_anonymous_mib": {
+          "median": 4.271484375,
+          "min": 4.203125,
+          "max": 4.71484375
+        },
+        "payload_goodput_mib_s": {
+          "median": 3.9999794216058975,
+          "min": 3.999977372627416,
+          "max": 3.9999807515922323
+        },
+        "max_peer_first_payload_ms": {
+          "median": 1.6661584995745216,
+          "min": 1.2315260028117336,
+          "max": 3.205937005986925
+        },
+        "connection_wait_cpu_seconds": {
+          "median": 0.000758989,
+          "min": 0.000686175,
+          "max": 0.000967634
+        },
+        "setup_recheck_cpu_seconds": {
+          "median": 0.06847579449999999,
+          "min": 0.063704474,
+          "max": 0.078029586
+        }
+      }
+    },
+    "scoped-ordered-mapped": {
+      "rows": [
+        {
+          "round": 1,
+          "cpu_seconds_per_gib": 3.71975888,
+          "peak_pss_mib": 11.01953125,
+          "peak_anonymous_mib": 3.44921875,
+          "payload_goodput_mib_s": 3.9999827125758647,
+          "max_peer_first_payload_ms": 1.5559120001853444,
+          "connection_wait_cpu_seconds": 0.000722831,
+          "setup_recheck_cpu_seconds": 0.070698565
+        },
+        {
+          "round": 2,
+          "cpu_seconds_per_gib": 3.558180688,
+          "peak_pss_mib": 10.9677734375,
+          "peak_anonymous_mib": 3.4375,
+          "payload_goodput_mib_s": 3.999979858100703,
+          "max_peer_first_payload_ms": 2.191519000916742,
+          "connection_wait_cpu_seconds": 0.000557697,
+          "setup_recheck_cpu_seconds": 0.069787403
+        },
+        {
+          "round": 3,
+          "cpu_seconds_per_gib": 3.236074592,
+          "peak_pss_mib": 11.1552734375,
+          "peak_anonymous_mib": 3.43359375,
+          "payload_goodput_mib_s": 3.999973396427364,
+          "max_peer_first_payload_ms": 1.4311440027086064,
+          "connection_wait_cpu_seconds": 0.000575333,
+          "setup_recheck_cpu_seconds": 0.090402106
+        },
+        {
+          "round": 4,
+          "cpu_seconds_per_gib": 3.29689216,
+          "peak_pss_mib": 10.9501953125,
+          "peak_anonymous_mib": 3.3984375,
+          "payload_goodput_mib_s": 3.9999757006465235,
+          "max_peer_first_payload_ms": 1.606603000254836,
+          "connection_wait_cpu_seconds": 0.000423337,
+          "setup_recheck_cpu_seconds": 0.09557854
+        },
+        {
+          "round": 5,
+          "cpu_seconds_per_gib": 4.066317632,
+          "peak_pss_mib": 11.0927734375,
+          "peak_anonymous_mib": 3.44140625,
+          "payload_goodput_mib_s": 3.999974551661596,
+          "max_peer_first_payload_ms": 1.808656998036895,
+          "connection_wait_cpu_seconds": 0.000602934,
+          "setup_recheck_cpu_seconds": 0.079087585
+        },
+        {
+          "round": 6,
+          "cpu_seconds_per_gib": 3.53499336,
+          "peak_pss_mib": 11.1484375,
+          "peak_anonymous_mib": 3.44140625,
+          "payload_goodput_mib_s": 3.9999793813557143,
+          "max_peer_first_payload_ms": 1.3806249990011565,
+          "connection_wait_cpu_seconds": 0.000550955,
+          "setup_recheck_cpu_seconds": 0.066074929
+        },
+        {
+          "round": 7,
+          "cpu_seconds_per_gib": 3.626306016,
+          "peak_pss_mib": 11.39453125,
+          "peak_anonymous_mib": 3.3984375,
+          "payload_goodput_mib_s": 3.999982037331112,
+          "max_peer_first_payload_ms": 1.5307310022762977,
+          "connection_wait_cpu_seconds": 0.000442825,
+          "setup_recheck_cpu_seconds": 0.070517745
+        },
+        {
+          "round": 8,
+          "cpu_seconds_per_gib": 3.525572128,
+          "peak_pss_mib": 11.1171875,
+          "peak_anonymous_mib": 3.4375,
+          "payload_goodput_mib_s": 3.999978284367557,
+          "max_peer_first_payload_ms": 1.8972010002471507,
+          "connection_wait_cpu_seconds": 0.000562181,
+          "setup_recheck_cpu_seconds": 0.070387786
+        },
+        {
+          "round": 9,
+          "cpu_seconds_per_gib": 3.28927832,
+          "peak_pss_mib": 11.203125,
+          "peak_anonymous_mib": 3.41015625,
+          "payload_goodput_mib_s": 3.999979705101594,
+          "max_peer_first_payload_ms": 7.0928229979472235,
+          "connection_wait_cpu_seconds": 0.000698406,
+          "setup_recheck_cpu_seconds": 0.069851369
+        },
+        {
+          "round": 10,
+          "cpu_seconds_per_gib": 3.334596816,
+          "peak_pss_mib": 10.953125,
+          "peak_anonymous_mib": 3.4453125,
+          "payload_goodput_mib_s": 3.999976032144247,
+          "max_peer_first_payload_ms": 1.5858420010772534,
+          "connection_wait_cpu_seconds": 0.000650153,
+          "setup_recheck_cpu_seconds": 0.066441353
+        }
+      ],
+      "metrics": {
+        "cpu_seconds_per_gib": {
+          "median": 3.530282744,
+          "min": 3.236074592,
+          "max": 4.066317632
+        },
+        "peak_pss_mib": {
+          "median": 11.10498046875,
+          "min": 10.9501953125,
+          "max": 11.39453125
+        },
+        "peak_anonymous_mib": {
+          "median": 3.4375,
+          "min": 3.3984375,
+          "max": 3.44921875
+        },
+        "payload_goodput_mib_s": {
+          "median": 3.9999788328616357,
+          "min": 3.999973396427364,
+          "max": 3.9999827125758647
+        },
+        "max_peer_first_payload_ms": {
+          "median": 1.5962225006660447,
+          "min": 1.3806249990011565,
+          "max": 7.0928229979472235
+        },
+        "connection_wait_cpu_seconds": {
+          "median": 0.000568757,
+          "min": 0.000423337,
+          "max": 0.000722831
+        },
+        "setup_recheck_cpu_seconds": {
+          "median": 0.0704527655,
+          "min": 0.066074929,
+          "max": 0.09557854
+        }
+      }
+    },
+    "previous-selected": {
+      "rows": [
+        {
+          "round": 1,
+          "cpu_seconds_per_gib": 3.186134368,
+          "peak_pss_mib": 12.5068359375,
+          "peak_anonymous_mib": 5.4609375,
+          "payload_goodput_mib_s": 3.9999727629364514,
+          "max_peer_first_payload_ms": 1.8488999994588085,
+          "connection_wait_cpu_seconds": 0.000533941,
+          "setup_recheck_cpu_seconds": 0.067607312
+        },
+        {
+          "round": 2,
+          "cpu_seconds_per_gib": 3.650737648,
+          "peak_pss_mib": 12.5341796875,
+          "peak_anonymous_mib": 5.5234375,
+          "payload_goodput_mib_s": 3.9999530793003624,
+          "max_peer_first_payload_ms": 1.6907800018088892,
+          "connection_wait_cpu_seconds": 0.000689953,
+          "setup_recheck_cpu_seconds": 0.073079217
+        },
+        {
+          "round": 3,
+          "cpu_seconds_per_gib": 2.986270288,
+          "peak_pss_mib": 12.546875,
+          "peak_anonymous_mib": 5.47265625,
+          "payload_goodput_mib_s": 3.999974467661736,
+          "max_peer_first_payload_ms": 3.2954759954009205,
+          "connection_wait_cpu_seconds": 0.000568443,
+          "setup_recheck_cpu_seconds": 0.07217243
+        },
+        {
+          "round": 4,
+          "cpu_seconds_per_gib": 3.744753536,
+          "peak_pss_mib": 13.1005859375,
+          "peak_anonymous_mib": 6.09765625,
+          "payload_goodput_mib_s": 3.9999787121128687,
+          "max_peer_first_payload_ms": 2.0609429993783124,
+          "connection_wait_cpu_seconds": 0.000792976,
+          "setup_recheck_cpu_seconds": 0.084200341
+        },
+        {
+          "round": 5,
+          "cpu_seconds_per_gib": 3.397561408,
+          "peak_pss_mib": 12.4697265625,
+          "peak_anonymous_mib": 5.4375,
+          "payload_goodput_mib_s": 3.999978141120064,
+          "max_peer_first_payload_ms": 1.7181420043925755,
+          "connection_wait_cpu_seconds": 0.00067524,
+          "setup_recheck_cpu_seconds": 0.071529531
+        },
+        {
+          "round": 6,
+          "cpu_seconds_per_gib": 3.864830704,
+          "peak_pss_mib": 12.54296875,
+          "peak_anonymous_mib": 5.45703125,
+          "payload_goodput_mib_s": 3.999982018832156,
+          "max_peer_first_payload_ms": 1.8039150018012151,
+          "connection_wait_cpu_seconds": 0.001100449,
+          "setup_recheck_cpu_seconds": 0.066792395
+        },
+        {
+          "round": 7,
+          "cpu_seconds_per_gib": 3.513183728,
+          "peak_pss_mib": 13.9765625,
+          "peak_anonymous_mib": 6.73046875,
+          "payload_goodput_mib_s": 3.999976889383846,
+          "max_peer_first_payload_ms": 2.315126999747008,
+          "connection_wait_cpu_seconds": 0.000654229,
+          "setup_recheck_cpu_seconds": 0.073142373
+        },
+        {
+          "round": 8,
+          "cpu_seconds_per_gib": 4.366938192,
+          "peak_pss_mib": 12.671875,
+          "peak_anonymous_mib": 5.46875,
+          "payload_goodput_mib_s": 3.999977211381293,
+          "max_peer_first_payload_ms": 2.231267004390247,
+          "connection_wait_cpu_seconds": 0.00078179,
+          "setup_recheck_cpu_seconds": 0.093459894
+        },
+        {
+          "round": 9,
+          "cpu_seconds_per_gib": 3.024150544,
+          "peak_pss_mib": 12.45703125,
+          "peak_anonymous_mib": 5.46875,
+          "payload_goodput_mib_s": 3.9999799515994567,
+          "max_peer_first_payload_ms": 1.5887549961917102,
+          "connection_wait_cpu_seconds": 0.000635222,
+          "setup_recheck_cpu_seconds": 0.075995883
+        },
+        {
+          "round": 10,
+          "cpu_seconds_per_gib": 2.87082552,
+          "peak_pss_mib": 12.44921875,
+          "peak_anonymous_mib": 5.4609375,
+          "payload_goodput_mib_s": 3.9999804345963867,
+          "max_peer_first_payload_ms": 1.5069880028022453,
+          "connection_wait_cpu_seconds": 0.00059467,
+          "setup_recheck_cpu_seconds": 0.072755536
+        }
+      ],
+      "metrics": {
+        "cpu_seconds_per_gib": {
+          "median": 3.455372568,
+          "min": 2.87082552,
+          "max": 4.366938192
+        },
+        "peak_pss_mib": {
+          "median": 12.53857421875,
+          "min": 12.44921875,
+          "max": 13.9765625
+        },
+        "peak_anonymous_mib": {
+          "median": 5.46875,
+          "min": 5.4375,
+          "max": 6.73046875
+        },
+        "payload_goodput_mib_s": {
+          "median": 3.9999776762506785,
+          "min": 3.9999530793003624,
+          "max": 3.999982018832156
+        },
+        "max_peer_first_payload_ms": {
+          "median": 1.8264075006300118,
+          "min": 1.5069880028022453,
+          "max": 3.2954759954009205
+        },
+        "connection_wait_cpu_seconds": {
+          "median": 0.0006647345,
+          "min": 0.000533941,
+          "max": 0.001100449
+        },
+        "setup_recheck_cpu_seconds": {
+          "median": 0.07291737649999999,
+          "min": 0.066792395,
+          "max": 0.093459894
+        }
+      }
+    },
+    "rtorrent": {
+      "rows": [
+        {
+          "round": 1,
+          "cpu_seconds_per_gib": 2.250361152,
+          "peak_pss_mib": 10.1142578125,
+          "peak_anonymous_mib": 2.59375,
+          "payload_goodput_mib_s": 3.999978853361354,
+          "max_peer_first_payload_ms": 1.1973309956374578,
+          "connection_wait_cpu_seconds": 0.000296559,
+          "setup_recheck_cpu_seconds": null
+        },
+        {
+          "round": 2,
+          "cpu_seconds_per_gib": 2.143420768,
+          "peak_pss_mib": 10.537109375,
+          "peak_anonymous_mib": 2.58984375,
+          "payload_goodput_mib_s": 3.9999633720861136,
+          "max_peer_first_payload_ms": 1.2970970055903308,
+          "connection_wait_cpu_seconds": 0.000378751,
+          "setup_recheck_cpu_seconds": null
+        },
+        {
+          "round": 3,
+          "cpu_seconds_per_gib": 2.30943744,
+          "peak_pss_mib": 10.494140625,
+          "peak_anonymous_mib": 2.59375,
+          "payload_goodput_mib_s": 3.9999794296057303,
+          "max_peer_first_payload_ms": 1.4166929977363907,
+          "connection_wait_cpu_seconds": 0.0003978,
+          "setup_recheck_cpu_seconds": null
+        },
+        {
+          "round": 4,
+          "cpu_seconds_per_gib": 2.506802864,
+          "peak_pss_mib": 10.705078125,
+          "peak_anonymous_mib": 2.58984375,
+          "payload_goodput_mib_s": 3.999979288357204,
+          "max_peer_first_payload_ms": 1.8598379974719137,
+          "connection_wait_cpu_seconds": 0.000338684,
+          "setup_recheck_cpu_seconds": null
+        },
+        {
+          "round": 5,
+          "cpu_seconds_per_gib": 2.871192832,
+          "peak_pss_mib": 10.6435546875,
+          "peak_anonymous_mib": 2.59375,
+          "payload_goodput_mib_s": 3.999979347606533,
+          "max_peer_first_payload_ms": 1.5268370043486357,
+          "connection_wait_cpu_seconds": 0.000328838,
+          "setup_recheck_cpu_seconds": null
+        },
+        {
+          "round": 6,
+          "cpu_seconds_per_gib": 2.455732736,
+          "peak_pss_mib": 10.693359375,
+          "peak_anonymous_mib": 2.58984375,
+          "payload_goodput_mib_s": 3.999979422355313,
+          "max_peer_first_payload_ms": 1.5194769948720932,
+          "connection_wait_cpu_seconds": 0.000352642,
+          "setup_recheck_cpu_seconds": null
+        },
+        {
+          "round": 7,
+          "cpu_seconds_per_gib": 2.645492752,
+          "peak_pss_mib": 10.619140625,
+          "peak_anonymous_mib": 2.59765625,
+          "payload_goodput_mib_s": 3.999979517603897,
+          "max_peer_first_payload_ms": 1.5615160009474494,
+          "connection_wait_cpu_seconds": 0.000409717,
+          "setup_recheck_cpu_seconds": null
+        },
+        {
+          "round": 8,
+          "cpu_seconds_per_gib": 2.557690448,
+          "peak_pss_mib": 10.482421875,
+          "peak_anonymous_mib": 2.5859375,
+          "payload_goodput_mib_s": 3.999979121859559,
+          "max_peer_first_payload_ms": 1.266444000066258,
+          "connection_wait_cpu_seconds": 0.000374695,
+          "setup_recheck_cpu_seconds": null
+        },
+        {
+          "round": 9,
+          "cpu_seconds_per_gib": 2.422941616,
+          "peak_pss_mib": 10.443359375,
+          "peak_anonymous_mib": 2.58984375,
+          "payload_goodput_mib_s": 3.9999740621687407,
+          "max_peer_first_payload_ms": 1.5157890011323616,
+          "connection_wait_cpu_seconds": 0.000413774,
+          "setup_recheck_cpu_seconds": null
+        },
+        {
+          "round": 10,
+          "cpu_seconds_per_gib": 2.11547968,
+          "peak_pss_mib": 10.529296875,
+          "peak_anonymous_mib": 2.58984375,
+          "payload_goodput_mib_s": 3.9999803533465648,
+          "max_peer_first_payload_ms": 1.5569489987683482,
+          "connection_wait_cpu_seconds": 0.000375247,
+          "setup_recheck_cpu_seconds": null
+        }
+      ],
+      "metrics": {
+        "cpu_seconds_per_gib": {
+          "median": 2.439337176,
+          "min": 2.11547968,
+          "max": 2.871192832
+        },
+        "peak_pss_mib": {
+          "median": 10.533203125,
+          "min": 10.1142578125,
+          "max": 10.705078125
+        },
+        "peak_anonymous_mib": {
+          "median": 2.58984375,
+          "min": 2.5859375,
+          "max": 2.59765625
+        },
+        "payload_goodput_mib_s": {
+          "median": 3.9999793179818686,
+          "min": 3.9999633720861136,
+          "max": 3.9999803533465648
+        },
+        "max_peer_first_payload_ms": {
+          "median": 1.5176329980022274,
+          "min": 1.1973309956374578,
+          "max": 1.8598379974719137
+        },
+        "connection_wait_cpu_seconds": {
+          "median": 0.000374971,
+          "min": 0.000296559,
+          "max": 0.000413774
+        },
+        "setup_recheck_cpu_seconds": null
+      }
+    },
+    "base-pgo": {
+      "rows": [
+        {
+          "round": 1,
+          "cpu_seconds_per_gib": 3.44623592,
+          "peak_pss_mib": 15.7333984375,
+          "peak_anonymous_mib": 5.9921875,
+          "payload_goodput_mib_s": 3.9999808560921704,
+          "max_peer_first_payload_ms": 1.92453499766998,
+          "connection_wait_cpu_seconds": 0.000810534,
+          "setup_recheck_cpu_seconds": 0.071645236
+        },
+        {
+          "round": 2,
+          "cpu_seconds_per_gib": 3.38483784,
+          "peak_pss_mib": 15.875,
+          "peak_anonymous_mib": 6.01953125,
+          "payload_goodput_mib_s": 3.999977196631276,
+          "max_peer_first_payload_ms": 1.786649001587648,
+          "connection_wait_cpu_seconds": 0.000715341,
+          "setup_recheck_cpu_seconds": 0.068911256
+        },
+        {
+          "round": 3,
+          "cpu_seconds_per_gib": 3.68659584,
+          "peak_pss_mib": 16.65625,
+          "peak_anonymous_mib": 6.484375,
+          "payload_goodput_mib_s": 3.999979086109515,
+          "max_peer_first_payload_ms": 1.9282779976492748,
+          "connection_wait_cpu_seconds": 0.000835747,
+          "setup_recheck_cpu_seconds": 0.06729875
+        },
+        {
+          "round": 4,
+          "cpu_seconds_per_gib": 3.49751544,
+          "peak_pss_mib": 15.95703125,
+          "peak_anonymous_mib": 5.98828125,
+          "payload_goodput_mib_s": 3.9999797758522893,
+          "max_peer_first_payload_ms": 1.7806899995775893,
+          "connection_wait_cpu_seconds": 0.00067457,
+          "setup_recheck_cpu_seconds": 0.062905333
+        },
+        {
+          "round": 5,
+          "cpu_seconds_per_gib": 3.340373664,
+          "peak_pss_mib": 15.6982421875,
+          "peak_anonymous_mib": 5.9453125,
+          "payload_goodput_mib_s": 3.999980006850707,
+          "max_peer_first_payload_ms": 1.7986820021178573,
+          "connection_wait_cpu_seconds": 0.000660298,
+          "setup_recheck_cpu_seconds": 0.073238866
+        },
+        {
+          "round": 6,
+          "cpu_seconds_per_gib": 3.89264312,
+          "peak_pss_mib": 16.14453125,
+          "peak_anonymous_mib": 6.0625,
+          "payload_goodput_mib_s": 3.999979399856465,
+          "max_peer_first_payload_ms": 1.5057950004120357,
+          "connection_wait_cpu_seconds": 0.000590995,
+          "setup_recheck_cpu_seconds": 0.072925433
+        },
+        {
+          "round": 7,
+          "cpu_seconds_per_gib": 3.8300344,
+          "peak_pss_mib": 16.3515625,
+          "peak_anonymous_mib": 6.4765625,
+          "payload_goodput_mib_s": 3.9999786658637366,
+          "max_peer_first_payload_ms": 1.6708370021660812,
+          "connection_wait_cpu_seconds": 0.000642192,
+          "setup_recheck_cpu_seconds": 0.070054637
+        },
+        {
+          "round": 8,
+          "cpu_seconds_per_gib": 3.667426976,
+          "peak_pss_mib": 16.375,
+          "peak_anonymous_mib": 6.5,
+          "payload_goodput_mib_s": 3.9999790726091167,
+          "max_peer_first_payload_ms": 1.530310997623019,
+          "connection_wait_cpu_seconds": 0.00064642,
+          "setup_recheck_cpu_seconds": 0.068820068
+        },
+        {
+          "round": 9,
+          "cpu_seconds_per_gib": 3.629976512,
+          "peak_pss_mib": 15.8828125,
+          "peak_anonymous_mib": 6.00390625,
+          "payload_goodput_mib_s": 3.999974642660842,
+          "max_peer_first_payload_ms": 1.5730829982203431,
+          "connection_wait_cpu_seconds": 0.000583265,
+          "setup_recheck_cpu_seconds": 0.071802674
+        },
+        {
+          "round": 10,
+          "cpu_seconds_per_gib": 3.35570296,
+          "peak_pss_mib": 17.43359375,
+          "peak_anonymous_mib": 7.265625,
+          "payload_goodput_mib_s": 3.9999758471461555,
+          "max_peer_first_payload_ms": 1.6696960010449402,
+          "connection_wait_cpu_seconds": 0.000575483,
+          "setup_recheck_cpu_seconds": 0.071330741
+        }
+      ],
+      "metrics": {
+        "cpu_seconds_per_gib": {
+          "median": 3.563745976,
+          "min": 3.340373664,
+          "max": 3.89264312
+        },
+        "peak_pss_mib": {
+          "median": 16.05078125,
+          "min": 15.6982421875,
+          "max": 17.43359375
+        },
+        "peak_anonymous_mib": {
+          "median": 6.041015625,
+          "min": 5.9453125,
+          "max": 7.265625
+        },
+        "payload_goodput_mib_s": {
+          "median": 3.9999790793593157,
+          "min": 3.999974642660842,
+          "max": 3.9999808560921704
+        },
+        "max_peer_first_payload_ms": {
+          "median": 1.7257635008718353,
+          "min": 1.5057950004120357,
+          "max": 1.9282779976492748
+        },
+        "connection_wait_cpu_seconds": {
+          "median": 0.0006533590000000001,
+          "min": 0.000575483,
+          "max": 0.000835747
+        },
+        "setup_recheck_cpu_seconds": {
+          "median": 0.070692689,
+          "min": 0.062905333,
+          "max": 0.073238866
+        }
+      }
+    }
+  },
+  "comparisons": [
+    {
+      "format": "torrentng-paired-efficiency-v1",
+      "control": "base-pgo",
+      "candidate": "scoped-ordered-buffered",
+      "rounds": 10,
+      "tolerance": 0.02,
+      "minimum_rounds": 10,
+      "metrics": {
+        "cpu_seconds_per_gib": {
+          "paired_ratios": [
+            0.9968040446865286,
+            0.9541082984347635,
+            0.8781602444384031,
+            1.0574713345654307,
+            1.0819774490953478,
+            0.8485287415713568,
+            1.0670680722867658,
+            1.0349908971166384,
+            0.9119128052363552,
+            1.007802907561282
+          ],
+          "paired_median": 1.0023034761239054,
+          "wins": 5,
+          "interval": [
+            0.8950365248373792,
+            1.0622697034260984
+          ]
+        },
+        "peak_pss_bytes": {
+          "paired_ratios": [
+            0.7725156725218795,
+            0.7377583661417323,
+            0.6918386491557224,
+            0.7189106487148103,
+            0.7337480559875583,
+            0.711831599322526,
+            0.7054467271858577,
+            0.7039599236641222,
+            0.7410231185440236,
+            0.6506833968182837
+          ],
+          "paired_median": 0.7153711240186682,
+          "wins": 10,
+          "interval": [
+            0.6978992864099223,
+            0.7393907423428779
+          ]
+        },
+        "peak_anonymous_bytes": {
+          "paired_ratios": [
+            0.7868318122555411,
+            0.7196625567813109,
+            0.6481927710843374,
+            0.7253750815394651,
+            0.7174770039421814,
+            0.7036082474226805,
+            0.6604342581423401,
+            0.6490384615384616,
+            0.715679895901106,
+            0.5790322580645161
+          ],
+          "paired_median": 0.7096440716618932,
+          "wins": 10,
+          "interval": [
+            0.6486156163113994,
+            0.722518819160388
+          ]
+        }
+      },
+      "clean_provenance": true,
+      "resource_gate": "inconclusive_or_regression",
+      "claim_scope": "this workload and host only; correctness, goodput and latency gates remain mandatory"
+    },
+    {
+      "format": "torrentng-paired-efficiency-v1",
+      "control": "previous-selected",
+      "candidate": "scoped-ordered-buffered",
+      "rounds": 10,
+      "tolerance": 0.02,
+      "minimum_rounds": 10,
+      "metrics": {
+        "cpu_seconds_per_gib": {
+          "paired_ratios": [
+            1.0781786036714947,
+            0.8846162565993294,
+            1.0841021045580588,
+            0.9876544035393628,
+            1.0637656077355586,
+            0.8546349946406345,
+            1.1633059186251586,
+            0.8692024867568814,
+            1.094595661108067,
+            1.1780190667944181
+          ],
+          "paired_median": 1.0709721057035266,
+          "wins": 4,
+          "interval": [
+            0.8769093716781053,
+            1.1289507898666127
+          ]
+        },
+        "peak_pss_bytes": {
+          "paired_ratios": [
+            0.9718122901538221,
+            0.9343981301129723,
+            0.9184308841843088,
+            0.8756615728661945,
+            0.9237215130393923,
+            0.9162254749299283,
+            0.825321408608161,
+            0.9096794081381011,
+            0.9448102853559109,
+            0.9112017571383747
+          ],
+          "paired_median": 0.9173281795571187,
+          "wins": 10,
+          "interval": [
+            0.8926704905021479,
+            0.9396042077344416
+          ]
+        },
+        "peak_anonymous_bytes": {
+          "paired_ratios": [
+            0.8633762517882689,
+            0.7842998585572843,
+            0.76802284082798,
+            0.712363869314542,
+            0.7844827586206896,
+            0.7816750178954903,
+            0.6355194428322692,
+            0.7714285714285715,
+            0.7857142857142857,
+            0.7703862660944206
+          ],
+          "paired_median": 0.7765517946620308,
+          "wins": 10,
+          "interval": [
+            0.7401933550712609,
+            0.7850985221674877
+          ]
+        }
+      },
+      "clean_provenance": true,
+      "resource_gate": "inconclusive_or_regression",
+      "claim_scope": "this workload and host only; correctness, goodput and latency gates remain mandatory"
+    },
+    {
+      "format": "torrentng-paired-efficiency-v1",
+      "control": "rtorrent",
+      "candidate": "scoped-ordered-buffered",
+      "rounds": 10,
+      "tolerance": 0.02,
+      "minimum_rounds": 10,
+      "metrics": {
+        "cpu_seconds_per_gib": {
+          "paired_ratios": [
+            1.5265202658457553,
+            1.5067045725293635,
+            1.401822733072172,
+            1.4753941656578544,
+            1.2587830868477174,
+            1.3450240409223424,
+            1.5448567836408873,
+            1.4840550931282988,
+            1.366199681470162,
+            1.5986384704957317
+          ],
+          "paired_median": 1.4797246293930766,
+          "wins": 0,
+          "interval": [
+            1.3556118611962522,
+            1.5356885247433212
+          ]
+        },
+        "peak_pss_bytes": {
+          "paired_ratios": [
+            1.2016993337839144,
+            1.1114921223354959,
+            1.0980830076307464,
+            1.071611019886882,
+            1.0822093770070649,
+            1.074703196347032,
+            1.0862608055913188,
+            1.0996832494876094,
+            1.126987095567608,
+            1.0773511407902059
+          ],
+          "paired_median": 1.0921719066110325,
+          "wins": 0,
+          "interval": [
+            1.076027168568619,
+            1.119239608951552
+          ]
+        },
+        "peak_anonymous_bytes": {
+          "paired_ratios": [
+            1.8177710843373494,
+            1.6726998491704375,
+            1.6204819277108433,
+            1.6772247360482655,
+            1.644578313253012,
+            1.6470588235294117,
+            1.6466165413533835,
+            1.6314199395770392,
+            1.6591251885369533,
+            1.6244343891402715
+          ],
+          "paired_median": 1.6468376824413977,
+          "wins": 0,
+          "interval": [
+            1.6279271643586553,
+            1.6749622926093515
+          ]
+        }
+      },
+      "clean_provenance": true,
+      "resource_gate": "inconclusive_or_regression",
+      "claim_scope": "this workload and host only; correctness, goodput and latency gates remain mandatory"
+    },
+    {
+      "format": "torrentng-paired-efficiency-v1",
+      "control": "base-pgo",
+      "candidate": "scoped-ordered-mapped",
+      "rounds": 10,
+      "tolerance": 0.02,
+      "minimum_rounds": 10,
+      "metrics": {
+        "cpu_seconds_per_gib": {
+          "paired_ratios": [
+            1.0793686115371928,
+            1.051211566460153,
+            0.8777947820827574,
+            0.94263834329206,
+            1.217324180172916,
+            0.9081216158341278,
+            0.9468076882024872,
+            0.9613203346846954,
+            0.9061431414573298,
+            0.9937103658304727
+          ],
+          "paired_median": 0.9540640114435912,
+          "wins": 7,
+          "interval": [
+            0.9071323786457288,
+            1.065290088998673
+          ]
+        },
+        "peak_pss_bytes": {
+          "paired_ratios": [
+            0.7003910371795667,
+            0.6908833661417323,
+            0.669734990619137,
+            0.6862301101591187,
+            0.7066251944012442,
+            0.6905395596419066,
+            0.6968466316292403,
+            0.6789122137404581,
+            0.705361534677816,
+            0.6282769437598028
+          ],
+          "paired_median": 0.6907114628918194,
+          "wins": 10,
+          "interval": [
+            0.6743236021797976,
+            0.7028762859286914
+          ]
+        },
+        "peak_anonymous_bytes": {
+          "paired_ratios": [
+            0.575619295958279,
+            0.5710577547047372,
+            0.5295180722891566,
+            0.5675146771037182,
+            0.5788436268068331,
+            0.5676546391752577,
+            0.5247285886610374,
+            0.5288461538461539,
+            0.5679895901106051,
+            0.47419354838709676
+          ],
+          "paired_median": 0.5675846581394879,
+          "wins": 10,
+          "interval": [
+            0.5267873712535956,
+            0.5733385253315081
+          ]
+        }
+      },
+      "clean_provenance": true,
+      "resource_gate": "inconclusive_or_regression",
+      "claim_scope": "this workload and host only; correctness, goodput and latency gates remain mandatory"
+    },
+    {
+      "format": "torrentng-paired-efficiency-v1",
+      "control": "previous-selected",
+      "candidate": "scoped-ordered-mapped",
+      "rounds": 10,
+      "tolerance": 0.02,
+      "minimum_rounds": 10,
+      "metrics": {
+        "cpu_seconds_per_gib": {
+          "paired_ratios": [
+            1.1674833671044975,
+            0.974647052479735,
+            1.0836509357521358,
+            0.880402976672695,
+            1.196834183018834,
+            0.9146567160992002,
+            1.0321993658055564,
+            0.8073327290179333,
+            1.087670164610694,
+            1.161546319262203
+          ],
+          "paired_median": 1.057925150778846,
+          "wins": 4,
+          "interval": [
+            0.8975298463859476,
+            1.1645148431833503
+          ]
+        },
+        "peak_pss_bytes": {
+          "paired_ratios": [
+            0.8810806590146014,
+            0.8750292169848072,
+            0.8890877957658779,
+            0.8358553857622065,
+            0.8895763176442948,
+            0.8888196823419495,
+            0.8152599217439911,
+            0.8773119605425401,
+            0.8993414863593603,
+            0.8798242861625353
+          ],
+          "paired_median": 0.8804524725885683,
+          "wins": 10,
+          "interval": [
+            0.8554423013735069,
+            0.8893320567050864
+          ]
+        },
+        "peak_anonymous_bytes": {
+          "paired_ratios": [
+            0.6316165951359084,
+            0.6223479490806223,
+            0.6274089935760171,
+            0.5573350416399744,
+            0.6329022988505747,
+            0.6306370794559771,
+            0.5049332559489262,
+            0.6285714285714286,
+            0.6235714285714286,
+            0.630901287553648
+          ],
+          "paired_median": 0.6279902110737228,
+          "wins": 10,
+          "interval": [
+            0.5898414953602984,
+            0.6312589413447782
+          ]
+        }
+      },
+      "clean_provenance": true,
+      "resource_gate": "inconclusive_or_regression",
+      "claim_scope": "this workload and host only; correctness, goodput and latency gates remain mandatory"
+    },
+    {
+      "format": "torrentng-paired-efficiency-v1",
+      "control": "rtorrent",
+      "candidate": "scoped-ordered-mapped",
+      "rounds": 10,
+      "tolerance": 0.02,
+      "minimum_rounds": 10,
+      "metrics": {
+        "cpu_seconds_per_gib": {
+          "paired_ratios": [
+            1.6529608488371204,
+            1.6600476869131466,
+            1.4012393390487339,
+            1.3151780729735116,
+            1.4162467900727886,
+            1.439486190080255,
+            1.3707488002976014,
+            1.3784201801108655,
+            1.3575557488794232,
+            1.5762840208420248
+          ],
+          "paired_median": 1.4087430645607613,
+          "wins": 0,
+          "interval": [
+            1.3641522745885122,
+            1.6146224348395726
+          ]
+        },
+        "peak_pss_bytes": {
+          "paired_ratios": [
+            1.0895046828232113,
+            1.0408711770157553,
+            1.063000186115764,
+            1.022897281517971,
+            1.0422057069455914,
+            1.0425570776255708,
+            1.073018208570903,
+            1.0605552450158375,
+            1.072751075369366,
+            1.0402522723056946
+          ],
+          "paired_median": 1.051556161320704,
+          "wins": 0,
+          "interval": [
+            1.040561724660725,
+            1.0728846419701346
+          ]
+        },
+        "peak_anonymous_bytes": {
+          "paired_ratios": [
+            1.3298192771084338,
+            1.3273001508295625,
+            1.3237951807228916,
+            1.3122171945701357,
+            1.3268072289156627,
+            1.3288084464555052,
+            1.3082706766917294,
+            1.3293051359516617,
+            1.3167420814479638,
+            1.330316742081448
+          ],
+          "paired_median": 1.3270536898726126,
+          "wins": 0,
+          "interval": [
+            1.3144796380090498,
+            1.3295622065300479
+          ]
+        }
+      },
+      "clean_provenance": true,
+      "resource_gate": "inconclusive_or_regression",
+      "claim_scope": "this workload and host only; correctness, goodput and latency gates remain mandatory"
+    },
+    {
+      "format": "torrentng-paired-efficiency-v1",
+      "control": "scoped-ordered-buffered",
+      "candidate": "scoped-ordered-mapped",
+      "rounds": 10,
+      "tolerance": 0.02,
+      "minimum_rounds": 10,
+      "metrics": {
+        "cpu_seconds_per_gib": {
+          "paired_ratios": [
+            1.0828292855459156,
+            1.101773842848542,
+            0.9995838318143411,
+            0.8914079393740146,
+            1.1250920074080408,
+            1.0702308258320317,
+            0.8872983015726857,
+            0.9288200865947899,
+            0.9936730093646069,
+            0.9860165696833413
+          ],
+          "paired_median": 0.996628420589474,
+          "wins": 6,
+          "interval": [
+            0.9101140129844023,
+            1.092301564197229
+          ]
+        },
+        "peak_pss_bytes": {
+          "paired_ratios": [
+            0.906636670416198,
+            0.9364629367130827,
+            0.9680508474576272,
+            0.9545415850855538,
+            0.9630351844001696,
+            0.9700883752549286,
+            0.9878090077886895,
+            0.9644188410708234,
+            0.9518752074344508,
+            0.9655647382920111
+          ],
+          "paired_median": 0.9637270127354964,
+          "wins": 10,
+          "interval": [
+            0.9441690720737668,
+            0.9690696113562779
+          ]
+        },
+        "peak_anonymous_bytes": {
+          "paired_ratios": [
+            0.7315658657829329,
+            0.7935076645626691,
+            0.8169144981412639,
+            0.7823741007194245,
+            0.8067765567765568,
+            0.8067765567765568,
+            0.7945205479452054,
+            0.8148148148148148,
+            0.7936363636363636,
+            0.8189415041782729
+          ],
+          "paired_median": 0.8006485523608811,
+          "wins": 10,
+          "interval": [
+            0.7879408826410468,
+            0.8158646564780394
+          ]
+        }
+      },
+      "clean_provenance": true,
+      "resource_gate": "inconclusive_or_regression",
+      "claim_scope": "this workload and host only; correctness, goodput and latency gates remain mandatory"
+    }
+  ],
+  "secondary_phase_comparisons": [
+    {
+      "candidate": "scoped-ordered-buffered",
+      "control": "base-pgo",
+      "setup_recheck_cpu": {
+        "paired_median": 1.001579746498786,
+        "interval95": [
+          0.9302679943716006,
+          1.053665575342005
+        ],
+        "paired_ratios": [
+          0.9302679943716006,
+          0.9244422130399131,
+          1.016878099518936,
+          1.0451348854635265,
+          1.065412263483162,
+          1.041918887200848,
+          0.9862813934786357,
+          1.1021226105152933,
+          0.954239726503779,
+          0.9146538797346855
+        ],
+        "scope": "secondary descriptive interval; outside co-primary family"
+      }
+    },
+    {
+      "candidate": "scoped-ordered-buffered",
+      "control": "previous-selected",
+      "setup_recheck_cpu": {
+        "paired_median": 0.9231164750615153,
+        "interval95": [
+          0.854150111346018,
+          1.0195411996573653
+        ],
+        "paired_ratios": [
+          0.9858293138469992,
+          0.8717180699951943,
+          0.9482100713527313,
+          0.7808110658364198,
+          1.0908723279619994,
+          1.137590379862857,
+          0.9446451101606999,
+          0.8115583032867553,
+          0.9015878399623306,
+          0.8967419194052808
+        ],
+        "scope": "secondary descriptive interval; outside co-primary family"
+      }
+    },
+    {
+      "candidate": "scoped-ordered-mapped",
+      "control": "base-pgo",
+      "setup_recheck_cpu": {
+        "paired_median": 1.0096624017921512,
+        "interval95": [
+          0.9591206862773722,
+          1.183037712034561
+        ],
+        "paired_ratios": [
+          0.986786685998215,
+          1.0127141348287134,
+          1.3432954698267054,
+          1.519402814384593,
+          1.0798581316100662,
+          0.9060615245164195,
+          1.0066106687555887,
+          1.0227799542424165,
+          0.9728240622347852,
+          0.9314546865565295
+        ],
+        "scope": "secondary descriptive interval; outside co-primary family"
+      }
+    },
+    {
+      "candidate": "scoped-ordered-mapped",
+      "control": "previous-selected",
+      "setup_recheck_cpu": {
+        "paired_median": 0.9766872223215793,
+        "interval95": [
+          0.9191467516733768,
+          1.1056634077469347
+        ],
+        "paired_ratios": [
+          1.0457236489449544,
+          0.9549555381798904,
+          1.2525850383588304,
+          1.13513245748019,
+          1.1056634077469347,
+          0.9892582681007321,
+          0.9641161765424265,
+          0.7531335954650237,
+          0.9191467516733768,
+          0.9132137106377719
+        ],
+        "scope": "secondary descriptive interval; outside co-primary family"
+      }
+    }
+  ],
+  "interpretation": [
+    "Each resource interval has Bonferroni joint95 coverage within its comparison.",
+    "No correction covers the entire exploratory family of comparisons.",
+    "Primary selection was frozen before this data; secondary may not replace it post hoc.",
+    "Resource gates do not certify every workload or service-latency parity."
+  ]
+}

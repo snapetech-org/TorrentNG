@@ -353,8 +353,29 @@ fn intersect_sorted(left: &[usize], right: &[usize]) -> Vec<usize> {
     result
 }
 
+/// Cheap shared API state. Replacing a configuration field on a clone keeps
+/// that replacement local; existing Arc-backed mutable stores remain shared.
 #[derive(Clone)]
-pub struct AppState {
+pub struct AppState(Arc<AppStateInner>);
+
+impl std::ops::Deref for AppState {
+    type Target = AppStateInner;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for AppState {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        Arc::make_mut(&mut self.0)
+    }
+}
+
+/// Fields exposed through `AppState`; construct state with its constructors.
+/// Copy-on-write clones configuration and retains the shared store handles.
+#[derive(Clone)]
+pub struct AppStateInner {
     pub registry: Arc<RwLock<SessionRegistry>>,
     pub engine: Option<EngineHandle>,
     /// Daemon-owned shutdown signal. The qBittorrent endpoint only requests
@@ -395,7 +416,7 @@ pub struct AppState {
 
 impl AppState {
     pub fn new() -> Self {
-        AppState {
+        Self(Arc::new(AppStateInner {
             registry: Arc::new(RwLock::new(SessionRegistry::new())),
             engine: None,
             shutdown: None,
@@ -422,11 +443,11 @@ impl AppState {
             torrent_snapshot_refresh: Arc::new(Mutex::new(())),
             active_recheck_cache: Arc::new(RwLock::new(None)),
             active_recheck_refresh: Arc::new(Mutex::new(())),
-        }
+        }))
     }
 
     pub fn with_registry(registry: Arc<RwLock<SessionRegistry>>) -> Self {
-        AppState {
+        Self(Arc::new(AppStateInner {
             registry,
             engine: None,
             shutdown: None,
@@ -453,7 +474,7 @@ impl AppState {
             torrent_snapshot_refresh: Arc::new(Mutex::new(())),
             active_recheck_cache: Arc::new(RwLock::new(None)),
             active_recheck_refresh: Arc::new(Mutex::new(())),
-        }
+        }))
     }
 
     pub fn with_engine(registry: Arc<RwLock<SessionRegistry>>, engine: EngineHandle) -> Self {
@@ -465,7 +486,7 @@ impl AppState {
         engine: EngineHandle,
         api_tokens: Vec<String>,
     ) -> Self {
-        AppState {
+        Self(Arc::new(AppStateInner {
             registry,
             engine: Some(engine),
             shutdown: None,
@@ -492,7 +513,7 @@ impl AppState {
             torrent_snapshot_refresh: Arc::new(Mutex::new(())),
             active_recheck_cache: Arc::new(RwLock::new(None)),
             active_recheck_refresh: Arc::new(Mutex::new(())),
-        }
+        }))
     }
 
     pub fn with_engine_and_tokens_and_metrics(
@@ -685,6 +706,45 @@ impl Default for AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn state_clones_are_compact_and_configuration_is_copy_on_write() {
+        let mut original = AppState::new();
+        original.shutdown = Some(Arc::new(Notify::new()));
+        let mut changed = original.clone();
+        assert_eq!(
+            std::mem::size_of::<AppState>(),
+            std::mem::size_of::<Arc<AppStateInner>>()
+        );
+        assert!(Arc::ptr_eq(&original.0, &changed.0));
+        changed.api_tokens = Arc::new(vec!["changed-token".into()]);
+        changed.shutdown = None;
+        assert!(!Arc::ptr_eq(&original.0, &changed.0));
+        assert!(original.api_tokens.is_empty());
+        assert!(original.shutdown.is_some());
+        assert_eq!(changed.api_tokens.as_slice(), &["changed-token"]);
+        assert!(Arc::ptr_eq(&original.registry, &changed.registry));
+        assert!(Arc::ptr_eq(&original.categories, &changed.categories));
+        assert!(Arc::ptr_eq(&original.idempotency, &changed.idempotency));
+        assert!(Arc::ptr_eq(
+            &original.torrent_snapshot_cache,
+            &changed.torrent_snapshot_cache
+        ));
+        changed
+            .categories
+            .write()
+            .await
+            .insert("shared".into(), "/data".into());
+        assert_eq!(
+            original
+                .categories
+                .read()
+                .await
+                .get("shared")
+                .map(String::as_str),
+            Some("/data")
+        );
+    }
 
     #[test]
     fn journal_refresh_applies_final_entry_state_without_registry_scan() {

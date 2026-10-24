@@ -4250,6 +4250,7 @@ impl TorrentTask {
         pending_command: &mut Option<TorrentCmd>,
         mut job_id: Option<String>,
     ) -> RecheckOutcome {
+        let _frames = rt_storage::frame::global_frame_pool().verification_scope();
         let mut valid = 0usize;
         // A subset recheck (completion `sample` verification) re-hashes only
         // the chosen pieces and leaves every other piece as it was.

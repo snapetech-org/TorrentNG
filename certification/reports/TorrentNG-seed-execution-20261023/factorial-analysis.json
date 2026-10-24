@@ -1,0 +1,505 @@
+{
+  "format": "torrentng-seed-execution-screen-v1",
+  "screen_only": true,
+  "all_transfers_verified": true,
+  "selected": "3-ordered-buffered",
+  "selected_utc": "2026-10-24T00:11:32.017503+00:00",
+  "selection_reason": "CPU-oriented point on CPU/PSS Pareto frontier; mapped backing is not consistently additive. Fresh qualification pending; no resource parity claim. Further activation-owner prototypes will be evaluated separately before final treatment freeze.",
+  "results": [
+    {
+      "name": "3-ordered-mapped",
+      "runs": 3,
+      "binary_sha256": "3c2795978e401c878a8e507b80bf86c6c86c6a7a066b29ebcb37adb2f5eddbbd",
+      "cpu_seconds_per_gib": {
+        "values": [
+          3.055097568,
+          4.13000592,
+          3.60671216
+        ],
+        "median": 3.60671216
+      },
+      "peak_pss_mib": {
+        "values": [
+          13.0556640625,
+          13.21875,
+          13.16015625
+        ],
+        "median": 13.16015625
+      },
+      "peak_anonymous_mib": {
+        "values": [
+          5.45703125,
+          5.45703125,
+          5.46484375
+        ],
+        "median": 5.45703125
+      },
+      "goodput_mib_s": {
+        "values": [
+          3.9999260288678533,
+          3.9999557129914454,
+          3.999949393139092
+        ],
+        "median": 3.999949393139092
+      },
+      "first_payload_delay_ms": {
+        "values": [
+          1.650324004003778,
+          1.5305609995266423,
+          2.0408749987836927
+        ],
+        "median": 1.650324004003778
+      }
+    },
+    {
+      "name": "normal",
+      "runs": 3,
+      "binary_sha256": "50b25056a40bee48a72eb366e85ca3e84ceae0de9c42ff59ae19d8496c3858e0",
+      "cpu_seconds_per_gib": {
+        "values": [
+          4.065278976,
+          4.824461088,
+          4.00539568
+        ],
+        "median": 4.065278976
+      },
+      "peak_pss_mib": {
+        "values": [
+          18.7958984375,
+          18.380859375,
+          19.189453125
+        ],
+        "median": 18.7958984375
+      },
+      "peak_anonymous_mib": {
+        "values": [
+          5.48828125,
+          5.4609375,
+          5.48828125
+        ],
+        "median": 5.48828125
+      },
+      "goodput_mib_s": {
+        "values": [
+          3.9999599209018473,
+          3.9999542365255203,
+          3.9999581544373815
+        ],
+        "median": 3.9999581544373815
+      },
+      "first_payload_delay_ms": {
+        "values": [
+          1.618070004042238,
+          8.117096003843471,
+          1.564541002153419
+        ],
+        "median": 1.618070004042238
+      }
+    },
+    {
+      "name": "rtorrent",
+      "runs": 3,
+      "binary_sha256": "8c27d0f49bfdb9c4b79dc29f9b8b13197dafd6dc55384237429e274d6758dedb",
+      "cpu_seconds_per_gib": {
+        "values": [
+          2.410059232,
+          2.559745088,
+          2.633103456
+        ],
+        "median": 2.559745088
+      },
+      "peak_pss_mib": {
+        "values": [
+          10.525390625,
+          10.359375,
+          10.50390625
+        ],
+        "median": 10.50390625
+      },
+      "peak_anonymous_mib": {
+        "values": [
+          2.578125,
+          2.5703125,
+          2.57421875
+        ],
+        "median": 2.57421875
+      },
+      "goodput_mib_s": {
+        "values": [
+          3.9999574894507077,
+          3.999961167878156,
+          3.9999589674214886
+        ],
+        "median": 3.9999589674214886
+      },
+      "first_payload_delay_ms": {
+        "values": [
+          1.263354999537114,
+          3.2625309977447614,
+          1.2304260017117485
+        ],
+        "median": 1.263354999537114
+      }
+    },
+    {
+      "name": "3-ordered-buffered",
+      "runs": 3,
+      "binary_sha256": "3c2795978e401c878a8e507b80bf86c6c86c6a7a066b29ebcb37adb2f5eddbbd",
+      "cpu_seconds_per_gib": {
+        "values": [
+          3.286560704,
+          3.460570464,
+          3.097448576
+        ],
+        "median": 3.286560704
+      },
+      "peak_pss_mib": {
+        "values": [
+          12.751953125,
+          12.7578125,
+          12.654296875
+        ],
+        "median": 12.751953125
+      },
+      "peak_anonymous_mib": {
+        "values": [
+          5.45703125,
+          5.46875,
+          5.38671875
+        ],
+        "median": 5.45703125
+      },
+      "goodput_mib_s": {
+        "values": [
+          3.9999605793883894,
+          3.9999608683837504,
+          3.999959879404255
+        ],
+        "median": 3.9999605793883894
+      },
+      "first_payload_delay_ms": {
+        "values": [
+          1.6103590023703873,
+          1.5226090035866946,
+          1.6277790055028163
+        ],
+        "median": 1.6103590023703873
+      }
+    },
+    {
+      "name": "s-pgo-mapped",
+      "runs": 3,
+      "binary_sha256": "b5efd447c2969085c034115c578a080ef811256a36c151159a7e8f0fc0beab51",
+      "cpu_seconds_per_gib": {
+        "values": [
+          4.132141056,
+          3.55890608,
+          3.738217984
+        ],
+        "median": 3.738217984
+      },
+      "peak_pss_mib": {
+        "values": [
+          15.8017578125,
+          15.732421875,
+          16.01953125
+        ],
+        "median": 15.8017578125
+      },
+      "peak_anonymous_mib": {
+        "values": [
+          5.37890625,
+          5.3828125,
+          5.421875
+        ],
+        "median": 5.3828125
+      },
+      "goodput_mib_s": {
+        "values": [
+          3.9999488251559137,
+          3.999955055503289,
+          3.9999557109906014
+        ],
+        "median": 3.999955055503289
+      },
+      "first_payload_delay_ms": {
+        "values": [
+          1.5468659985344857,
+          1.5258969942806289,
+          3.0239490006351843
+        ],
+        "median": 1.5468659985344857
+      }
+    },
+    {
+      "name": "3-pgo-mapped",
+      "runs": 3,
+      "binary_sha256": "8d62e6d5a9b81b2084ddd16c578f3fb618a4bd8c0323c117f24ee03d93668f1a",
+      "cpu_seconds_per_gib": {
+        "values": [
+          3.520264768,
+          3.649954688,
+          3.394555296
+        ],
+        "median": 3.520264768
+      },
+      "peak_pss_mib": {
+        "values": [
+          15.7724609375,
+          16.3984375,
+          16.1259765625
+        ],
+        "median": 16.1259765625
+      },
+      "peak_anonymous_mib": {
+        "values": [
+          5.453125,
+          5.46484375,
+          5.4609375
+        ],
+        "median": 5.4609375
+      },
+      "goodput_mib_s": {
+        "values": [
+          3.9999506486105836,
+          3.9999599649023194,
+          3.999959675907089
+        ],
+        "median": 3.999959675907089
+      },
+      "first_payload_delay_ms": {
+        "values": [
+          1.9222199989599176,
+          1.6554860048927367,
+          1.4273790002334863
+        ],
+        "median": 1.6554860048927367
+      }
+    },
+    {
+      "name": "3-pgo-buffered",
+      "runs": 3,
+      "binary_sha256": "8d62e6d5a9b81b2084ddd16c578f3fb618a4bd8c0323c117f24ee03d93668f1a",
+      "cpu_seconds_per_gib": {
+        "values": [
+          4.179109056,
+          3.616545952,
+          4.502121696
+        ],
+        "median": 4.179109056
+      },
+      "peak_pss_mib": {
+        "values": [
+          16.1455078125,
+          15.923828125,
+          16.185546875
+        ],
+        "median": 16.1455078125
+      },
+      "peak_anonymous_mib": {
+        "values": [
+          5.72265625,
+          5.453125,
+          5.94921875
+        ],
+        "median": 5.72265625
+      },
+      "goodput_mib_s": {
+        "values": [
+          3.9999578139479084,
+          3.999966409779652,
+          3.9999108004877866
+        ],
+        "median": 3.9999578139479084
+      },
+      "first_payload_delay_ms": {
+        "values": [
+          1.5415610032505356,
+          1.451230993552599,
+          1.5169699981925078
+        ],
+        "median": 1.5169699981925078
+      }
+    },
+    {
+      "name": "s-ordered-buffered",
+      "runs": 3,
+      "binary_sha256": "cda7535a887d3c5dac972a4836d3dcf94b085afc83b526f2bbfabae9df370080",
+      "cpu_seconds_per_gib": {
+        "values": [
+          3.557603232,
+          3.940888224,
+          4.387238496
+        ],
+        "median": 3.940888224
+      },
+      "peak_pss_mib": {
+        "values": [
+          12.482421875,
+          12.982421875,
+          12.416015625
+        ],
+        "median": 12.482421875
+      },
+      "peak_anonymous_mib": {
+        "values": [
+          5.421875,
+          6.17578125,
+          5.42578125
+        ],
+        "median": 5.42578125
+      },
+      "goodput_mib_s": {
+        "values": [
+          3.9999469082056924,
+          3.999953936530123,
+          3.999961679364473
+        ],
+        "median": 3.999953936530123
+      },
+      "first_payload_delay_ms": {
+        "values": [
+          1.5339430028689094,
+          1.8102829999406822,
+          1.5183419964159839
+        ],
+        "median": 1.5339430028689094
+      }
+    },
+    {
+      "name": "base-pgo",
+      "runs": 3,
+      "binary_sha256": "0fcebda9966ef46884c4cb1f19306557b1d5b59d537ff9c3f77a5fbe1fafa948",
+      "cpu_seconds_per_gib": {
+        "values": [
+          3.676781056,
+          3.43907536,
+          4.002853152
+        ],
+        "median": 3.676781056
+      },
+      "peak_pss_mib": {
+        "values": [
+          17.521484375,
+          17.306640625,
+          17.400390625
+        ],
+        "median": 17.400390625
+      },
+      "peak_anonymous_mib": {
+        "values": [
+          5.98828125,
+          5.98828125,
+          5.99609375
+        ],
+        "median": 5.98828125
+      },
+      "goodput_mib_s": {
+        "values": [
+          3.9999581334357694,
+          3.999945962731237,
+          3.9999573189531863
+        ],
+        "median": 3.9999573189531863
+      },
+      "first_payload_delay_ms": {
+        "values": [
+          1.6738979975343682,
+          1.9007130031241104,
+          1.651027996558696
+        ],
+        "median": 1.6738979975343682
+      }
+    },
+    {
+      "name": "s-ordered-mapped",
+      "runs": 3,
+      "binary_sha256": "cda7535a887d3c5dac972a4836d3dcf94b085afc83b526f2bbfabae9df370080",
+      "cpu_seconds_per_gib": {
+        "values": [
+          3.226877664,
+          3.466635104,
+          4.245257312
+        ],
+        "median": 3.466635104
+      },
+      "peak_pss_mib": {
+        "values": [
+          12.591796875,
+          12.533203125,
+          12.802734375
+        ],
+        "median": 12.591796875
+      },
+      "peak_anonymous_mib": {
+        "values": [
+          5.35546875,
+          5.4140625,
+          5.421875
+        ],
+        "median": 5.4140625
+      },
+      "goodput_mib_s": {
+        "values": [
+          3.9999551725016995,
+          3.999959227415241,
+          3.9999604443929373
+        ],
+        "median": 3.999959227415241
+      },
+      "first_payload_delay_ms": {
+        "values": [
+          1.6115769976750016,
+          1.5422889991896227,
+          1.7750960032572038
+        ],
+        "median": 1.6115769976750016
+      }
+    },
+    {
+      "name": "s-pgo-buffered",
+      "runs": 3,
+      "binary_sha256": "b5efd447c2969085c034115c578a080ef811256a36c151159a7e8f0fc0beab51",
+      "cpu_seconds_per_gib": {
+        "values": [
+          3.703985696,
+          4.476240416,
+          3.37580288
+        ],
+        "median": 3.703985696
+      },
+      "peak_pss_mib": {
+        "values": [
+          15.365234375,
+          15.173828125,
+          15.103515625
+        ],
+        "median": 15.173828125
+      },
+      "peak_anonymous_mib": {
+        "values": [
+          5.41796875,
+          5.4140625,
+          5.4140625
+        ],
+        "median": 5.4140625
+      },
+      "goodput_mib_s": {
+        "values": [
+          3.9999524480641027,
+          3.999958142937971,
+          3.9999519310760174
+        ],
+        "median": 3.9999524480641027
+      },
+      "first_payload_delay_ms": {
+        "values": [
+          1.7278390005230904,
+          5.8164200017927215,
+          1.2774029964930378
+        ],
+        "median": 1.7278390005230904
+      }
+    }
+  ]
+}

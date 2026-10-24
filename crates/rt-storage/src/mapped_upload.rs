@@ -2,7 +2,7 @@
 //! through TNG_SEED_MMAP=1.
 //!
 //! Mappings are never exposed as Rust references. File truncation can revoke
-//! pages at any time; only the kernel accesses them, through MADV_POPULATE_READ
+//! pages at any time; only the kernel accesses them, through mlock
 //! on a disk worker and sendmsg on the socket. Invalidated pages become I/O
 //! errors instead of a userspace SIGBUS or an invalid Rust slice.
 
@@ -52,22 +52,12 @@ impl Window {
             .checked_add(len)
             .filter(|end| *end <= self.len)
             .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
-        // SAFETY: only the kernel dereferences this bounded mapping range.
-        // POPULATE_READ reports errors for inaccessible/truncated pages.
-        if unsafe {
-            libc::madvise(
-                (self.address + aligned) as *mut _,
-                end - aligned,
-                libc::MADV_POPULATE_READ,
-            )
-        } == -1
-        {
-            return Err(io::Error::last_os_error());
-        }
-        // Keep admitted pages resident until the backing is dropped. Without
-        // this, reclaim between preparation and sendmsg could move a blocking
-        // file fault onto the peer loop. An insufficient memlock allowance
-        // selects the ordinary buffered path instead.
+        // mlock (without MLOCK_ONFAULT) populates AND locks the requested pages
+        // before returning successfully. A separate MADV_POPULATE_READ would
+        // duplicate that kernel walk on every prepared batch. Keep this on the
+        // storage worker: population can block. Locks prevent ordinary reclaim
+        // between preparation and sendmsg (external truncation can still revoke
+        // backing); insufficient memlock allowance selects buffered reads.
         // SAFETY: the kernel validates the same bounded mapped range; no Rust
         // reference is created. munmap releases these locks with the window.
         if unsafe { libc::mlock((self.address + aligned) as *const _, end - aligned) } == -1 {
@@ -94,6 +84,36 @@ pub struct MappedUploadRead {
 }
 
 impl MappedUploadRead {
+    #[cfg(test)]
+    pub(crate) fn assert_resident_and_locked(&self) {
+        let page = page_size();
+        let start = self.start / page * page;
+        let len = self.start + self.len - start;
+        let address = (self.window.address + start) as *mut libc::c_void;
+        let mut residency = vec![0u8; len.div_ceil(page)];
+        // SAFETY: the Arc keeps the checked mapping range live; mincore writes
+        // only to the correctly sized result vector, never a payload reference.
+        assert_eq!(
+            unsafe { libc::mincore(address, len, residency.as_mut_ptr()) },
+            0
+        );
+        assert!(residency.iter().all(|page| page & 1 != 0));
+        // Linux rejects DONTNEED on locked pages. This verifies the requested
+        // range remains locked, rather than only testing page-cache residency.
+        // SAFETY: the same valid range is passed to the kernel, with no Rust load.
+        for offset in (0..len).step_by(page) {
+            let address = (self.window.address + start + offset) as *mut libc::c_void;
+            assert_eq!(
+                unsafe { libc::madvise(address, page, libc::MADV_DONTNEED) },
+                -1
+            );
+            assert_eq!(
+                io::Error::last_os_error().raw_os_error(),
+                Some(libc::EINVAL)
+            );
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.len
     }
