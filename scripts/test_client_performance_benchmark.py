@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
 import tempfile
 import unittest
+import urllib.parse
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
@@ -83,10 +85,20 @@ class CgroupCounterTests(unittest.TestCase):
 
         instance.api_url = mock.Mock(side_effect=api_url)
         instance.service_id = mock.Mock(return_value="container-id")
-        instance.http = mock.Mock(
-            return_value=nullcontext(SimpleNamespace(read=lambda: b"qBittorrent 5.2"))
-        )
-        instance._qbit_json = mock.Mock()
+        def http(_client, path, **_kwargs):
+            if path == "/api/v2/app/version":
+                return nullcontext(SimpleNamespace(read=lambda: b"qBittorrent 5.2"))
+            return SimpleNamespace(close=mock.Mock())
+
+        instance.http = mock.Mock(side_effect=http)
+        instance.qbittorrent_rate_readbacks = {}
+        instance._qbit_json = mock.Mock(return_value={
+            "dl_limit": benchmark.rate_preference_kib_per_second(
+                benchmark.SEED_LEECHER_RATE_BPS,
+            ),
+            "up_limit": benchmark.rate_preference_kib_per_second(benchmark.RATE_BPS),
+            "limit_lan_peers": True,
+        })
         instance._add_torrent = mock.Mock()
 
         with mock.patch.object(benchmark, "run_command", return_value=("image", 0)):
@@ -223,6 +235,28 @@ class CgroupCounterTests(unittest.TestCase):
         self.assertIn("  seed_leecher:\n", rendered)
         self.assertEqual(rendered.count("    healthcheck:"), len(benchmark.CLIENTS) + 1)
         self.assertNotIn("networks:\n", rendered)
+
+    def test_benchmark_compose_override_pins_clients_and_leecher_separately(self) -> None:
+        available = sorted(benchmark.os.sched_getaffinity(0))
+        if len(available) < 4:
+            self.skipTest("four allowed CPUs are required to exercise separate pin sets")
+        client_cpus = ",".join(str(cpu) for cpu in available[:2])
+        leecher_cpus = ",".join(str(cpu) for cpu in available[2:4])
+
+        rendered = benchmark.render_benchmark_compose_override(
+            {},
+            client_cpuset=client_cpus,
+            seed_leecher_cpuset=leecher_cpus,
+        )
+
+        self.assertIn(f'  torrentngd:\n    cpuset: "{client_cpus}"', rendered)
+        self.assertIn(f'  seed_leecher:\n    cpuset: "{leecher_cpus}"', rendered)
+        self.assertEqual(
+            benchmark.parse_cpu_set(client_cpus, "client"),
+            frozenset(available[:2]),
+        )
+        with self.assertRaisesRegex(RuntimeError, "duplicate CPUs"):
+            benchmark.parse_cpu_set(f"{available[0]},{available[0]}", "client")
 
     def test_controlled_seed_compose_network_has_no_external_route(self) -> None:
         rendered = benchmark.render_benchmark_compose_override(
@@ -1241,12 +1275,45 @@ class ControlledDownloadTests(unittest.TestCase):
     def test_fixed_downloader_seeder_upload_limit_is_explicit(self) -> None:
         preferences = benchmark.seed_leecher_preferences(4 * 1024 * 1024)
 
-        self.assertEqual(preferences["up_limit"], 4 * 1024 * 1024)
-        self.assertEqual(preferences["dl_limit"], benchmark.SEED_LEECHER_RATE_BPS)
+        self.assertEqual(preferences["up_limit"], 4 * 1024)
+        self.assertEqual(
+            preferences["dl_limit"],
+            benchmark.rate_preference_kib_per_second(benchmark.SEED_LEECHER_RATE_BPS),
+        )
+        self.assertTrue(preferences["limit_lan_peers"])
         self.assertFalse(preferences["dht"])
         self.assertFalse(preferences["pex"])
+        with self.assertRaisesRegex(ValueError, "exact number of KiB/s"):
+            benchmark.rate_preference_kib_per_second(4097)
         with self.assertRaisesRegex(ValueError, "must be positive"):
             benchmark.seed_leecher_preferences(0)
+
+        with mock.patch.object(benchmark, "SEED_LEECHER_RATE_BPS", -1):
+            unlimited = benchmark.seed_leecher_preferences(4 * 1024 * 1024)
+        self.assertEqual(unlimited["dl_limit"], -1)
+
+    def test_qbittorrent_rate_preferences_use_kib_and_read_back_lan_limits(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        instance.qbittorrent_rate_readbacks = {}
+        instance.http = mock.Mock(return_value=SimpleNamespace(close=mock.Mock()))
+        expected = {
+            "dl_limit": benchmark.RATE_BPS // 1024,
+            "up_limit": benchmark.RATE_BPS // 1024,
+            "limit_lan_peers": True,
+        }
+        instance._qbit_json = mock.Mock(return_value=expected)
+
+        instance._configure("qbittorrent")
+
+        values = json.loads(
+            urllib.parse.parse_qs(
+                instance.http.call_args.kwargs["data"].decode(),
+            )["json"][0]
+        )
+        self.assertEqual(values["dl_limit"], benchmark.RATE_BPS // 1024)
+        self.assertEqual(values["up_limit"], benchmark.RATE_BPS // 1024)
+        self.assertTrue(values["limit_lan_peers"])
+        self.assertEqual(instance.qbittorrent_rate_readbacks["qbittorrent"], expected)
 
 
 class SeedFixtureTests(unittest.TestCase):

@@ -30,6 +30,10 @@ from pathlib import Path
 
 from transfer_rebuild.xmlrpc_safety import xmlrpc_client
 from transfer_rebuild.observe import process_tree, sample_process_tree
+from transfer_rebuild.process_counters import (
+    ProcessCounterCapture,
+    add_verified_gib_normalization,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_FILE = ROOT / "deploy/interop/compose.yml"
@@ -240,10 +244,58 @@ def rtorrent_config_for_profile(text, profile):
     return text
 
 
-def render_benchmark_compose_override(compose_environment, *, internal_network=False):
+def parse_cpu_set(value, name):
+    if not value:
+        return None
+    allowed_getter = getattr(os, "sched_getaffinity", None)
+    allowed = set(allowed_getter(0)) if allowed_getter is not None else None
+    cpus = set()
+    for part in value.split(","):
+        if not part or not re.fullmatch(r"\d+(?:-\d+)?", part):
+            raise RuntimeError(f"{name} must be a comma-separated CPU list or range")
+        bounds = [int(item) for item in part.split("-")]
+        first, last = (bounds[0], bounds[-1])
+        if first > last:
+            raise RuntimeError(f"{name} contains a descending CPU range")
+        if allowed is not None and last - first + 1 > len(allowed):
+            raise RuntimeError(f"{name} requests more CPUs than are available")
+        expanded = set(range(first, last + 1))
+        if cpus.intersection(expanded):
+            raise RuntimeError(f"{name} contains duplicate CPUs")
+        if allowed is not None:
+            unavailable = expanded - allowed
+            if unavailable:
+                raise RuntimeError(f"{name} includes unavailable CPUs: {sorted(unavailable)}")
+        cpus.update(expanded)
+    return frozenset(cpus)
+
+
+def rate_preference_kib_per_second(rate_bps):
+    # qBittorrent app preferences use KiB/s, while this harness stores B/s.
+    if rate_bps == -1:
+        return -1
+    if rate_bps <= 0:
+        raise ValueError("rate limit must be -1 (unlimited) or positive")
+    if rate_bps % 1024:
+        raise ValueError("qBittorrent global rates must be an exact number of KiB/s")
+    return rate_bps // 1024
+
+
+def render_benchmark_compose_override(
+    compose_environment,
+    *,
+    internal_network=False,
+    client_cpuset=None,
+    seed_leecher_cpuset=None,
+):
     lines = ["services:"]
     for client in (*CLIENTS, "seed_leecher"):
         lines.append(f"  {client}:")
+        cpuset = (
+            seed_leecher_cpuset if client == "seed_leecher" else client_cpuset
+        )
+        if cpuset:
+            lines.append(f"    cpuset: {json.dumps(cpuset)}")
         if client == "torrentngd" and compose_environment:
             lines.append("    environment:")
             lines.extend(
@@ -259,16 +311,19 @@ def render_benchmark_compose_override(compose_environment, *, internal_network=F
 def seed_leecher_preferences(upload_limit_bps):
     if upload_limit_bps < 1:
         raise ValueError("seed leecher upload limit must be positive")
+    if SEED_LEECHER_RATE_BPS == 0 or SEED_LEECHER_RATE_BPS < -1:
+        raise ValueError("seed leecher download limit must be -1 or positive")
     return {
         "encryption": 2,
         "bittorrent_protocol": 1,
         "dht": False,
         "lsd": False,
         "pex": False,
+        "limit_lan_peers": True,
         "max_connec": MAX_PEERS,
         "max_connec_per_torrent": MAX_PEERS,
-        "dl_limit": SEED_LEECHER_RATE_BPS,
-        "up_limit": upload_limit_bps,
+        "dl_limit": rate_preference_kib_per_second(SEED_LEECHER_RATE_BPS),
+        "up_limit": rate_preference_kib_per_second(upload_limit_bps),
     }
 
 
@@ -834,6 +889,34 @@ class Benchmark:
                 "TNG_CLIENT_BENCH_MODE must be transfer, idle, controlled-download, "
                 "or controlled-seed"
             )
+        self.counter_mode = os.environ.get(
+            "TNG_CLIENT_BENCH_COUNTER_MODE", "off",
+        ).strip().lower()
+        if self.counter_mode not in ("off", "perf", "strace"):
+            raise RuntimeError("TNG_CLIENT_BENCH_COUNTER_MODE must be off, perf, or strace")
+        if self.counter_mode != "off" and self.mode != "controlled-seed":
+            raise RuntimeError("process counters are supported only in controlled-seed mode")
+        if self.counter_mode == "perf" and shutil.which("perf") is None:
+            raise RuntimeError("TNG_CLIENT_BENCH_COUNTER_MODE=perf requires perf")
+        if self.counter_mode == "strace" and shutil.which("strace") is None:
+            raise RuntimeError("TNG_CLIENT_BENCH_COUNTER_MODE=strace requires strace")
+        self.client_cpuset = os.environ.get("TNG_CLIENT_BENCH_CPUSET", "").strip() or None
+        self.seed_leecher_cpuset = os.environ.get(
+            "TNG_CLIENT_BENCH_SEED_LEECHER_CPUSET", "",
+        ).strip() or None
+        self.client_cpus = parse_cpu_set(self.client_cpuset, "TNG_CLIENT_BENCH_CPUSET")
+        self.seed_leecher_cpus = parse_cpu_set(
+            self.seed_leecher_cpuset,
+            "TNG_CLIENT_BENCH_SEED_LEECHER_CPUSET",
+        )
+        if (
+            self.client_cpus is not None
+            and self.seed_leecher_cpus is not None
+            and self.client_cpus.intersection(self.seed_leecher_cpus)
+        ):
+            raise RuntimeError("client and seed leecher CPU sets must be disjoint")
+        self.process_counter_records = []
+        self.qbittorrent_rate_readbacks = {}
         self.rtorrent_profile = select_rtorrent_profile()
         self.diagnostics = env_enabled("TNG_CLIENT_BENCH_DIAGNOSTICS")
         self.skip_build = env_enabled("TNG_CLIENT_BENCH_SKIP_BUILD")
@@ -933,10 +1016,18 @@ class Benchmark:
         )).expanduser().resolve()
         self.csv_path = self.report.with_name(self.report.stem + "-samples.csv")
         self.memory_profile = self.report.with_name(self.report.stem + "-memory-profile.json")
+        self.process_counter_profile = self.report.with_name(
+            self.report.stem + "-process-counters.json",
+        )
         artifact_dir = os.environ.get("TNG_CLIENT_BENCH_ARTIFACT_DIR")
         self.artifact_dir = Path(artifact_dir).expanduser().resolve() if artifact_dir else None
         self.artifact_status = "not requested"
-        if self.report.exists() or self.csv_path.exists() or self.memory_profile.exists():
+        if (
+            self.report.exists()
+            or self.csv_path.exists()
+            or self.memory_profile.exists()
+            or (self.counter_mode != "off" and self.process_counter_profile.exists())
+        ):
             raise RuntimeError(f"refusing to overwrite an existing benchmark report: {self.report}")
         scratch = Path(os.environ.get("TNG_CLIENT_BENCH_SCRATCH_ROOT", "/var/tmp")).resolve()
         if not scratch.is_dir() or not os.access(scratch, os.W_OK | os.X_OK):
@@ -1282,6 +1373,8 @@ class Benchmark:
             render_benchmark_compose_override(
                 compose_environment,
                 internal_network=self.mode == "controlled-seed",
+                client_cpuset=self.client_cpuset,
+                seed_leecher_cpuset=self.seed_leecher_cpuset,
             ),
         )
         self._prepare_qbit_config()
@@ -1631,8 +1724,9 @@ class Benchmark:
             values = {
                 "max_connec": MAX_PEERS,
                 "max_connec_per_torrent": MAX_PEERS,
-                "dl_limit": RATE_BPS,
-                "up_limit": RATE_BPS,
+                "limit_lan_peers": True,
+                "dl_limit": rate_preference_kib_per_second(RATE_BPS),
+                "up_limit": rate_preference_kib_per_second(RATE_BPS),
             }
             data = urllib.parse.urlencode({"json": json.dumps(values)}).encode()
             self.http(
@@ -1640,6 +1734,23 @@ class Benchmark:
                 headers={"Content-Type": "application/x-www-form-urlencoded",
                          "Host": "localhost:8080"},
             ).close()
+            applied = self._qbit_json(client, "/api/v2/app/preferences")
+            expected = {
+                key: values[key]
+                for key in ("dl_limit", "up_limit", "limit_lan_peers")
+            }
+            if not isinstance(applied, dict) or any(
+                applied.get(key) != value for key, value in expected.items()
+            ):
+                actual = {
+                    key: applied.get(key) if isinstance(applied, dict) else None
+                    for key in expected
+                }
+                raise RuntimeError(
+                    "qBittorrent did not apply the requested global rate preferences: "
+                    f"expected {expected!r}, got {actual!r}"
+                )
+            self.qbittorrent_rate_readbacks[client] = expected
         elif client == "transmission":
             self._transmission("session-set", {
                 "peer-limit-global": MAX_PEERS,
@@ -2264,6 +2375,41 @@ class Benchmark:
             },
         }, indent=2) + "\n")
 
+    def _write_process_counter_profile(self):
+        if self.counter_mode == "off":
+            return
+        try:
+            perf_event_paranoid = Path(
+                "/proc/sys/kernel/perf_event_paranoid",
+            ).read_text().strip()
+        except OSError:
+            perf_event_paranoid = None
+        self.process_counter_profile.parent.mkdir(parents=True, exist_ok=True)
+        self.process_counter_profile.write_text(json.dumps({
+            "schema_version": 1,
+            "source_commit": self.source_commit,
+            "source_tree": self.source_tree,
+            "source_fingerprint_sha256": self.source_fingerprint_sha256,
+            "host": self.host,
+            "mode": self.counter_mode,
+            "perf_event_paranoid": perf_event_paranoid,
+            "client_cpuset": self.client_cpuset,
+            "seed_leecher_cpuset": self.seed_leecher_cpuset,
+            "diagnostic_only": True,
+            "completion_detection_uncertainty_seconds": INTERVAL,
+            "measurement_window": (
+                "after the leecher is registered and seeder reannounced, from the "
+                "transfer timer start through the completed-byte observation; the "
+                "collector stops before the leecher file is SHA-256 checked"
+            ),
+            "strace_note": (
+                "strace uses ptrace and changes scheduling; its syscall counts are "
+                "diagnostic and its CPU/throughput measurements are not scoreable"
+                if self.counter_mode == "strace" else None
+            ),
+            "measurements": self.process_counter_records,
+        }, indent=2) + "\n")
+
     def _stats(self, client):
         cid = self.container_ids.get(client) or self.service_id(client)
         if not cid:
@@ -2738,11 +2884,33 @@ class Benchmark:
         if not ready:
             raise RuntimeError("timed out waiting for the qBittorrent seed leecher")
         preferences = seed_leecher_preferences(upload_limit_bps)
-        self._qbit_json(
+        self.http(
             client, "/api/v2/app/setPreferences",
             data=urllib.parse.urlencode({"json": json.dumps(preferences)}).encode(),
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
+            headers={"Content-Type": "application/x-www-form-urlencoded",
+                     "Host": "localhost:8080"},
+        ).close()
+        applied_preferences = self._qbit_json(client, "/api/v2/app/preferences")
+        if not isinstance(applied_preferences, dict):
+            raise RuntimeError("qBittorrent returned invalid application preferences")
+        if applied_preferences.get("dl_limit") != preferences["dl_limit"]:
+            raise RuntimeError(
+                "qBittorrent did not apply the requested global download limit: "
+                f"expected {preferences['dl_limit']} KiB/s, "
+                f"got {applied_preferences.get('dl_limit')!r}"
+            )
+        if applied_preferences.get("limit_lan_peers") is not True:
+            raise RuntimeError("qBittorrent did not enable rate limits for local peers")
+        if applied_preferences.get("up_limit") != preferences["up_limit"]:
+            raise RuntimeError(
+                "qBittorrent did not apply the requested global upload limit: "
+                f"expected {preferences['up_limit']} KiB/s, "
+                f"got {applied_preferences.get('up_limit')!r}"
+            )
+        self.qbittorrent_rate_readbacks[client] = {
+            key: preferences[key]
+            for key in ("dl_limit", "up_limit", "limit_lan_peers")
+        }
         self._add_torrent(
             client, torrent_path, "/downloads", skip_check=skip_check,
         )
@@ -2844,11 +3012,18 @@ class Benchmark:
         self.partial_seed_elapsed[client] = 0.0
         self.partial_seed_setup[client] = 0.0
         next_log = 0
+        counter_capture = None
         try:
             self._start_seed_leecher(torrent_path, client)
             self._wait_seed_leecher_tracker(info_hash, tracker_ip)
             self._reannounce(client, info_hash)
             self.seed_cache_eviction[client] = evict_file_cache(payload)
+            if self.counter_mode != "off":
+                capture = ProcessCounterCapture(
+                    self.container_pids[client], self.counter_mode,
+                )
+                capture.start()
+                counter_capture = capture
             started = time.monotonic()
             deadline = started + SEED_TIMEOUT
             last_peer = started
@@ -2877,20 +3052,46 @@ class Benchmark:
                         f"after {SEED_NO_PEER_TIMEOUT}s"
                     )
                 if total >= size and completed >= size:
+                    counter_record = None
+                    if counter_capture is not None:
+                        counter_record = counter_capture.stop()
+                        counter_capture = None
                     candidate = leecher_dir / payload.name
                     if not candidate.is_file():
                         matches = list(leecher_dir.rglob(payload.name))
                         candidate = matches[0] if matches else candidate
                     if not candidate.is_file() or candidate.stat().st_size != size:
+                        if counter_record is not None:
+                            self._record_process_counters(client, counter_record, 0)
                         raise RuntimeError("qBittorrent completed but the leecher file is absent or short")
                     actual = self._sha256(candidate)
                     if actual != checksum:
+                        if counter_record is not None:
+                            self._record_process_counters(client, counter_record, 0)
                         raise RuntimeError("controlled leecher SHA-256 did not match the fixture pin")
+                    if counter_record is not None:
+                        self._record_process_counters(client, counter_record, size)
                     return time.monotonic() - started, rows, actual
                 time.sleep(INTERVAL)
             raise TimeoutError(f"controlled seed transfer exceeded {SEED_TIMEOUT}s")
         finally:
+            if counter_capture is not None:
+                try:
+                    partial_counters = counter_capture.stop()
+                    self._record_process_counters(client, partial_counters, 0)
+                except Exception as error:
+                    self._record_process_counters(client, {
+                        "mode": self.counter_mode,
+                        "collector_error": f"{type(error).__name__}: {error}",
+                    }, 0)
             self.compose("stop", "seed_leecher", check=False, quiet=True, timeout=30)
+
+    def _record_process_counters(self, client, record, verified_bytes):
+        record["client"] = client
+        record["transfer_sha256_verified"] = verified_bytes > 0
+        self.process_counter_records.append(
+            add_verified_gib_normalization(record, verified_bytes),
+        )
 
     @staticmethod
     def _summary(rows, phase):
@@ -3627,6 +3828,7 @@ class Benchmark:
 
     def _write_report(self, meta, client_images):
         self._write_memory_profile()
+        self._write_process_counter_profile()
         load_end = os.getloadavg()
         load_peak = max((float(row[10]) for row in self.samples), default=self.load_start[0])
         config_device, config_type = self._findmnt(self.config_dir)
@@ -3696,6 +3898,11 @@ class Benchmark:
             "first completed public download or an explicitly supplied verified "
             "seed file), copied into a separate seed path for each client."
         )
+        qbit_rate_summary = "; ".join(
+            f"{name}: down={values['dl_limit']} KiB/s, "
+            f"up={values['up_limit']} KiB/s, LAN-limits={values['limit_lan_peers']}"
+            for name, values in sorted(self.qbittorrent_rate_readbacks.items())
+        ) or "no qBittorrent rate readback yet"
         build_description = (
             "not used (prebuilt image)" if self.skip_build else
             f"{self.build_cpus} logical CPUs via persistent BuildKit cache "
@@ -3730,6 +3937,10 @@ class Benchmark:
             f"- Benchmark mode: {self.mode}",
             f"- Requested TorrentNG runtime/storage worker overrides: {runtime_overrides}",
             f"- Requested TorrentNG memory-cap overrides: {memory_cap_overrides}",
+            f"- Process-counter mode: {self.counter_mode}; client CPU set: "
+            f"{self.client_cpuset or 'unrestricted'}; seed-leecher CPU set: "
+            f"{self.seed_leecher_cpuset or 'unrestricted'}.",
+            f"- qBittorrent global rate preference readback: {qbit_rate_summary}.",
             "- TorrentNG storage backend (post-transfer `/metrics` snapshot): "
             + describe_torrentng_storage_backend(self.storage_backend_observation),
             "- Measurement instrumentation: healthchecks disabled for all measured clients; "
@@ -3752,10 +3963,16 @@ class Benchmark:
             "- Clients selected for this run: " + ", ".join(LABELS[c] for c in CLIENTS),
             f"- Client download and upload limits: {RATE_BPS:,} B/s "
             f"({RATE_BPS / 1048576:.1f} MiB/s); max peers {MAX_PEERS}",
-            f"- Controlled seed leecher receive limit: {SEED_LEECHER_RATE_BPS:,} B/s "
-            f"({SEED_LEECHER_RATE_BPS / 1048576:.1f} MiB/s), shared across all seeders. "
-            "This is 12.5% of the configured per-client upload ceiling. Seed rates are "
-            "therefore measured under a controlled receiver load, not as maximum upload capacity.",
+            "- Controlled seed leecher receive limit: "
+            + (
+                "unlimited; qBittorrent preference readback confirmed -1 and LAN rate "
+                "limiting is enabled."
+                if SEED_LEECHER_RATE_BPS == -1 else
+                f"{SEED_LEECHER_RATE_BPS:,} B/s "
+                f"({SEED_LEECHER_RATE_BPS / 1048576:.1f} MiB/s), shared across all seeders; "
+                "qBittorrent preference readback confirmed the value in KiB/s and LAN "
+                "rate limiting is enabled."
+            ),
             (
                 "- Public-swarm downloads: not run in controlled-seed mode; "
                 "interoperability is a separate qualification."
@@ -3869,6 +4086,54 @@ class Benchmark:
                 f"{metric(row.get('seed_io_read_mib_per_gib'))} | "
                 f"{metric(row.get('seed_io_write_mib_per_gib'))} |"
             )
+        if self.counter_mode != "off":
+            lines.extend([
+                "",
+                "## Diagnostic process counters",
+                "",
+                "Counters cover the timed controlled-seed transfer and are normalized "
+                "only after the leecher payload passed its pinned SHA-256 check. They "
+                "are diagnostic evidence, not scoreable CPU or throughput results. "
+                "`strace` changes scheduling and must not be used to compare CPU time "
+                "or transfer speed.",
+                "",
+                f"Collector mode: `{self.counter_mode}`. Machine-readable records: "
+                f"[{self.process_counter_profile.name}]({self.process_counter_profile.name}).",
+                "",
+            ])
+            if self.counter_mode == "perf":
+                lines.extend([
+                    "| Client | Instructions / verified GiB | Cycles / verified GiB | "
+                    "Perf context switches / verified GiB | CPU migrations / verified GiB | "
+                    "Voluntary context switches / verified GiB | Involuntary context switches / verified GiB | Stable process tree |",
+                    "|---|---:|---:|---:|---:|---:|---:|---|",
+                ])
+                for record in self.process_counter_records:
+                    lines.append(
+                        f"| {LABELS.get(record.get('client'), record.get('client', 'n/a'))} | "
+                        f"{metric(record.get('instructions_per_verified_gib'), 0)} | "
+                        f"{metric(record.get('cycles_per_verified_gib'), 0)} | "
+                        f"{metric(record.get('perf_context_switches_per_verified_gib'))} | "
+                        f"{metric(record.get('cpu_migrations_per_verified_gib'))} | "
+                        f"{metric(record.get('voluntary_context_switches_per_verified_gib'))} | "
+                        f"{metric(record.get('involuntary_context_switches_per_verified_gib'))} | "
+                        f"{record.get('stable_process_tree', 'n/a')} |"
+                    )
+            else:
+                lines.extend([
+                    "| Client | Syscalls / verified GiB | Errors / verified GiB | "
+                    "Voluntary context switches / verified GiB | Involuntary context switches / verified GiB | Stable process tree |",
+                    "|---|---:|---:|---:|---:|---|",
+                ])
+                for record in self.process_counter_records:
+                    lines.append(
+                        f"| {LABELS.get(record.get('client'), record.get('client', 'n/a'))} | "
+                        f"{metric(record.get('syscalls_per_verified_gib'))} | "
+                        f"{metric(record.get('errors_per_verified_gib'))} | "
+                        f"{metric(record.get('voluntary_context_switches_per_verified_gib'))} | "
+                        f"{metric(record.get('involuntary_context_switches_per_verified_gib'))} | "
+                        f"{record.get('stable_process_tree', 'n/a')} |"
+                    )
         lines.extend([
             "",
             "The tracker is restarted between clients to discard stale peer records.",
@@ -3948,6 +4213,8 @@ class Benchmark:
             "",
             f"- Raw time-series samples: [{self.csv_path.name}]({self.csv_path.name})",
             f"- Cgroup resource and TorrentNG allocator profile: [{self.memory_profile.name}]({self.memory_profile.name})",
+            *([f"- Process-counter profile: [{self.process_counter_profile.name}]({self.process_counter_profile.name})"]
+              if self.counter_mode != "off" else []),
             f"- Preserved source artifacts: {self.artifact_status}",
             f"- Temporary benchmark directory: {self.workdir}",
             f"- Compose cleanup status: **{self.cleanup_status}**",
@@ -4496,12 +4763,20 @@ class Benchmark:
         return int(not self.idle_results or any(row["status"] != "PASS" for row in self.idle_results))
 
     def run(self):
-        if (RATE_BPS < 1 or MAX_PEERS < 1 or INTERVAL < 1
+        if (RATE_BPS < 1 or MAX_PEERS < 1 or INTERVAL <= 0
+                or RATE_BPS % 1024 != 0
                 or (self.mode in ("transfer", "controlled-seed")
-                    and SEED_LEECHER_RATE_BPS < 1)
+                    and SEED_LEECHER_RATE_BPS != -1
+                    and (SEED_LEECHER_RATE_BPS < 1
+                         or SEED_LEECHER_RATE_BPS % 1024 != 0))
                 or (self.mode == "controlled-download"
-                    and CONTROLLED_DOWNLOAD_SEED_UPLOAD_BPS < 1)):
-            raise RuntimeError("rate ceiling, peer ceiling, and sample interval must be positive")
+                    and (CONTROLLED_DOWNLOAD_SEED_UPLOAD_BPS < 1
+                         or CONTROLLED_DOWNLOAD_SEED_UPLOAD_BPS % 1024 != 0))):
+            raise RuntimeError(
+                "rate ceilings must be positive exact KiB/s values (except -1 for "
+                "unlimited leecher rate), peer ceiling must be positive, and sample "
+                "interval must be greater than zero"
+            )
         if self.mode in ("transfer", "controlled-download") and DOWNLOAD_TIMEOUT < 60:
             raise RuntimeError("download timeout must be at least 60 seconds")
         if self.mode in ("transfer", "controlled-seed") and SEED_TIMEOUT < 60:
@@ -4626,6 +4901,13 @@ class Benchmark:
                 self._write_memory_profile()
             except Exception as error:
                 self.cleanup_status += f"; memory profile error: {type(error).__name__}: {error}"
+        if self.counter_mode != "off" and not self.process_counter_profile.exists():
+            try:
+                self._write_process_counter_profile()
+            except Exception as error:
+                self.cleanup_status += (
+                    f"; process counter profile error: {type(error).__name__}: {error}"
+                )
         try:
             self.compose("down", "--volumes", "--remove-orphans",
                          check=False, quiet=True, timeout=180)
@@ -4729,7 +5011,10 @@ TNG_CLIENT_BENCH_MODE=transfer|controlled-download|controlled-seed|idle (default
   TNG_CLIENT_BENCH_SCRATCH_ROOT=/existing/writable/path (default: /var/tmp)
   TNG_CLIENT_BENCH_WORKDIR=/new/path (must not already exist)
   TNG_CLIENT_BENCH_RATE_BPS=33554432 (download and upload ceiling)
-  TNG_CLIENT_BENCH_SEED_LEECHER_RATE_BPS=4194304 (shared seed receiver ceiling)
+  TNG_CLIENT_BENCH_SEED_LEECHER_RATE_BPS=4194304 (shared seed receiver ceiling; -1 is unlimited)
+  TNG_CLIENT_BENCH_COUNTER_MODE=off|perf|strace (controlled-seed diagnostic counters)
+  TNG_CLIENT_BENCH_CPUSET=24-27 (optional measured-client CPU pin)
+  TNG_CLIENT_BENCH_SEED_LEECHER_CPUSET=28-29 (optional disjoint leecher CPU pin)
   TNG_CLIENT_BENCH_DOWNLOAD_SEED_UPLOAD_BPS=4194304 (fixed source ceiling in controlled-download mode)
   TNG_CLIENT_BENCH_MAX_PEERS=32
   TNG_CLIENT_BENCH_TIMEOUT_SECS=1800
