@@ -258,6 +258,27 @@ class CgroupCounterTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "duplicate CPUs"):
             benchmark.parse_cpu_set(f"{available[0]},{available[0]}", "client")
 
+    def test_benchmark_compose_override_can_pin_alternate_qbittorrent_registries(self) -> None:
+        qbittorrent_image = "ghcr.io/linuxserver/qbittorrent@sha256:" + "a" * 64
+        seed_leecher_image = "ghcr.io/linuxserver/qbittorrent@sha256:" + "b" * 64
+
+        rendered = benchmark.render_benchmark_compose_override(
+            {},
+            qbittorrent_image=qbittorrent_image,
+            seed_leecher_image=seed_leecher_image,
+        )
+
+        self.assertIn(
+            f'  qbittorrent:\n    image: "{qbittorrent_image}"', rendered,
+        )
+        self.assertIn(
+            f'  seed_leecher:\n    image: "{seed_leecher_image}"', rendered,
+        )
+        transmission_service = (
+            rendered.split("  transmission:", 1)[1].split("  deluge:", 1)[0]
+        )
+        self.assertNotIn("    image:", transmission_service)
+
     def test_controlled_seed_compose_network_has_no_external_route(self) -> None:
         rendered = benchmark.render_benchmark_compose_override(
             {}, internal_network=True,

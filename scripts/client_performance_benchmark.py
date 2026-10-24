@@ -287,6 +287,8 @@ def render_benchmark_compose_override(
     internal_network=False,
     client_cpuset=None,
     seed_leecher_cpuset=None,
+    qbittorrent_image=None,
+    seed_leecher_image=None,
 ):
     lines = ["services:"]
     for client in (*CLIENTS, "seed_leecher"):
@@ -296,6 +298,13 @@ def render_benchmark_compose_override(
         )
         if cpuset:
             lines.append(f"    cpuset: {json.dumps(cpuset)}")
+        image = (
+            qbittorrent_image if client == "qbittorrent"
+            else seed_leecher_image if client == "seed_leecher"
+            else None
+        )
+        if image:
+            lines.append(f"    image: {json.dumps(image)}")
         if client == "torrentngd" and compose_environment:
             lines.append("    environment:")
             lines.extend(
@@ -904,6 +913,12 @@ class Benchmark:
         self.seed_leecher_cpuset = os.environ.get(
             "TNG_CLIENT_BENCH_SEED_LEECHER_CPUSET", "",
         ).strip() or None
+        self.qbittorrent_image = (
+            os.environ.get("TNG_CLIENT_BENCH_QBITTORRENT_IMAGE", "").strip() or None
+        )
+        self.seed_leecher_image_override = (
+            os.environ.get("TNG_CLIENT_BENCH_SEED_LEECHER_IMAGE", "").strip() or None
+        )
         self.client_cpus = parse_cpu_set(self.client_cpuset, "TNG_CLIENT_BENCH_CPUSET")
         self.seed_leecher_cpus = parse_cpu_set(
             self.seed_leecher_cpuset,
@@ -1376,6 +1391,8 @@ class Benchmark:
                 internal_network=self.mode == "controlled-seed",
                 client_cpuset=self.client_cpuset,
                 seed_leecher_cpuset=self.seed_leecher_cpuset,
+                qbittorrent_image=self.qbittorrent_image,
+                seed_leecher_image=self.seed_leecher_image_override,
             ),
         )
         self._prepare_qbit_config()
@@ -5020,6 +5037,8 @@ TNG_CLIENT_BENCH_MODE=transfer|controlled-download|controlled-seed|idle (default
   TNG_CLIENT_BENCH_COUNTER_MODE=off|perf|strace (controlled-seed diagnostic counters)
   TNG_CLIENT_BENCH_CPUSET=24-27 (optional measured-client CPU pin)
   TNG_CLIENT_BENCH_SEED_LEECHER_CPUSET=28-29 (optional disjoint leecher CPU pin)
+  TNG_CLIENT_BENCH_QBITTORRENT_IMAGE=registry/repository@sha256:... (optional image override)
+  TNG_CLIENT_BENCH_SEED_LEECHER_IMAGE=registry/repository@sha256:... (optional image override)
   TNG_CLIENT_BENCH_DOWNLOAD_SEED_UPLOAD_BPS=4194304 (fixed source ceiling in controlled-download mode)
   TNG_CLIENT_BENCH_MAX_PEERS=32
   TNG_CLIENT_BENCH_TIMEOUT_SECS=1800
