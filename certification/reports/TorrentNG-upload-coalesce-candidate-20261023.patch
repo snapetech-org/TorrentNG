@@ -1,0 +1,441 @@
+diff --git a/crates/rt-engine/src/torrent_task.rs b/crates/rt-engine/src/torrent_task.rs
+index b03be6f5..98ab40a0 100644
+--- a/crates/rt-engine/src/torrent_task.rs
++++ b/crates/rt-engine/src/torrent_task.rs
+@@ -9,7 +9,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV
+ use std::path::PathBuf;
+ use std::pin::Pin;
+ use std::sync::atomic::{AtomicU64, Ordering};
+-use std::sync::{Mutex, MutexGuard};
++use std::sync::{Mutex, MutexGuard, OnceLock};
+ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+ 
+ use bytes::BytesMut;
+@@ -127,6 +127,83 @@ const MAX_READY_UPLOAD_INTAKE_MESSAGES: usize = 8;
+ // disk queue. Bound collection latency, and never wait for more requests than
+ // this peer has demonstrated it can keep outstanding.
+ const UPLOAD_READ_COALESCE_MAX_DELAY: Duration = Duration::from_millis(32);
++const UPLOAD_READ_COALESCE_MAX_DELAY_MS: u64 = 32;
++const UPLOAD_READ_COALESCE_DEFAULT_MIN_BATCH: usize = 1;
++
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++struct UploadReadCoalescingPolicy {
++    min_batch: usize,
++    max_delay: Duration,
++}
++
++impl Default for UploadReadCoalescingPolicy {
++    fn default() -> Self {
++        Self {
++            min_batch: UPLOAD_READ_COALESCE_DEFAULT_MIN_BATCH,
++            max_delay: UPLOAD_READ_COALESCE_MAX_DELAY,
++        }
++    }
++}
++
++fn parse_upload_read_coalescing_policy(
++    min_batch: Option<&str>,
++    max_delay_ms: Option<&str>,
++) -> Result<UploadReadCoalescingPolicy, &'static str> {
++    let min_batch = min_batch
++        .map(str::parse::<usize>)
++        .transpose()
++        .map_err(|_| "min batch must be an integer")?
++        .unwrap_or(UPLOAD_READ_COALESCE_DEFAULT_MIN_BATCH);
++    if !(1..=MAX_READY_UPLOAD_INTAKE_MESSAGES).contains(&min_batch) {
++        return Err("min batch is outside the supported range 1..=8");
++    }
++    let max_delay_ms = max_delay_ms
++        .map(str::parse::<u64>)
++        .transpose()
++        .map_err(|_| "maximum delay must be an integer")?
++        .unwrap_or(UPLOAD_READ_COALESCE_MAX_DELAY_MS);
++    if max_delay_ms > UPLOAD_READ_COALESCE_MAX_DELAY_MS {
++        return Err("maximum delay is outside the supported range 0..=32 ms");
++    }
++    Ok(UploadReadCoalescingPolicy {
++        min_batch,
++        max_delay: Duration::from_millis(max_delay_ms),
++    })
++}
++
++fn upload_read_coalescing_policy() -> UploadReadCoalescingPolicy {
++    static POLICY: OnceLock<UploadReadCoalescingPolicy> = OnceLock::new();
++    *POLICY.get_or_init(|| {
++        let min_batch = std::env::var("TORRENTNG_UPLOAD_READ_COALESCE_MIN_BATCH").ok();
++        let max_delay_ms = std::env::var("TORRENTNG_UPLOAD_READ_COALESCE_MAX_DELAY_MS").ok();
++        match parse_upload_read_coalescing_policy(min_batch.as_deref(), max_delay_ms.as_deref()) {
++            Ok(policy) => policy,
++            Err(error) => {
++                warn!(
++                    component = "peer",
++                    operation = "upload_read_coalescing_config",
++                    result = "invalid",
++                    error,
++                    "using default bounded upload read coalescing policy"
++                );
++                UploadReadCoalescingPolicy::default()
++            }
++        }
++    })
++}
++
++fn upload_read_coalescing_intake_ready(
++    policy: UploadReadCoalescingPolicy,
++    intake_messages: usize,
++    pipeline_width: usize,
++    queued_requests: usize,
++) -> bool {
++    if policy.min_batch == UPLOAD_READ_COALESCE_DEFAULT_MIN_BATCH {
++        intake_messages >= pipeline_width
++    } else {
++        queued_requests >= policy.min_batch
++    }
++}
+ 
+ pub(crate) async fn connect_utp_with_deadline(
+     network_budget: &GlobalNetworkBudget,
+@@ -8881,6 +8958,7 @@ fn run_peer_loop(
+             upload,
+             send_terminal_event_on_peer_channel,
+         },
++        upload_read_coalescing_policy(),
+         upload_read_batch_future,
+     )
+ }
+@@ -8900,6 +8978,7 @@ fn run_peer_loop_with_upload_future<MakeUploadReadFuture, F>(
+         mut upload,
+         send_terminal_event_on_peer_channel,
+     }: PeerLoopStart,
++    upload_coalescing_policy: UploadReadCoalescingPolicy,
+     make_upload_read_future: MakeUploadReadFuture,
+ ) -> impl std::future::Future<Output = PeerLoopExit>
+ where
+@@ -8959,7 +9038,7 @@ where
+         let mut upload_intake_messages = 0usize;
+         let mut upload_pipeline_width = 1usize;
+         let mut upload_coalescing_expired = false;
+-        let upload_coalescing_flush = sleep(UPLOAD_READ_COALESCE_MAX_DELAY);
++        let upload_coalescing_flush = sleep(upload_coalescing_policy.max_delay);
+         tokio::pin!(upload_coalescing_flush);
+         let mut deferred_peer_message: Option<anyhow::Result<Option<Message>>> = None;
+         // Protocol obligations are process-owned by generation-safe connection
+@@ -8975,7 +9054,8 @@ where
+         // Poll the decoder once while upload dispatch is pending. Any complete
+         // frames already in the socket buffer are processed first, up to a
+         // small hard cap. Staggered refills from a pipelined peer may collect
+-        // until the bounded deadline; a serial requester dispatches at once.
++        // until the bounded deadline; default policy dispatches serial requests
++        // at once, while an opt-in minimum batch can collect a small refill.
+         if deferred_peer_message.is_none()
+             && upload_dispatch_pending
+             && upload_intake_messages < MAX_READY_UPLOAD_INTAKE_MESSAGES
+@@ -8986,7 +9066,12 @@ where
+             && deferred_peer_message.is_none()
+             && (upload_choked
+                 || upload.plane != Plane::V1
+-                || upload_intake_messages >= upload_pipeline_width
++                || upload_read_coalescing_intake_ready(
++                    upload_coalescing_policy,
++                    upload_intake_messages,
++                    upload_pipeline_width,
++                    upload_obligations.queued_len(),
++                )
+                 || upload_coalescing_expired);
+         tokio::select! {
+             cmd = peer_cmd_rx.recv() => {
+@@ -9566,7 +9651,7 @@ where
+                                     upload_intake_messages = 1;
+                                     upload_coalescing_expired = false;
+                                     upload_coalescing_flush.as_mut().reset(
+-                                        TokioInstant::now() + UPLOAD_READ_COALESCE_MAX_DELAY,
++                                        TokioInstant::now() + upload_coalescing_policy.max_delay,
+                                     );
+                                 }
+                             }
+@@ -10627,6 +10712,27 @@ mod tests {
+ 
+     use super::*;
+ 
++    #[test]
++    fn upload_read_coalescing_policy_keeps_defaults_and_bounds_opt_in_wait() {
++        let defaults = parse_upload_read_coalescing_policy(None, None).unwrap();
++        assert_eq!(defaults, UploadReadCoalescingPolicy::default());
++        assert!(upload_read_coalescing_intake_ready(defaults, 1, 1, 1));
++        assert!(!upload_read_coalescing_intake_ready(defaults, 1, 2, 1));
++
++        let candidate = parse_upload_read_coalescing_policy(Some("2"), Some("8")).unwrap();
++        assert_eq!(candidate.min_batch, 2);
++        assert_eq!(candidate.max_delay, Duration::from_millis(8));
++        assert!(!upload_read_coalescing_intake_ready(candidate, 1, 1, 1));
++        // Unrelated complete frames cannot satisfy the minimum request batch.
++        assert!(!upload_read_coalescing_intake_ready(candidate, 8, 1, 1));
++        assert!(upload_read_coalescing_intake_ready(candidate, 2, 8, 2));
++
++        assert!(parse_upload_read_coalescing_policy(Some("0"), None).is_err());
++        assert!(parse_upload_read_coalescing_policy(Some("9"), None).is_err());
++        assert!(parse_upload_read_coalescing_policy(None, Some("33")).is_err());
++        assert!(parse_upload_read_coalescing_policy(Some("x"), None).is_err());
++    }
++
+     #[tokio::test]
+     async fn vectored_piece_write_handles_partial_socket_writes() {
+         use tokio::io::AsyncReadExt;
+@@ -17724,6 +17830,7 @@ mod tests {
+                 upload,
+                 send_terminal_event_on_peer_channel: false,
+             },
++            UploadReadCoalescingPolicy::default(),
+             |_, _| std::future::pending::<UploadBatchCompletion>(),
+         ));
+         let mut remote = Framed::new(remote, PeerCodec::default());
+@@ -17892,6 +17999,112 @@ mod tests {
+         assert!(exit.result.is_ok());
+     }
+ 
++    #[tokio::test]
++    async fn opt_in_upload_coalescing_batches_refills_and_flushes_solo_requests() {
++        use std::sync::atomic::AtomicUsize;
++
++        static LAST_UPLOAD_BATCH_REQUESTS: AtomicUsize = AtomicUsize::new(0);
++
++        let temp = tempfile::tempdir().unwrap();
++        let payload = (0..3 * MAX_BLOCK_SIZE as usize)
++            .map(|index| (index % 251) as u8)
++            .collect::<Vec<_>>();
++        std::fs::write(temp.path().join("peer.bin"), &payload).unwrap();
++        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let peer_addr = listener.local_addr().unwrap();
++        let remote = TcpStream::connect(peer_addr).await.unwrap();
++        let (server, _) = listener.accept().await.unwrap();
++        let (upload, _) = peer_loop_upload_context(
++            temp.path(),
++            payload.len() as u64,
++            true,
++            false,
++            RateLimitCancellation::default(),
++            RateLimitCancellation::default(),
++        )
++        .await;
++        let (peer_event_tx, _peer_event_rx) = mpsc::channel(8);
++        let (peer_cmd_tx, peer_cmd_rx) = mpsc::channel(4);
++        let policy = parse_upload_read_coalescing_policy(Some("2"), Some("8")).unwrap();
++        LAST_UPLOAD_BATCH_REQUESTS.store(0, Ordering::SeqCst);
++        let peer_loop = tokio::spawn(run_peer_loop_with_upload_future(
++            PeerLoopStart {
++                addr: peer_addr,
++                peer_id: PeerId::new(),
++                peer_io: PeerIo::Tcp(Framed::new(server, PeerCodec::default())),
++                peer_event_tx,
++                peer_cmd_rx,
++                upload,
++                send_terminal_event_on_peer_channel: false,
++            },
++            policy,
++            |specs, context| {
++                LAST_UPLOAD_BATCH_REQUESTS.store(specs.len(), Ordering::SeqCst);
++                upload_read_batch_future(specs, context)
++            },
++        ));
++        let mut remote = Framed::new(remote, PeerCodec::default());
++        peer_cmd_tx.send(PeerCommand::Unchoke).await.unwrap();
++        assert!(matches!(
++            timeout(Duration::from_secs(1), remote.next())
++                .await
++                .unwrap()
++                .unwrap()
++                .unwrap(),
++            Message::Unchoke
++        ));
++
++        for begin in [0, MAX_BLOCK_SIZE] {
++            remote
++                .send(Message::Request {
++                    piece: 0,
++                    begin,
++                    length: MAX_BLOCK_SIZE,
++                })
++                .await
++                .unwrap();
++        }
++        for begin in [0usize, MAX_BLOCK_SIZE as usize] {
++            let message = timeout(Duration::from_secs(1), remote.next())
++                .await
++                .unwrap()
++                .unwrap()
++                .unwrap();
++            assert!(
++                matches!(message, Message::Piece { piece: 0, begin: actual_begin, data }
++                if actual_begin as usize == begin
++                    && data.as_ref() == &payload[begin..begin + MAX_BLOCK_SIZE as usize])
++            );
++        }
++        assert_eq!(LAST_UPLOAD_BATCH_REQUESTS.load(Ordering::SeqCst), 2);
++
++        let solo_begin = 2 * MAX_BLOCK_SIZE;
++        remote
++            .send(Message::Request {
++                piece: 0,
++                begin: solo_begin,
++                length: MAX_BLOCK_SIZE,
++            })
++            .await
++            .unwrap();
++        let message = timeout(Duration::from_secs(1), remote.next())
++            .await
++            .unwrap()
++            .unwrap()
++            .unwrap();
++        assert!(matches!(message, Message::Piece { piece: 0, begin, data }
++            if begin == solo_begin
++                && data.as_ref() == &payload[2 * MAX_BLOCK_SIZE as usize..]));
++        assert_eq!(LAST_UPLOAD_BATCH_REQUESTS.load(Ordering::SeqCst), 1);
++
++        peer_cmd_tx.send(PeerCommand::Shutdown).await.unwrap();
++        let exit = timeout(Duration::from_secs(1), peer_loop)
++            .await
++            .expect("peer loop did not stop")
++            .unwrap();
++        assert!(exit.result.is_ok());
++    }
++
+     #[tokio::test]
+     async fn remote_cancel_rejects_fast_request_still_queued_for_storage() {
+         let temp = tempfile::tempdir().unwrap();
+diff --git a/scripts/client_performance_benchmark.py b/scripts/client_performance_benchmark.py
+index 15ff6253..7ee0ed01 100755
+--- a/scripts/client_performance_benchmark.py
++++ b/scripts/client_performance_benchmark.py
+@@ -130,6 +130,10 @@ def run_command(args, *, env=None, check=True, quiet=False, timeout=None):
+     return result.stdout, result.returncode
+ 
+ 
++def docker_image_removal_succeeded(output, returncode):
++    return returncode == 0 or "no such image:" in output.lower()
++
++
+ def available_port(used=()):
+     reserved = set(used)
+     for _ in range(50):
+@@ -887,6 +891,12 @@ class Benchmark:
+         self.storage_peer_read_cache_bytes = optional_nonnegative_int(
+             "TNG_CLIENT_BENCH_STORAGE_PEER_READ_CACHE_BYTES",
+         )
++        self.upload_read_coalesce_min_batch = optional_positive_int(
++            "TNG_CLIENT_BENCH_UPLOAD_READ_COALESCE_MIN_BATCH",
++        )
++        self.upload_read_coalesce_max_delay_ms = optional_nonnegative_int(
++            "TNG_CLIENT_BENCH_UPLOAD_READ_COALESCE_MAX_DELAY_MS",
++        )
+         self.piece_assembly_cap_mb = optional_nonnegative_int(
+             "TNG_CLIENT_BENCH_PIECE_ASSEMBLY_CAP_MB",
+         )
+@@ -920,6 +930,16 @@ class Benchmark:
+             raise RuntimeError(
+                 "TNG_CLIENT_BENCH_STORAGE_PEER_READ_CACHE_BYTES must be <= 67108864"
+             )
++        if (self.upload_read_coalesce_min_batch is not None
++                and self.upload_read_coalesce_min_batch > 8):
++            raise RuntimeError(
++                "TNG_CLIENT_BENCH_UPLOAD_READ_COALESCE_MIN_BATCH must be <= 8"
++            )
++        if (self.upload_read_coalesce_max_delay_ms is not None
++                and self.upload_read_coalesce_max_delay_ms > 32):
++            raise RuntimeError(
++                "TNG_CLIENT_BENCH_UPLOAD_READ_COALESCE_MAX_DELAY_MS must be <= 32"
++            )
+         now = dt.datetime.now(dt.timezone.utc)
+         self.stamp = now.strftime("%Y%m%dT%H%M%SZ")
+         self.started = now.isoformat(timespec="seconds")
+@@ -1273,6 +1293,14 @@ class Benchmark:
+             )
+         if self.tokio_worker_threads is not None:
+             compose_environment["TOKIO_WORKER_THREADS"] = str(self.tokio_worker_threads)
++        if self.upload_read_coalesce_min_batch is not None:
++            compose_environment["TORRENTNG_UPLOAD_READ_COALESCE_MIN_BATCH"] = str(
++                self.upload_read_coalesce_min_batch
++            )
++        if self.upload_read_coalesce_max_delay_ms is not None:
++            compose_environment["TORRENTNG_UPLOAD_READ_COALESCE_MAX_DELAY_MS"] = str(
++                self.upload_read_coalesce_max_delay_ms
++            )
+         self.compose_override_path = self.workdir / "compose.benchmark.yml"
+         self.compose_override_path.write_text(
+             render_benchmark_compose_override(
+@@ -3645,6 +3673,13 @@ class Benchmark:
+             if self.storage_peer_read_cache_entries is not None else "",
+             f"peer-read cache budget={self.storage_peer_read_cache_bytes}B"
+             if self.storage_peer_read_cache_bytes is not None else "",
++            (
++                "upload read coalescing="
++                f"{self.upload_read_coalesce_min_batch or 1} requests/"
++                f"{self.upload_read_coalesce_max_delay_ms if self.upload_read_coalesce_max_delay_ms is not None else 32}ms"
++            )
++            if (self.upload_read_coalesce_min_batch is not None
++                or self.upload_read_coalesce_max_delay_ms is not None) else "",
+         ]
+         runtime_overrides = ", ".join(value for value in runtime_overrides if value) or "defaults"
+         memory_cap_overrides = ", ".join(
+@@ -4629,11 +4664,11 @@ class Benchmark:
+             if self.keep_built_image and not self.skip_build:
+                 self.cleanup_status += f"; benchmark image retained for reuse: {self.image}"
+             elif self.prebuilt_image != self.image:
+-                _, image_code = run_command(
++                image_output, image_code = run_command(
+                     ["docker", "image", "rm", self.image], env=self.env,
+                     check=False, quiet=True, timeout=60,
+                 )
+-                if image_code:
++                if not docker_image_removal_succeeded(image_output, image_code):
+                     self.cleanup_status += "; benchmark image removal failed"
+         except Exception as error:
+             self.cleanup_status = f"cleanup error: {type(error).__name__}: {error}"
+@@ -4745,6 +4780,8 @@ TNG_CLIENT_BENCH_MODE=transfer|controlled-download|controlled-seed|idle (default
+   TNG_CLIENT_BENCH_STORAGE_HASH_WORKER_THREADS=1
+   TNG_CLIENT_BENCH_STORAGE_PEER_READ_READAHEAD_BYTES=131072
+   TNG_CLIENT_BENCH_STORAGE_PEER_READ_CACHE_ENTRIES=16
++  TNG_CLIENT_BENCH_UPLOAD_READ_COALESCE_MIN_BATCH=2 (opt-in; max 8)
++  TNG_CLIENT_BENCH_UPLOAD_READ_COALESCE_MAX_DELAY_MS=8 (opt-in; max 32)
+   TNG_CLIENT_BENCH_PIECE_ASSEMBLY_CAP_MB=0
+   TNG_CLIENT_BENCH_PEER_BUFFER_CAP_MB=16
+ 
+diff --git a/scripts/test_client_performance_benchmark.py b/scripts/test_client_performance_benchmark.py
+index 052449aa..2bfd8f44 100644
+--- a/scripts/test_client_performance_benchmark.py
++++ b/scripts/test_client_performance_benchmark.py
+@@ -17,6 +17,17 @@ import client_performance_benchmark as benchmark
+ 
+ 
+ class CgroupCounterTests(unittest.TestCase):
++    def test_cleanup_treats_an_image_absent_after_interrupted_build_as_clean(self) -> None:
++        self.assertTrue(benchmark.docker_image_removal_succeeded("", 0))
++        self.assertTrue(benchmark.docker_image_removal_succeeded(
++            "Error response from daemon: No such image: torrentng/torrentngd:bench",
++            1,
++        ))
++        self.assertFalse(benchmark.docker_image_removal_succeeded(
++            "Cannot connect to the Docker daemon",
++            1,
++        ))
++
+     def test_http_api_uses_task_local_container_ip_and_internal_port(self) -> None:
+         instance = object.__new__(benchmark.Benchmark)
+         instance.project = "tngbenchtest"
+@@ -214,6 +225,17 @@ class CgroupCounterTests(unittest.TestCase):
+         self.assertEqual(rendered.count("    healthcheck:"), len(benchmark.CLIENTS) + 1)
+         self.assertNotIn("networks:\n", rendered)
+ 
++    def test_upload_read_coalescing_overrides_reach_only_torrentng(self) -> None:
++        rendered = benchmark.render_benchmark_compose_override({
++            "TORRENTNG_UPLOAD_READ_COALESCE_MIN_BATCH": "2",
++            "TORRENTNG_UPLOAD_READ_COALESCE_MAX_DELAY_MS": "8",
++        })
++
++        torrentng = rendered.split("  torrentngd:\n", 1)[1].split("  qbittorrent:\n", 1)[0]
++        self.assertIn('TORRENTNG_UPLOAD_READ_COALESCE_MIN_BATCH: "2"', torrentng)
++        self.assertIn('TORRENTNG_UPLOAD_READ_COALESCE_MAX_DELAY_MS: "8"', torrentng)
++        self.assertNotIn("TORRENTNG_UPLOAD_READ_COALESCE", rendered.split("  qbittorrent:\n", 1)[1])
++
+     def test_controlled_seed_compose_network_has_no_external_route(self) -> None:
+         rendered = benchmark.render_benchmark_compose_override(
+             {}, internal_network=True,

@@ -109,6 +109,26 @@ The bounded mmap-window plus vectored-write probe showed mixed CPU results and n
 Adding `biased;` to the peer-loop `tokio::select!` gave inconsistent CPU results: an alternating five-pair confirmation used 13.7% more median CPU, despite slightly lower memory. It is archived without changing production behavior; see the [per-run evidence](../../certification/reports/TorrentNG-seed-performance-experiments-20261022/observations/peer-select-biased-screen-20261023/README.md).
 Current-main debug telemetry from a verified 16 MiB transfer showed 127 of 129 storage-read batches already contain eight blocks, with one initial singleton and one seven-block tail. This diagnostic has no performance score; it points the next CPU work toward per-block cost inside the full batches, not a longer collection wait. See the [batch counts](../../certification/reports/TorrentNG-seed-performance-experiments-20261022/observations/batch-distribution-current-main-20261023/README.md).
 
+An Oct 24 TNG-only 128 MiB diagnostic added a post-transfer `/metrics` snapshot.
+It counted 8,192 logical 16 KiB peer-read requests, 7,086 backend reads totaling
+149,376,320 bytes, 1,106 peer-read cache hits, four prepared worker-job
+allocations and 8,316 reuses; reported prepared-job queue wait/run totals were
+94.8/199.4 ms. These are logical request and scheduler counters, not a batch
+size distribution. The shared host was heavily loaded (load average 31.5 at
+start), so the run is not a performance comparison. See the [counter report and
+raw samples](../../certification/reports/TorrentNG-storage-worker-counter-confirmation-20261023/README.md)
+and [baseline run](../../certification/reports/TorrentNG-storage-worker-baseline-20261023/README.md).
+
+A min-two-request, 8 ms coalescing prototype passed its focused peer-loop test,
+but the optimized image build was interrupted before any transfer. It was not
+retained after the independent batch trace showed 127/129 batches already at the
+eight-block cap. No CPU, RAM, or throughput effect was measured. Its unscored
+[run record](../../certification/reports/TorrentNG-upload-coalesce-candidate-20261023.md)
+and [exact patch](../../certification/reports/TorrentNG-upload-coalesce-candidate-20261023.patch)
+are preserved. The scheduler's per-batch worker/cache-hit path remains a more
+useful next target; any direct page-cache read experiment needs a nonblocking
+probe and the existing worker fallback.
+
 The earlier matched 128 MiB comparison left the 16 ms PGO candidate at about
 1.43× rTorrent 0.16.25 CPU, 2.05× its PSS, and 2.04× its anonymous memory. The
 newer 32 ms/eight-block PGO screen reports 1.42× rTorrent CPU and 2.05× its PSS;

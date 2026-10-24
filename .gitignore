@@ -16,6 +16,14 @@ webui/playwright-report/
 .claude/worktrees/
 benchmarks/report-*.md
 certification/reports/*
+!certification/reports/TorrentNG-storage-worker-baseline-20261023/
+!certification/reports/TorrentNG-storage-worker-baseline-20261023/**
+!certification/reports/TorrentNG-storage-worker-counter-confirmation-20261023/
+!certification/reports/TorrentNG-storage-worker-counter-confirmation-20261023/**
+!certification/reports/TorrentNG-upload-coalesce-candidate-20261023.md
+!certification/reports/TorrentNG-upload-coalesce-candidate-20261023-samples.csv
+!certification/reports/TorrentNG-upload-coalesce-candidate-20261023-memory-profile.json
+!certification/reports/TorrentNG-upload-coalesce-candidate-20261023.patch
 !certification/reports/TorrentNG-seed-performance-experiments-20261022/
 !certification/reports/TorrentNG-seed-performance-experiments-20261022/**
 !certification/reports/TorrentNG-rtorrent-hot-path-review-20261022/

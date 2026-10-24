@@ -201,6 +201,16 @@ class CgroupCounterTests(unittest.TestCase):
             instance.buildx_builder, benchmark.PERSISTENT_BUILDX_BUILDER,
         )
 
+    def test_missing_benchmark_image_is_already_cleaned_up(self) -> None:
+        self.assertTrue(benchmark.docker_image_removal_succeeded(
+            "Error response from daemon: No such image: torrentng/test:cancelled", 1,
+        ))
+
+    def test_image_removal_daemon_error_is_not_hidden(self) -> None:
+        self.assertFalse(benchmark.docker_image_removal_succeeded(
+            "Error response from daemon: conflict: image is in use", 1,
+        ))
+
     def test_transfer_compose_override_disables_healthchecks_symmetrically(self) -> None:
         rendered = benchmark.render_benchmark_compose_override({
             "TOKIO_WORKER_THREADS": "2",

@@ -130,6 +130,10 @@ def run_command(args, *, env=None, check=True, quiet=False, timeout=None):
     return result.stdout, result.returncode
 
 
+def docker_image_removal_succeeded(output, returncode):
+    return returncode == 0 or "no such image:" in output.lower()
+
+
 def available_port(used=()):
     reserved = set(used)
     for _ in range(50):
@@ -4629,11 +4633,11 @@ class Benchmark:
             if self.keep_built_image and not self.skip_build:
                 self.cleanup_status += f"; benchmark image retained for reuse: {self.image}"
             elif self.prebuilt_image != self.image:
-                _, image_code = run_command(
+                image_output, image_code = run_command(
                     ["docker", "image", "rm", self.image], env=self.env,
                     check=False, quiet=True, timeout=60,
                 )
-                if image_code:
+                if not docker_image_removal_succeeded(image_output, image_code):
                     self.cleanup_status += "; benchmark image removal failed"
         except Exception as error:
             self.cleanup_status = f"cleanup error: {type(error).__name__}: {error}"
