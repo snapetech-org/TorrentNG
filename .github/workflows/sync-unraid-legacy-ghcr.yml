@@ -95,7 +95,7 @@ jobs:
           done
 
           if ((${#tag_args[@]})); then
-            if ! create_output="$(docker buildx imagetools create "${tag_args[@]}" "$pinned_source" 2>&1)"; then
+            if ! create_output="$(docker buildx imagetools create --prefer-index=false "${tag_args[@]}" "$pinned_source" 2>&1)"; then
               printf 'Could not copy %s to legacy aliases:\n%s\n' "$pinned_source" "$create_output" >&2
               exit 1
             fi
