@@ -134,3 +134,45 @@ Run:
 cargo test -p rt-storage
 cargo test -p rt-engine
 ```
+
+### Experimental owned anonymous large frames (Linux)
+
+`TNG_STORAGE_ANON_LARGE_FRAMES=1`, sampled when each `FramePool` is constructed,
+uses private anonymous OS memory for frames larger than the largest pooled
+class (512 KiB) admitted while a verification scope is active. Outside those
+scopes, even oversized frames retain ordinary Vec backing. It is a diagnostic opt-in; the default remains vector backing.
+This retains buffered file I/O and does not map payload files. The experiment
+checks whether releasing oversized verification buffers directly to the OS
+reduces allocator retention; CPU and whole-client memory benefits are unproven.
+
+The pool reserves the page-rounded mapping length before `mmap`, with checked
+rounding and an `isize::MAX` limit. Failed mapping releases the reservation and
+returns `None` (normal storage backpressure), without a vector fallback. Small
+pooled frames and registered buffer allocations are unchanged. Anonymous frames
+are never retained in the ordinary idle Vec cache. `Frame::into_bytes` transfers the complete
+frame owner, including its charge, to `Bytes`; clones and slices retain the
+mapping until the last owner drops; it is then eligible for the bounded scoped
+reuse described below, or unmapped. Conversion to a registered slot unmaps the
+old backing and transfers the existing charge, as with vector-backed frames.
+
+Unsafe-code contract: a successful private anonymous mapping supplies zeroed,
+readable/writable memory owned exclusively by one backing object. No external
+file mutation can invalidate it. Slice lengths stay inside the live mapping and
+below `isize::MAX`; mutable slices require an exclusive borrow. `Send`/`Sync`
+rely on those Rust borrows and sole ownership, not on OS synchronization. Only
+the owner calls `munmap`, after all borrowed views/`Bytes` owners are gone.
+Overwrite reads still require complete initialization before publication; error,
+cancellation, and panic drop the backing and its reservation. Normal Linux
+anonymous-memory overcommit behavior still applies, as it does to heap memory.
+
+Verification scopes refine this experiment: during a whole recheck (including
+piece boundaries), the pool may reuse at most two exact-size anonymous mappings
+of at most 1 MiB each. These idle mappings remain charged to the pool's hard cap;
+capacity pressure evicts them before denying a new frame. They are separate from
+the ordinary idle Vec cache, and appear in `in_use_bytes`, not `retained_bytes`.
+Overwrite acquisition skips clearing; generic acquisition clears reused bytes.
+The last concurrent verification scope releases all idle maps. Outstanding
+frames/Bytes remain valid and unmap on their later final drop, including after
+cancellation. Scope guards cover normal completion, errors, pause/shutdown and
+unwind; nested or concurrent rechecks share the same aggregate two-map limit.
+Memory-governor I/O leases still follow each existing read/hash operation.

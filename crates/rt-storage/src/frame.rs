@@ -14,13 +14,17 @@ use std::sync::{
 
 use once_cell::sync::OnceCell;
 
+#[cfg(target_os = "linux")]
+mod anonymous;
+
 /// Default process-wide frame-pool cap when `TNG_STORAGE_FRAME_CAP_MB` is not
 /// set.
 pub const DEFAULT_FRAME_CAP_MB: u64 = 256;
 
 /// Pooled size classes. A request rounds up to the smallest class that
-/// fits; requests larger than the biggest class get an exact-size,
-/// non-pooled allocation (still counted against the cap).
+/// fits; larger requests get non-pooled backing, still counted against the
+/// cap. Vector backing is exact-size; experimental anonymous backing is
+/// page-rounded.
 const SIZE_CLASSES: [usize; 4] = [16 * 1024, 64 * 1024, 256 * 1024, 512 * 1024];
 
 /// Per-class cap on retained (idle) buffers, to bound resident memory when
@@ -38,6 +42,10 @@ struct PoolInner {
     /// Free lists, one per size class, parallel to `SIZE_CLASSES`.
     free: [Vec<Vec<u8>>; SIZE_CLASSES.len()],
     retained_bytes: u64,
+    #[cfg(target_os = "linux")]
+    anonymous_scopes: usize,
+    #[cfg(target_os = "linux")]
+    anonymous_idle: Vec<anonymous::AnonymousBuffer>,
 }
 
 /// Process-wide bounded buffer pool. Cheap to clone (`Arc` inside).
@@ -47,6 +55,10 @@ pub struct FramePool {
     in_use: Arc<AtomicU64>,
     denied: Arc<AtomicU64>,
     cap_bytes: u64,
+    #[cfg(target_os = "linux")]
+    anonymous_large_frames: bool,
+    #[cfg(all(test, target_os = "linux"))]
+    fail_anonymous_allocation: bool,
 }
 
 impl FramePool {
@@ -55,12 +67,58 @@ impl FramePool {
         FramePool {
             inner: Arc::new(Mutex::new(PoolInner {
                 free: Default::default(),
-                retained_bytes: 0,
+                ..PoolInner::default()
             })),
             in_use: Arc::new(AtomicU64::new(0)),
             denied: Arc::new(AtomicU64::new(0)),
             cap_bytes,
+            #[cfg(target_os = "linux")]
+            anonymous_large_frames: std::env::var_os("TNG_STORAGE_ANON_LARGE_FRAMES")
+                .is_some_and(|value| value == "1"),
+            #[cfg(all(test, target_os = "linux"))]
+            fail_anonymous_allocation: false,
         }
+    }
+
+    /// Temporarily reuse up to two <=1 MiB anonymous buffers while verifying.
+    /// Idle mappings retain their frame-pool charge; the last scope drops them.
+    /// The default vector mode and non-Linux platforms return an inert guard.
+    pub fn verification_scope(&self) -> VerificationFrameScope {
+        #[cfg(target_os = "linux")]
+        if self.anonymous_large_frames {
+            self.lock_inner().anonymous_scopes += 1;
+            return VerificationFrameScope {
+                pool: Some(self.clone()),
+            };
+        }
+        VerificationFrameScope { pool: None }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn release_anonymous(&self, buffer: anonymous::AnonymousBuffer, charge: u64) {
+        let mut inner = self.lock_inner();
+        if inner.anonymous_scopes > 0
+            && buffer.len() <= 1024 * 1024
+            && inner.anonymous_idle.len() < 2
+        {
+            inner.anonymous_idle.push(buffer);
+            return;
+        }
+        drop(inner);
+        drop(buffer);
+        self.release_charge(charge);
+    }
+
+    #[cfg(target_os = "linux")]
+    fn evict_anonymous_idle(&self) -> bool {
+        let buffers = std::mem::take(&mut self.lock_inner().anonymous_idle);
+        let any = !buffers.is_empty();
+        for buffer in buffers {
+            let charge = buffer.len() as u64;
+            drop(buffer);
+            self.release_charge(charge);
+        }
+        any
     }
 
     fn lock_inner(&self) -> MutexGuard<'_, PoolInner> {
@@ -70,7 +128,17 @@ impl FramePool {
                 // Free buffers are disposable; live frames own their buffers
                 // and accounting independently of this reuse cache.
                 let mut guard = poisoned.into_inner();
+                #[cfg(target_os = "linux")]
+                let scopes = guard.anonymous_scopes;
+                #[cfg(target_os = "linux")]
+                for buffer in guard.anonymous_idle.drain(..) {
+                    self.release_charge(buffer.len() as u64);
+                }
                 *guard = PoolInner::default();
+                #[cfg(target_os = "linux")]
+                {
+                    guard.anonymous_scopes = scopes;
+                }
                 self.inner.clear_poison();
                 guard
             }
@@ -135,7 +203,7 @@ impl FramePool {
 
     /// Acquire a frame of at least `len` bytes, or `None` if granting it
     /// would exceed the cap. The returned frame's usable length is exactly
-    /// `len`; backing capacity may be larger (a size class).
+    /// `len`; backing capacity may be larger (a size class or page rounding).
     pub fn try_acquire(&self, len: usize) -> Option<Frame> {
         self.try_acquire_inner(len, false)
     }
@@ -149,13 +217,57 @@ impl FramePool {
     }
 
     fn try_acquire_inner(&self, len: usize, overwrite: bool) -> Option<Frame> {
+        if len > isize::MAX as usize {
+            self.denied.fetch_add(1, Ordering::Relaxed);
+            return None;
+        }
+        #[cfg(target_os = "linux")]
+        let (anonymous_len, reused) =
+            if self.anonymous_large_frames && Self::class_for(len).is_none() {
+                let mut inner = self.lock_inner();
+                if inner.anonymous_scopes == 0 {
+                    (None, None)
+                } else {
+                    let Some(mapped_len) = anonymous::AnonymousBuffer::rounded_len(len) else {
+                        self.denied.fetch_add(1, Ordering::Relaxed);
+                        return None;
+                    };
+                    let index = inner
+                        .anonymous_idle
+                        .iter()
+                        .position(|b| b.len() == mapped_len);
+                    let buffer = index.map(|i| inner.anonymous_idle.swap_remove(i));
+                    (Some(mapped_len), buffer)
+                }
+            } else {
+                (None, None)
+            };
         let charge = Self::charge_for(len);
+        #[cfg(target_os = "linux")]
+        let charge = anonymous_len.map_or(charge, |len| len as u64);
+        #[cfg(target_os = "linux")]
+        if let Some(mut buffer) = reused {
+            if !overwrite {
+                buffer.as_mut_slice().fill(0);
+            }
+            return Some(Frame {
+                len,
+                charge,
+                backing: FrameBacking::Anonymous(buffer),
+                initialized: !overwrite,
+                pool: self.clone(),
+            });
+        }
         // Reserve against the cap first (CAS loop) so concurrent callers
         // cannot collectively overshoot.
         loop {
             let cur = self.in_use.load(Ordering::Acquire);
             let next = cur.checked_add(charge)?;
             if next > self.cap_bytes {
+                #[cfg(target_os = "linux")]
+                if self.evict_anonymous_idle() {
+                    continue;
+                }
                 self.denied.fetch_add(1, Ordering::Relaxed);
                 return None;
             }
@@ -166,6 +278,30 @@ impl FramePool {
             {
                 break;
             }
+        }
+
+        #[cfg(target_os = "linux")]
+        if let Some(mapped_len) = anonymous_len {
+            #[cfg(test)]
+            let allocation = if self.fail_anonymous_allocation {
+                None
+            } else {
+                anonymous::AnonymousBuffer::new(mapped_len)
+            };
+            #[cfg(not(test))]
+            let allocation = anonymous::AnonymousBuffer::new(mapped_len);
+            let Some(buffer) = allocation else {
+                self.release_charge(charge);
+                self.denied.fetch_add(1, Ordering::Relaxed);
+                return None;
+            };
+            return Some(Frame {
+                len,
+                charge,
+                backing: FrameBacking::Anonymous(buffer),
+                initialized: !overwrite,
+                pool: self.clone(),
+            });
         }
 
         let class = Self::class_for(len);
@@ -229,6 +365,36 @@ impl FramePool {
     }
 }
 
+/// RAII lifetime for bounded anonymous verification scratch reuse.
+/// Dropping the final scope releases idle maps; active owners remain valid.
+#[must_use]
+pub struct VerificationFrameScope {
+    pool: Option<FramePool>,
+}
+impl Drop for VerificationFrameScope {
+    fn drop(&mut self) {
+        #[cfg(target_os = "linux")]
+        if let Some(pool) = self.pool.take() {
+            let buffers = {
+                let mut inner = pool.lock_inner();
+                inner.anonymous_scopes -= 1;
+                if inner.anonymous_scopes == 0 {
+                    std::mem::take(&mut inner.anonymous_idle)
+                } else {
+                    Vec::new()
+                }
+            };
+            for buffer in buffers {
+                let charge = buffer.len() as u64;
+                drop(buffer);
+                pool.release_charge(charge);
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = self.pool.take();
+    }
+}
+
 /// Process-wide storage frame pool shared by `StorageRuntime` and the live
 /// torrent scheduler.
 pub fn global_frame_pool() -> &'static FramePool {
@@ -278,8 +444,15 @@ pub fn configure_global_frame_cap(cap_bytes: u64) -> Result<(), u64> {
 
 #[derive(Debug)]
 enum FrameBacking {
-    Vec { buf: Vec<u8>, class: Option<usize> },
-    Registered { slot: RegisteredFrameSlot },
+    Vec {
+        buf: Vec<u8>,
+        class: Option<usize>,
+    },
+    Registered {
+        slot: RegisteredFrameSlot,
+    },
+    #[cfg(target_os = "linux")]
+    Anonymous(anonymous::AnonymousBuffer),
     Empty,
 }
 
@@ -313,6 +486,8 @@ impl Frame {
         match &self.backing {
             FrameBacking::Vec { buf, .. } => &buf[..self.len],
             FrameBacking::Registered { slot } => slot.as_slice(self.len),
+            #[cfg(target_os = "linux")]
+            FrameBacking::Anonymous(buffer) => &buffer.as_slice()[..self.len],
             FrameBacking::Empty => &[],
         }
     }
@@ -321,6 +496,8 @@ impl Frame {
         match &mut self.backing {
             FrameBacking::Vec { buf, .. } => &mut buf[..self.len],
             FrameBacking::Registered { slot } => slot.as_mut_slice(self.len),
+            #[cfg(target_os = "linux")]
+            FrameBacking::Anonymous(buffer) => &mut buffer.as_mut_slice()[..self.len],
             FrameBacking::Empty => &mut [],
         }
     }
@@ -333,9 +510,14 @@ impl Frame {
     ///
     /// The frame-pool charge stays with the backing allocation until the last
     /// `Bytes` clone or slice is dropped. Vector-backed and registered buffers
-    /// return to their respective pools at that point.
+    /// return to their respective pools at that point; anonymous backing is
+    /// unmapped instead.
     pub fn into_bytes(mut self) -> bytes::Bytes {
         assert!(self.initialized, "read frame consumed before completion");
+        #[cfg(target_os = "linux")]
+        if matches!(self.backing, FrameBacking::Anonymous(_)) {
+            return bytes::Bytes::from_owner(self);
+        }
         let len = self.len;
         let charge = self.charge;
         self.len = 0;
@@ -354,6 +536,8 @@ impl Frame {
                 charge,
                 pool: self.pool.clone(),
             }),
+            #[cfg(target_os = "linux")]
+            FrameBacking::Anonymous(_) => unreachable!("anonymous owner returned above"),
             FrameBacking::Empty => {
                 self.pool.release_charge(charge);
                 bytes::Bytes::new()
@@ -383,6 +567,12 @@ impl Frame {
     }
 }
 
+impl AsRef<[u8]> for Frame {
+    fn as_ref(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
+
 impl std::ops::Deref for Frame {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
@@ -404,6 +594,10 @@ impl Drop for Frame {
             FrameBacking::Registered { slot } => {
                 drop(slot);
                 self.pool.release_charge(charge);
+            }
+            #[cfg(target_os = "linux")]
+            FrameBacking::Anonymous(buffer) => {
+                self.pool.release_anonymous(buffer, charge);
             }
             FrameBacking::Empty => {}
         }
@@ -845,3 +1039,6 @@ mod tests {
         assert!(slots.acquire(1).is_some());
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod anonymous_tests;

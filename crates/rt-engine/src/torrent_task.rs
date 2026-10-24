@@ -5196,6 +5196,7 @@ impl TorrentTask {
         pending_command: &mut Option<TorrentCmd>,
         mut job_id: Option<String>,
     ) -> RecheckOutcome {
+        let _frames = rt_storage::frame::global_frame_pool().verification_scope();
         // Stop a source fetch before any recheck drain, persistence, or disk
         // work can hold the actor. Its late response must not cross into the
         // new verification epoch.

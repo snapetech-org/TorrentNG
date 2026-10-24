@@ -104,6 +104,7 @@ impl<'a> PieceVerifier<'a> {
         piece: u32,
         v2: Option<&HybridV2PieceExpectation>,
     ) -> VerifyResult {
+        let _frames = crate::frame::global_frame_pool().verification_scope();
         let regions = match self.piece_map.piece_to_file_regions(piece) {
             Ok(r) => r,
             Err(e) => {
@@ -359,6 +360,7 @@ impl<'a> PieceVerifier<'a> {
 
     /// Verify all pieces, returning a bitset of valid pieces.
     pub async fn verify_all(&self) -> Vec<VerifyResult> {
+        let _frames = crate::frame::global_frame_pool().verification_scope();
         let mut results = Vec::with_capacity(self.piece_map.piece_count as usize);
         for piece in 0..self.piece_map.piece_count {
             results.push(self.verify_piece(piece).await);
@@ -372,6 +374,7 @@ impl<'a> PieceVerifier<'a> {
         start: u32,
         end: u32,
     ) -> Result<Vec<(u32, VerifyResult)>, StorageError> {
+        let _frames = crate::frame::global_frame_pool().verification_scope();
         let start = start.min(self.piece_map.piece_count);
         let end = end.min(self.piece_map.piece_count);
         if start >= end {
@@ -440,6 +443,7 @@ impl<'a> V2FileVerifier<'a> {
     }
 
     pub async fn verify_all(&self) -> Vec<(u32, VerifyResult)> {
+        let _frames = crate::frame::global_frame_pool().verification_scope();
         let mut out = Vec::with_capacity(self.files.len());
         for file in self.files {
             out.push((file.file_index, self.verify_file(file).await));
@@ -449,6 +453,7 @@ impl<'a> V2FileVerifier<'a> {
 
     #[instrument(skip(self, file), fields(file_index = file.file_index))]
     pub async fn verify_file(&self, file: &V2FileHash) -> VerifyResult {
+        let _frames = crate::frame::global_frame_pool().verification_scope();
         let actual = match self.file_root(file).await {
             Ok(root) => root,
             Err(e) => {
