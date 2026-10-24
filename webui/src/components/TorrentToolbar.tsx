@@ -44,7 +44,7 @@ export function TorrentToolbar({
       padding: '0 10px', background: 'var(--surface)', borderBottom: '1px solid var(--border)',
       minWidth: 0, overflowX: 'auto', overflowY: 'hidden', scrollbarWidth: 'thin',
     }}>
-      <button type="button" className="tng-toolbar-button" onClick={onAdd} title={t('Add torrent')} aria-label={t('Add torrent')} style={primaryButton}><span aria-hidden="true">+</span>{localized('Add')}</button>
+      <button type="button" className="tng-toolbar-button" onClick={onAdd} title={t('Add torrent')} aria-label={t('Add')} style={primaryButton}><span aria-hidden="true">+</span>{localized('Add')}</button>
       <div className="tng-toolbar-divider" aria-hidden="true" style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 2px' }} />
       <span className="tng-toolbar-label" style={groupLabel}>{localized('Transfer')}</span>
       <div className="tng-toolbar-group" role="group" aria-label={t('Transfer actions')} style={buttonGroup}>

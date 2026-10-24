@@ -594,7 +594,9 @@ pub(crate) async fn auth_logout(
 ) -> impl IntoResponse {
     crate::auth::revoke_oidc_session_cookie(
         &s,
-        headers.get(header::COOKIE).and_then(|value| value.to_str().ok()),
+        headers
+            .get(header::COOKIE)
+            .and_then(|value| value.to_str().ok()),
     );
     let secure_attribute = if s.cfg.auth.secure_cookies {
         "; Secure"

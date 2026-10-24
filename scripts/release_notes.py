@@ -161,12 +161,32 @@ def parse_release_note(file_name: str, content: str) -> dict[str, Any]:
 
 
 def read_release_notes(
-    entries: list[dict[str, str]], head: str
+    entries: list[dict[str, str]], head: str, base: str | None = None
 ) -> tuple[list[dict[str, Any]], list[str]]:
     notes: list[dict[str, Any]] = []
     errors: list[str] = []
     for entry in entries:
-        if entry["status"] != "A":
+        status = entry["status"]
+        is_pre_release_correction = False
+        if status == "M" and base:
+            try:
+                previous_content = read_at_ref(base, entry["file"])
+            except (OSError, subprocess.CalledProcessError) as error:
+                errors.append(
+                    f"{entry['file']}: unable to read previous fragment ({error})"
+                )
+                continue
+            previous_note = parse_release_note(entry["file"], previous_content)
+            if not previous_note["errors"]:
+                errors.append(
+                    f"{entry['file']}: valid fragments are append-only; add a new file"
+                )
+                continue
+            # A malformed fragment that has not yet shipped may be corrected
+            # in place. Validate it, but do not announce the correction as a
+            # new user-facing change in the PR preview.
+            is_pre_release_correction = True
+        elif status != "A":
             errors.append(f"{entry['file']}: fragments are append-only; add a new file")
             continue
         try:
@@ -176,7 +196,7 @@ def read_release_notes(
             continue
         note = parse_release_note(entry["file"], content)
         errors.extend(f"{entry['file']}: {error}" for error in note["errors"])
-        if not note["errors"]:
+        if not note["errors"] and not is_pre_release_correction:
             notes.append(note)
     return notes, errors
 
@@ -240,7 +260,7 @@ def main() -> int:
     args = parser.parse_args()
     base = getattr(args, "base", None)
     entries = changed_release_note_files(base, args.head)
-    notes, errors = read_release_notes(entries, args.head)
+    notes, errors = read_release_notes(entries, args.head, args.base or None)
 
     if args.command == "check":
         body = os.environ.get(args.body_env, "")

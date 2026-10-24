@@ -23,3 +23,20 @@ Semgrep uses the POSIX I/O backend by default for compatibility with restricted 
 in the scan. Inline `nosemgrep` annotations document protocol-required
 BitTorrent v1 SHA-1 hashes, owner-only directory modes, runtime entrypoints
 that drop privileges, and a GPG marker string that contains no key material.
+
+## Reviewed RustSec exceptions
+
+The sidecar's OpenID Connect implementation uses RSA and P-256/P-384 only to
+verify identity-provider signatures with public keys. It does not decrypt or
+sign with private keys, so the secret-dependent timing findings do not apply
+to this usage. RustSec has no fixed release for `RUSTSEC-2023-0071`; the
+exception remains narrow to that public-key verification path.
+
+The sidecar currently resolves `RUSTSEC-2026-0387` through
+`openidconnect`'s P-256/P-384 ID-token signature-verification dependencies.
+That verifier receives provider public keys and signatures; TorrentNG does
+not use the affected arithmetic on private key material. The dependency chain
+does not currently offer a compatible `crypto-bigint` 0.5.x release containing
+the upstream fix, so `.cargo/audit.toml` narrowly ignores this advisory. This
+does not mean the dependency is patched. Reassess the exception when the
+OIDC/elliptic-curve dependency chain adopts `crypto-bigint >=0.7.6`.

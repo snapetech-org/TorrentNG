@@ -5,7 +5,9 @@ import subprocess
 import tempfile
 import textwrap
 
-from scripts.release_notes import parse_release_note
+from unittest.mock import patch
+
+from scripts.release_notes import parse_release_note, read_release_notes
 
 
 def release_note(body: str, action: str = "none") -> dict:
@@ -75,6 +77,41 @@ Torrent recovery resumes after the saved download path is changed.
         )
 
         self.assertEqual(note["errors"], [])
+
+    def test_allows_fixing_an_invalid_unreleased_fragment(self) -> None:
+        previous_content = f"---\ncategory: fixed\naudience: users, operators\narea: storage\naction: none\nbreaking: false\n---\nTorrent recovery details " + "x" * 390 + ".\n"
+        repaired_content = "---\ncategory: fixed\naudience: users, operators\narea: storage\naction: none\nbreaking: false\n---\nTorrent recovery now resumes from the saved log after the data path changes.\n"
+        self.assertTrue(parse_release_note("release-notes/test.md", previous_content)["errors"])
+        with patch(
+            "scripts.release_notes.read_at_ref",
+            side_effect=lambda ref, _: previous_content if ref == "base" else repaired_content,
+        ):
+            notes, errors = read_release_notes(
+                [{"status": "M", "file": "release-notes/test.md"}],
+                "head",
+                "base",
+            )
+
+        self.assertEqual(errors, [])
+        self.assertEqual(notes, [])
+        self.assertEqual(
+            parse_release_note("release-notes/test.md", repaired_content)["errors"], []
+        )
+
+    def test_valid_fragments_remain_append_only(self) -> None:
+        previous_content = "---\ncategory: fixed\naudience: users\narea: storage\naction: none\nbreaking: false\n---\nTorrent recovery now resumes after the saved path changes.\n"
+        with patch("scripts.release_notes.read_at_ref", return_value=previous_content):
+            notes, errors = read_release_notes(
+                [{"status": "M", "file": "release-notes/test.md"}],
+                "head",
+                "base",
+            )
+
+        self.assertEqual(notes, [])
+        self.assertEqual(
+            errors,
+            ["release-notes/test.md: valid fragments are append-only; add a new file"],
+        )
 
     def test_rejects_html_comment_delimiters_in_action(self) -> None:
         for delimiter in ("<!--", "-->"):
