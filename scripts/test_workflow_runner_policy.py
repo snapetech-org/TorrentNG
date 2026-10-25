@@ -166,7 +166,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         self.assertIn("persist-credentials: false", source)
         self.assertNotIn("TRUSTED_MAIN_RUNNERS_ENABLED", source)
 
-    def test_public_fork_validation_stays_on_github_hosted_runners(self) -> None:
+    def test_public_fork_validation_is_manual_and_stays_on_hosted_runners(self) -> None:
         source = (WORKFLOW_DIR / PUBLIC_FORK_WORKFLOW).read_text(encoding="utf-8")
         runs_on = next(
             line.strip()
@@ -184,10 +184,10 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         self.assertNotIn("secrets:", source)
 
         caller = (WORKFLOW_DIR / "public-fork-pr.yml").read_text(encoding="utf-8")
-        self.assertIn("branches: [main]", caller)
+        self.assertRegex(caller, r"(?m)^  workflow_dispatch:\s*\{\}\s*$")
+        self.assertNotRegex(caller, r"(?m)^  pull_request(?:_target)?:")
         self.assertIn("github.event.pull_request.head.repo.fork == true", caller)
         self.assertIn("github.event.pull_request.base.ref == 'main'", caller)
-        self.assertRegex(caller, r"(?m)^  pull_request:$")
         self.assertNotIn("pull_request_target", source + caller)
 
     def test_windows_smoke_uses_the_hosted_windows_runner(self) -> None:

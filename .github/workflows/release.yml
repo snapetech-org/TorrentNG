@@ -70,17 +70,12 @@ jobs:
       - name: Find previous published release
         id: previous
         env:
-          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.validate-release-tag.outputs.tag }}
         shell: bash
         run: |
           set -euo pipefail
-          previous_tag="$(gh release list \
-            --repo "$GITHUB_REPOSITORY" \
-            --limit 1000 \
-            --json tagName,isDraft \
-            --jq '.[] | select(.isDraft == false) | .tagName' \
-            | awk -v current="$RELEASE_TAG" '$0 != current && !found { print; found = 1 }')"
-          echo "tag=$previous_tag" >> "$GITHUB_OUTPUT"
+          python3 scripts/github_release.py previous-tag --current-tag "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Assemble curated release notes
         env:
@@ -132,6 +127,8 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          components: clippy, rustfmt
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -891,6 +888,12 @@ jobs:
           mkdir -p "$RUNNER_TEMP"
           test -w "$RUNNER_TEMP"
           printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Checkout release publisher
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.validate-release-tag.outputs.tag }}
+          persist-credentials: false
+
       - name: Download release artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -906,38 +909,25 @@ jobs:
 
       - name: Create GitHub release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.validate-release-tag.outputs.tag }}
           RELEASE_BODY: ${{ needs.release-notes.outputs.release_body }}
         shell: bash
-        run: |
-          set -euo pipefail
-          tag="$RELEASE_TAG"
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" \
-              --title "TorrentNG $tag" \
-              --notes "$RELEASE_BODY"
-            gh release upload "$tag" dist/* --clobber --repo "$GITHUB_REPOSITORY"
-          else
-            gh release create "$tag" dist/* \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "TorrentNG $tag" \
-              --notes "$RELEASE_BODY" \
-              --verify-tag
-          fi
+        run: python3 scripts/github_release.py publish --tag "$RELEASE_TAG" --title "TorrentNG $RELEASE_TAG" --body-env RELEASE_BODY --asset-dir dist
 
       - name: Dispatch AUR publish
         env:
-          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.validate-release-tag.outputs.tag }}
         shell: bash
-        run: gh workflow run release-aur.yml --ref main -f "tag=$RELEASE_TAG"
+        run: python3 scripts/github_release.py dispatch --workflow release-aur.yml --ref main --tag "$RELEASE_TAG"
 
       - name: Dispatch COPR publish
         env:
-          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.validate-release-tag.outputs.tag }}
         shell: bash
-        run: gh workflow run release-copr.yml --ref main -f "tag=$RELEASE_TAG"
+        run: python3 scripts/github_release.py dispatch --workflow release-copr.yml --ref main --tag "$RELEASE_TAG"
 
       - name: Check legacy GHCR credential
         id: legacy-ghcr
