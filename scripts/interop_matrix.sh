@@ -549,11 +549,15 @@ copy_torrent_to_rtorrent_watch() {
 qb_login() {
   local username="${INTEROP_QBITTORRENT_USERNAME:-admin}"
   local pass="${INTEROP_QBITTORRENT_PASSWORD:-}"
+  local cookie_file="$WORKDIR/artifacts/qbit.cookie"
   if [[ -z "$pass" ]]; then
     pass="$(compose logs --no-color qbittorrent 2>/dev/null | sed -n 's/.*temporary password is provided for this session: //p' | tail -n1)"
   fi
   [[ -n "$pass" ]] || return 1
-  curl --max-time "$CURL_MAX_TIME" -fsS -H 'Host: localhost:8080' -c "$WORKDIR/artifacts/qbit.cookie" \
+  if [[ ! -e "$cookie_file" && ! -L "$cookie_file" ]]; then
+    (umask 077; : >"$cookie_file")
+  fi
+  curl --max-time "$CURL_MAX_TIME" -fsS -H 'Host: localhost:8080' -c "$cookie_file" \
     --data-urlencode "username=$username" --data-urlencode "password=$pass" \
     "$(client_url qbittorrent)/api/v2/auth/login" >/dev/null
 }
