@@ -6,16 +6,12 @@ run-name: >-
 
 on:
   push:
-    branches: ["main"]
-  pull_request:
-    branches: ["master", "main"]
-  pull_request_target:
-    branches: [main]
-    types: [opened, reopened, synchronize, ready_for_review, edited]
+    tags:
+      - '**'
   workflow_dispatch:
     inputs:
 
-# Preserve every main-push and PR result for the commit it checked.
+# Preserve every tag or manual validation result for the source it checked.
       pr_number:
         description: Trusted owner PR number (set only by the metadata dispatcher)
         required: false
@@ -30,7 +26,7 @@ on:
         type: string
 concurrency:
   group: ng-ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}-${{ github.event.action == 'edited' && 'metadata' || 'code' }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
+  cancel-in-progress: false
 
 permissions:
   contents: read

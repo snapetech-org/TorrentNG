@@ -3,16 +3,13 @@ name: CodeQL
 
 on:
   push:
-    branches: ["main"]
-  pull_request:
-    branches: ["main"]
-  schedule:
-    - cron: "23 4 * * 1"
+    tags:
+      - '**'
   workflow_dispatch:
 
 concurrency:
   group: ng-scan-codeql-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   actions: read
