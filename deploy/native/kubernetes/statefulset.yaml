@@ -61,6 +61,10 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: downloads-scratch
+              mountPath: /downloads
+            - name: runtime-secrets
+              mountPath: /run/secrets
             - name: config
               mountPath: /etc/torrentngd
               readOnly: true
@@ -70,6 +74,10 @@ spec:
               mountPath: /data
       volumes:
         - name: tmp
+          emptyDir: {}
+        - name: downloads-scratch
+          emptyDir: {}
+        - name: runtime-secrets
           emptyDir: {}
         - name: config
           secret:
