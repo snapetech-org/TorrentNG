@@ -2,15 +2,10 @@
 name: Release-note validation
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened, edited, ready_for_review]
-
+  workflow_dispatch: {}
 concurrency:
   group: ng-release-notes-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}-${{ github.event.action == 'edited' && 'metadata' || 'code' }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -18,6 +13,7 @@ permissions:
 
 jobs:
   release-note:
+    if: github.event_name == 'pull_request'
     name: Validate release-note choice
     runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.ref == 'refs/heads/main' && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-release-note"]}}', github.run_id)) || 'ubuntu-latest' }}
     steps:
