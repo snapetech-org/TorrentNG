@@ -546,6 +546,19 @@ copy_torrent_to_rtorrent_watch() {
   cp "$torrent" "$WORKDIR/watch/rtorrent/"
 }
 
+ensure_interop_cookie_jar() {
+  local cookie_file="$1"
+  mkdir -p "$(dirname "$cookie_file")"
+  if [[ ! -e "$cookie_file" && ! -L "$cookie_file" ]]; then
+    (umask 077; : >"$cookie_file")
+  fi
+  if [[ -L "$cookie_file" || ! -f "$cookie_file" || ! -O "$cookie_file" ]]; then
+    echo "interop cookie jar must be an owned regular file: $cookie_file" >&2
+    return 1
+  fi
+  chmod 600 -- "$cookie_file"
+}
+
 qb_login() {
   local username="${INTEROP_QBITTORRENT_USERNAME:-admin}"
   local pass="${INTEROP_QBITTORRENT_PASSWORD:-}"
@@ -554,9 +567,7 @@ qb_login() {
     pass="$(compose logs --no-color qbittorrent 2>/dev/null | sed -n 's/.*temporary password is provided for this session: //p' | tail -n1)"
   fi
   [[ -n "$pass" ]] || return 1
-  if [[ ! -e "$cookie_file" && ! -L "$cookie_file" ]]; then
-    (umask 077; : >"$cookie_file")
-  fi
+  ensure_interop_cookie_jar "$cookie_file" || return 1
   curl --max-time "$CURL_MAX_TIME" -fsS -H 'Host: localhost:8080' -c "$cookie_file" \
     --data-urlencode "username=$username" --data-urlencode "password=$pass" \
     "$(client_url qbittorrent)/api/v2/auth/login" >/dev/null
@@ -624,14 +635,16 @@ add_transmission() {
 }
 
 deluge_rpc() {
-  local body="$1"
-  curl --max-time "$CURL_MAX_TIME" -fsS -c "$WORKDIR/artifacts/deluge.cookie" -b "$WORKDIR/artifacts/deluge.cookie" \
+  local body="$1" cookie_file="$WORKDIR/artifacts/deluge.cookie"
+  ensure_interop_cookie_jar "$cookie_file" || return 1
+  curl --max-time "$CURL_MAX_TIME" -fsS -c "$cookie_file" -b "$cookie_file" \
     -H "Content-Type: application/json" -d "$body" "$(client_url deluge)/json"
 }
 
 deluge_rpc_file() {
-  local body_file="$1"
-  curl --max-time "$CURL_MAX_TIME" -fsS -c "$WORKDIR/artifacts/deluge.cookie" -b "$WORKDIR/artifacts/deluge.cookie" \
+  local body_file="$1" cookie_file="$WORKDIR/artifacts/deluge.cookie"
+  ensure_interop_cookie_jar "$cookie_file" || return 1
+  curl --max-time "$CURL_MAX_TIME" -fsS -c "$cookie_file" -b "$cookie_file" \
     -H "Content-Type: application/json" --data-binary "@$body_file" "$(client_url deluge)/json"
 }
 
