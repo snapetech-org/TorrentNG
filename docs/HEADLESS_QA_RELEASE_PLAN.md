@@ -111,4 +111,43 @@ Agents must report exact commands, revisions, results, and artifact/log paths. C
 
 ## Current execution record
 
-The execution record is appended below with the tested revision/worktree state, exact commands, outcomes, limitations, and remaining external gates. A pass on a dirty development checkout is useful diagnostic evidence only and does not clear the release checklist above.
+### Run on 2026-10-25
+
+#### Source and environment
+
+- Candidate application and deployment revision: `329b9946876032c5d7642e476566983391631fb4` (`main`, pushed to `origin/main`). The plan and this record are committed separately; that documentation-only commit does not change the tested application or deployment files. No release tag was created.
+- Host: `kspld0`, EndeavourOS Linux, x86_64; Rust/Cargo 1.94.0; Node 24.22.1/npm 11.19.1; Playwright 1.64.1; Docker 29.9.2/Compose 5.6.1.
+- The QA commits between `5fd8d5b9` and the candidate change deployment manifests, interop test setup, documentation, and browser snapshots. They do not change Rust engine or `webui/src` application code. Broad engine, fuzz, API-load, sidecar, desktop, and MSRV results below were run at `5fd8d5b9`; exact-candidate workspace, storage, release-artifact, API, WebUI, security, and Docker interoperability gates were also run at `329b9946`.
+- Evidence and logs are retained under `/tmp/torrentng-headless-qa-20261025-01` on `kspld0`. All local torrent tests used generated fixtures, a task-local Docker stack, loopback-bound host ports, and disabled DHT/PEX/NAT/UPnP/LSD. No public torrent traffic was initiated.
+
+#### Fixes made while qualifying
+
+- Set the native Kubernetes container to a read-only root filesystem and added task-local writable volumes at `/tmp`, `/downloads`, and `/run/secrets`, matching the paths used by the entrypoint and runtime.
+- Hardened interop cookie-jar initialization for qBittorrent and Deluge: create a private mode-0600 jar safely and reject symlink targets.
+- Changed the interop QA image's default Cargo features to `system-allocator,full-compat`. The API-facade certification probes optional Transmission and Deluge routes, so the QA target now enables those routes. The production image defaults are unchanged.
+- These were deployment/test-harness issues. No native-engine or WebUI application defect was reproduced during this run.
+
+#### Results
+
+| Area | Result | Evidence |
+|---|---|---|
+| Repository scripts and contracts | PASS | 459 Python harness tests; OpenAPI validator covered 67 paths and 93 operations; shell syntax, ShellCheck, policy/self-tests, YAML/Compose/Kubernetes validation passed. |
+| Native workspace and storage | PASS | Exact-candidate local release gate: formatting, locked workspace tests, and storage feature matrix passed. Full-compat tests: 32 passed, 1 ignored; seed-mmap storage/engine tests: 371 passed. Strict Clippy passed. |
+| Sidecar and desktop | PASS | Sidecar: 122 tests and strict Clippy; desktop: 38 unit tests plus engine roundtrip, strict Clippy, and build. Rust 1.88 native and Rust 1.97 sidecar checks passed. These components had no source changes after `5fd8d5b9`. |
+| WebUI UX/UI | PASS with runner limitation | Isolated runner-profile run: 57 unit tests; production build, lint, and npm audit passed (0 vulnerabilities); Playwright desktop/mobile/accessibility/scale suite: 30 passed, 10 expected skips, 0 failures after refreshing only the task-local snapshots. The exact-candidate integrated run on `kspld0` passed build/lint and 27 E2E checks, skipped 10, and reported 3 hosted visual-baseline diffs (two desktop, one mobile). The rendered pages were otherwise stable; failure screenshots and traces are retained. No local-only baselines were committed. |
+| API, persistence, and recovery | PASS | Exact-candidate API-facade certification, authenticated release-binary smoke, backup/restore, migration corpus, and native/sidecar config reviews passed. The authenticated binary smoke exercised health, torrent lists/transfers, qBittorrent facade, metrics, and clean shutdown. |
+| Local client interoperability | PASS | Exact-candidate full-compat matrix: all 10 base cases passed (four existing-client-to-native downloads, four native-to-client downloads, mesh swarm, and 25-torrent churn). All 4 extended cases also passed (webseed-only, private explicit peer, restart recovery, and REST/qBittorrent/Transmission/Deluge facades). QA image digest: `sha256:b99c0445182cf8a3a5bba5ddfccd26d84143a9be8f08dd779ed71254553d7e5f`. |
+| API load and fuzz smoke | PASS | Earlier candidate run: 125,394 successful API requests, 0 errors/timeouts, p50 1.79 ms, p95 3.32 ms, p99 4.19 ms; four SSE clients completed without lag. Eleven CI-bounded fuzz targets ran for 60 seconds each with no crash. No relevant engine source changed after that run. |
+| Security and supply chain | FAIL / review required | npm and RustSec audits found no actionable high/critical dependency vulnerabilities; container image scan found none. Semgrep previously reported 0 findings across 3,136 tracked files, with staged checks clean on follow-up commits. `scripts/security_scan.sh` failed Trivy config scan on `deploy/docker/Dockerfile:126` (DS-0002, `USER root` during PUID/PGID initialization before privilege drop). This intentional startup design needs an explicit security-owner review or remediation. RustSec also reports unmaintained `paste` and desktop dependency advisories; the tracked Deluge private key is a self-signed interop fixture and still needs explicit fixture-only review. |
+| External qualification | NOT RUN / BLOCKED | External preflight passed Docker and migration-corpus checks, but warned that public-torrent opt-in and a real storage target were unset. The 24-hour soak was explicitly deferred. Physical storage durability/io_uring/move-import, public-network transfer, hosted release CI, and private-runner gates remain outstanding. |
+
+#### Release decision and retained reports
+
+- Exact-candidate `scripts/local_release_gate.sh` result: `FAIL` because the local runner did not match the three hosted visual snapshots; real-device storage certification was skipped because no authorized target mount was available. The other listed gates passed. Report: `/tmp/torrentng-headless-qa-20261025-01/reports-final/local-release-329b9946.md`.
+- Exact-candidate `scripts/security_scan.sh` result: `FAIL` on the Trivy Dockerfile finding above. Report: `/tmp/torrentng-headless-qa-20261025-01/reports-final/security-image-329b9946.md`.
+- `scripts/release_readiness_gate.sh` and `scripts/release_evidence_suite.sh` in strict scope both returned `FAIL`. The evidence directory does not contain the required current public/client, hardware, soak, hosted-CI, and other certification reports; the WebUI and security findings are also non-clean. Reports: `/tmp/torrentng-headless-qa-20261025-01/reports-final/release-readiness-strict-329b9946.md` and `/tmp/torrentng-headless-qa-20261025-01/reports-final/release-evidence-suite-strict-329b9946.md`.
+- The exact-candidate external preflight is `PASS_WITH_WARNINGS`: `/tmp/torrentng-headless-qa-20261025-01/reports-final/external-preflight-329b9946.md`. Local interop reports are `interop-base-fullcompat-329b9946.md` and `interop-extended-fullcompat-329b9946.md` in the same directory.
+- GitHub CodeQL, Semgrep Community, and Trivy filesystem workflows were pending for candidate `329b9946` when checked. The main release workflow was not dispatched. No production artifact was published.
+- **Release status: NOT READY for public release.** This run supplies broad local evidence but cannot prove the software bug-free. Clear the visual-runner mismatch, obtain passing physical-storage/public-network/soak and hosted CI evidence, review the security exception or fix, and rerun the strict release evidence and readiness gates on the same final source and image before release.
+
+The execution record is append-only for future candidate runs. A pass on a dirty development checkout is diagnostic evidence only and does not clear the release checklist above.
