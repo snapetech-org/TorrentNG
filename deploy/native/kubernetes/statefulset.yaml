@@ -28,6 +28,7 @@ spec:
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
@@ -58,6 +59,8 @@ spec:
             initialDelaySeconds: 15
             periodSeconds: 20
           volumeMounts:
+            - name: tmp
+              mountPath: /tmp
             - name: config
               mountPath: /etc/torrentngd
               readOnly: true
@@ -66,6 +69,8 @@ spec:
             - name: downloads
               mountPath: /data
       volumes:
+        - name: tmp
+          emptyDir: {}
         - name: config
           secret:
             name: torrentngd-config
