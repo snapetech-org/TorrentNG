@@ -28,6 +28,11 @@ selection/capability roundtrips, and enforces the HDD elevator speedup gate when
 `TNG_STORAGE_REQUIRE_HDD_5X=1` is set. Set `TNG_STORAGE_SYSCALLS=1` to include
 per-case syscall counters when `strace` is available.
 
+The shuffled-read baseline offers up to 256 requests at once. The isolated HDD
+elevator probe sizes its test queue for the complete bounded fixture so it can
+measure full-fixture coalescing; this test setting does not change production
+queue limits or describe default runtime concurrency.
+
 ## Automated Matrix
 
 | Area | Coverage | Command |

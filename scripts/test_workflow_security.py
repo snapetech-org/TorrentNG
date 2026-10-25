@@ -358,6 +358,15 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertNotIn("steps.tag.outputs.tag", checksum_step)
         self.assertEqual(release.count("${{ steps.tag.outputs.tag }}"), 1)
 
+    def test_release_security_audit_runs_fail_closed_trivy_scan(self) -> None:
+        release = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+        security_audit = release.split("  security-audit:\n", 1)[1].split(
+            "  native-release-smoke:\n", 1
+        )[0]
+        self.assertIn("TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2", security_audit)
+        self.assertIn("uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567", security_audit)
+        self.assertIn("run: ./scripts/security-scan-local.sh --trivy-only --ci", security_audit)
+
     def test_release_security_scans_do_not_run_on_tags(self) -> None:
         for workflow_name in (
             "codeql.yml",
@@ -469,6 +478,17 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn('TNG_UID must be a nonzero numeric ID', dockerfile)
         self.assertIn('TNG_GID must be a nonzero numeric ID', dockerfile)
         self.assertIn('USER root', dockerfile)
+        for relative_path in (
+            "deploy/docker/Dockerfile",
+            "deploy/docker/Dockerfile.phase1",
+            "deploy/native/Dockerfile",
+        ):
+            source = (ROOT / relative_path).read_text(encoding="utf-8")
+            self.assertRegex(
+                source,
+                r"# nosemgrep: dockerfile\.security\.last-user-is-root\.last-user-is-root -- [^\n]+; trivy:ignore:DS-0002:exp:2027-01-25\n"
+                r"USER root(?:\n|$)",
+            )
         self.assertIn('tng_identity_enter', identity)
         self.assertIn('--bounding-set=-all', identity)
         self.assertIn('PUID', identity)

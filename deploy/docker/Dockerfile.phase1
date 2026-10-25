@@ -108,6 +108,6 @@ ENV TNG_DEFAULT_GID="${TNG_GID}"
 
 # Root is used only for the entrypoint's PUID/PGID directory setup; it drops
 # to the configured non-root identity before starting Tini and the services.
-# trivy:ignore:DS-0002
+# nosemgrep: dockerfile.security.last-user-is-root.last-user-is-root -- the entrypoint drops to the configured non-root identity before starting the services; trivy:ignore:DS-0002:exp:2027-01-25
 USER root
 ENTRYPOINT ["/entrypoint.sh"]

@@ -121,7 +121,6 @@ EXPOSE 8080 50000 50000/udp
 
 # Root is used only for the entrypoint's PUID/PGID directory setup; it drops
 # to the configured non-root identity before starting Tini and the service.
-# trivy:ignore:DS-0002
-# nosemgrep: dockerfile.security.last-user-is-root.last-user-is-root
+# nosemgrep: dockerfile.security.last-user-is-root.last-user-is-root -- the entrypoint drops to the configured non-root identity before starting the service; trivy:ignore:DS-0002:exp:2027-01-25
 USER root
 ENTRYPOINT ["/entrypoint.sh"]

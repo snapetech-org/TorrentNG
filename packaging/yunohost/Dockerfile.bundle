@@ -21,3 +21,6 @@ FROM scratch AS bundle
 COPY --from=rust-build /src/target/release/torrentngd /bin/torrentngd
 COPY --from=rust-build /src/sidecar/target/release/torrentng /bin/torrentng
 COPY --from=webui-build /src/webui/dist /webui
+# This is an artifact-export stage, not a runtime image. Keep its default
+# identity unprivileged if the scratch image is ever started accidentally.
+USER 1000:1000

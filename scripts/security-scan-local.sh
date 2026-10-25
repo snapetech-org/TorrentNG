@@ -24,8 +24,13 @@ Usage: scripts/security-scan-local.sh [--staged] [--semgrep-only|--trivy-only] [
 Semgrep uses the local Community Edition engine with p/default and metrics off.
 Trivy selects secret, dependency, and IaC scanners from files in this repository.
 Findings are report-only by default. Set SEMGREP_FAIL_ON_FINDINGS=1 or
-TRIVY_EXIT_CODE=1 to make findings fail the command. --ci disables repository-
-controlled Trivy config and ignore files. --staged scans only staged Semgrep files.
+TRIVY_EXIT_CODE=1 to make local findings fail the command. --ci requires the
+expected source, lockfile, and Dockerfile inputs, runs all three Trivy scanners,
+fails on findings, and disables repository-controlled Trivy config and ignore
+files. Archived reports are omitted from dependency and IaC checks because they
+preserve historical source snapshots; they remain in the secret scan. Ignored
+local certification/interop material is excluded. --staged scans only staged
+Semgrep files.
 HELP
       exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
@@ -107,42 +112,92 @@ has_code_files() {
 
 trivy_run() {
   local scanners=()
-  local args=()
-  if has_dependency_files; then scanners+=(vuln); fi
-  if has_iac_files; then scanners+=(misconfig); fi
-  if has_code_files || ((${#scanners[@]} > 0)); then scanners+=(secret); fi
+  if (( ci_mode )); then
+    local required_input
+    for required_input in Cargo.lock webui/package-lock.json deploy/docker/Dockerfile crates/torrentngd/src/main.rs; do
+      if [[ ! -s "$required_input" ]]; then
+        echo "Trivy CI scan is missing required input: $required_input" >&2
+        return 2
+      fi
+    done
+    scanners=(vuln misconfig secret)
+  else
+    if ! command -v rg >/dev/null 2>&1; then
+      echo "ripgrep (rg) is required to detect local Trivy scan inputs." >&2
+      return 127
+    fi
+    if has_dependency_files; then scanners+=(vuln); fi
+    if has_iac_files; then scanners+=(misconfig); fi
+    if has_code_files || ((${#scanners[@]} > 0)); then scanners+=(secret); fi
+  fi
   if ((${#scanners[@]} == 0)); then
     echo "Trivy: no source, dependency, or deployment files; skipped."
     return 0
   fi
-  local scanner_list
-  scanner_list=""
-  for scanner in "${scanners[@]}"; do
-    if [[ -n "$scanner_list" ]]; then scanner_list+=","; fi
-    scanner_list+="$scanner"
-  done
-  args+=(fs --scanners "$scanner_list" --timeout "${TRIVY_TIMEOUT:-20m}" --severity HIGH,CRITICAL --ignore-unfixed --exit-code "${TRIVY_EXIT_CODE:-0}")
-  for dir in .git node_modules vendor target dist build coverage .venv; do args+=(--skip-dirs "$dir"); done
-  if (( ci_mode )); then args+=(--config= --ignorefile= --secret-config=); fi
-  if [[ "${TRIVY_OFFLINE:-0}" == 1 ]]; then args+=(--skip-db-update --skip-java-db-update --skip-check-update); fi
+  local exit_code="${TRIVY_EXIT_CODE:-0}"
+  if (( ci_mode )); then exit_code=1; fi
 
-  echo "Trivy filesystem scan: scanners=$scanner_list"
-  if command -v trivy >/dev/null 2>&1; then
-    trivy "${args[@]}" .
-  elif command -v docker >/dev/null 2>&1; then
-    local image="aquasec/trivy:latest"
-    local cache_dir="${TRIVY_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/trivy}"
-    mkdir -p "$cache_dir"
-    if ! docker image inspect "$image" >/dev/null 2>&1; then
-      [[ "${TRIVY_OFFLINE:-0}" == 0 ]] || { echo "Trivy image is not cached for offline mode." >&2; return 127; }
-      docker pull "$image"
+  trivy_call() {
+    local command="$1"
+    local scanner="${2:-}"
+    local historical="${3:-0}"
+    local args=("$command")
+    local scope=""
+    shift 3
+    if [[ "$command" == fs ]]; then args+=(--scanners "$scanner" --ignore-unfixed); fi
+    args+=(--timeout "${TRIVY_TIMEOUT:-20m}" --severity HIGH,CRITICAL --exit-code "$exit_code")
+    for dir in .git node_modules vendor target dist build coverage .venv certification/interop; do
+      args+=(--skip-dirs "$dir")
+    done
+    if [[ "$historical" == 1 ]]; then
+      args+=(--skip-dirs certification/reports)
+      scope=" (excluding archived reports)"
     fi
-    docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e TRIVY_CACHE_DIR=/cache \
-      -v "$repo_root:/src:ro" -v "$cache_dir:/cache" -w /src "$image" "${args[@]}" .
-  else
-    echo "Trivy is unavailable; install Trivy or Docker to run this project scan." >&2
-    [[ "${REQUIRE_TRIVY:-0}" == 1 ]] && return 127
-  fi
+    if (( ci_mode )); then
+      args+=(--config= --ignorefile=)
+      if [[ "$command" == fs && "$scanner" == secret ]]; then args+=(--secret-config=); fi
+    fi
+    if [[ "${TRIVY_OFFLINE:-0}" == 1 ]]; then
+      if [[ "$command" == fs ]]; then
+        args+=(--skip-db-update --skip-java-db-update --skip-check-update)
+      else
+        args+=(--skip-check-update)
+      fi
+    fi
+    args+=("$@" .)
+
+    echo "Trivy $command scan: ${scanner:-misconfig}$scope"
+    if command -v trivy >/dev/null 2>&1; then
+      trivy "${args[@]}"
+    elif command -v docker >/dev/null 2>&1; then
+      local image="aquasec/trivy:latest"
+      local cache_dir="${TRIVY_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/trivy}"
+      mkdir -p "$cache_dir"
+      if ! docker image inspect "$image" >/dev/null 2>&1; then
+        [[ "${TRIVY_OFFLINE:-0}" == 0 ]] || { echo "Trivy image is not cached for offline mode." >&2; return 127; }
+        docker pull "$image"
+      fi
+      docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e TRIVY_CACHE_DIR=/cache \
+        -v "$repo_root:/src:ro" -v "$cache_dir:/cache" -w /src "$image" "${args[@]}"
+    else
+      echo "Trivy is unavailable; install Trivy or Docker to run this project scan." >&2
+      if (( ci_mode )) || [[ "${REQUIRE_TRIVY:-0}" == 1 ]]; then return 127; fi
+      return 0
+    fi
+  }
+
+  local scanner
+  local run_vuln=0 run_secret=0 run_misconfig=0
+  for scanner in "${scanners[@]}"; do
+    case "$scanner" in
+      vuln) run_vuln=1 ;;
+      secret) run_secret=1 ;;
+      misconfig) run_misconfig=1 ;;
+    esac
+  done
+  if (( run_vuln )); then trivy_call fs vuln 1 || return $?; fi
+  if (( run_secret )); then trivy_call fs secret 0 || return $?; fi
+  if (( run_misconfig )); then trivy_call config "" 1 || return $?; fi
 }
 
 if [[ "$mode" == all ]] && (( ! staged )) && [[ -x scripts/run-security-scans.sh ]]; then

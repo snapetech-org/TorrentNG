@@ -218,6 +218,7 @@ async fn run_reads(
     data: &[u8],
     offsets: &[u64],
     block_len: usize,
+    max_in_flight: usize,
 ) -> Duration {
     let started = Instant::now();
     let mut set = tokio::task::JoinSet::new();
@@ -236,7 +237,7 @@ async fn run_reads(
         // depth. Spawning every offset at once makes thousands of benchmark
         // tasks race on a queue which is deliberately bounded to 256 and can
         // starve the caller-side QueueFull retry loop.
-        if set.len() >= MAX_IN_FLIGHT_PEER_READ_BENCHMARKS {
+        if set.len() >= max_in_flight.max(1) {
             if let Some(joined) = set.join_next().await {
                 assert_read_matches_fixture(joined, data, block_len);
             }
@@ -492,7 +493,15 @@ async fn shuffled_peer_read_baseline_reports_current_scheduler_throughput() {
         },
     );
 
-    let elapsed = run_reads(scheduler.clone(), path, &data, &offsets, block_len).await;
+    let elapsed = run_reads(
+        scheduler.clone(),
+        path,
+        &data,
+        &offsets,
+        block_len,
+        MAX_IN_FLIGHT_PEER_READ_BENCHMARKS,
+    )
+    .await;
     let stats = scheduler.stats();
     let mib = total as f64 / (1024.0 * 1024.0);
     let mib_s = mib / elapsed.as_secs_f64();
@@ -536,12 +545,16 @@ async fn hdd_peer_read_elevator_reduces_backend_reads_on_shuffled_adjacent_block
     let offsets = shuffled_offsets(blocks, block_len);
     settle_file_for_read_benchmark(&path);
 
+    // This test deliberately offers one bounded full-fixture burst so the HDD
+    // elevator can sweep the shuffled requests and merge adjacent ranges.
+    // The baseline remains capped at MAX_IN_FLIGHT_PEER_READ_BENCHMARKS above.
+    let elevator_batch_limit = blocks as usize;
     let scheduler = MountScheduler::new_for_path(
         StorageRootId::new(),
         dir.path(),
         &SchedulerConfig {
             profile: StorageProfile::Unknown,
-            peer_read_concurrency: MAX_IN_FLIGHT_PEER_READ_BENCHMARKS,
+            peer_read_concurrency: elevator_batch_limit,
             storage_io: StorageIoConfig {
                 peer_read_readahead_bytes: 0,
                 peer_read_elevator_budget_ms: bench_u64("TNG_STORAGE_ELEVATOR_BUDGET_MS", 25),
@@ -551,7 +564,15 @@ async fn hdd_peer_read_elevator_reduces_backend_reads_on_shuffled_adjacent_block
         },
     );
 
-    let elapsed = run_reads(scheduler.clone(), path, &data, &offsets, block_len).await;
+    let elapsed = run_reads(
+        scheduler.clone(),
+        path,
+        &data,
+        &offsets,
+        block_len,
+        elevator_batch_limit,
+    )
+    .await;
     let stats = scheduler.stats();
     let submitted = stats.read_ops_by_class[IoClass::PeerRead as usize];
     let backend_reads = stats.backend_read_ops_by_class[IoClass::PeerRead as usize];

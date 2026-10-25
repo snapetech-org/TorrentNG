@@ -55,7 +55,9 @@ LABEL org.opencontainers.image.title="TorrentNG Engine" \
       org.torrentng.source.fingerprint="${TORRENTNG_SOURCE_FINGERPRINT}" \
       org.torrentng.cargo.features="${TORRENTNG_CARGO_FEATURES}"
 
-# nosemgrep: dockerfile.security.last-user-is-root.last-user-is-root -- The entrypoint configures mounted paths and secrets, then drops to PUID/PGID before starting the daemon.
+# Root is used only to prepare configured PUID/PGID paths; identity.sh then
+# drops the UID/GID and all capabilities before starting the daemon.
+# nosemgrep: dockerfile.security.last-user-is-root.last-user-is-root -- identity.sh drops the UID/GID and capabilities before starting the daemon; trivy:ignore:DS-0002:exp:2027-01-25
 USER root
 VOLUME ["/data", "/downloads", "/var/lib/torrentngd", "/config"]
 EXPOSE 8080 44444 44444/udp
