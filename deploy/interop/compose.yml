@@ -15,7 +15,7 @@ services:
       args:
         TORRENTNG_SOURCE_REVISION: ${INTEROP_SOURCE_REVISION:-unknown}
         TORRENTNG_SOURCE_FINGERPRINT: ${INTEROP_SOURCE_FINGERPRINT:-unknown}
-        TORRENTNG_CARGO_FEATURES: ${INTEROP_TORRENTNG_CARGO_FEATURES:-system-allocator}
+        TORRENTNG_CARGO_FEATURES: ${INTEROP_TORRENTNG_CARGO_FEATURES:-system-allocator,full-compat}
     restart: unless-stopped
     cap_drop:
       - ALL
