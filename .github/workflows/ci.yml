@@ -97,7 +97,8 @@ jobs:
 
       - name: Test protected API target and load-runner boundaries
         run: |
-          python3 -m unittest scripts.test_protected_target scripts.test_backend_burndown_api_load scripts.test_workflow_security scripts.test_release_notes
+          # These safety tests reject system paths such as /opt, so keep their fixtures under disposable /tmp.
+          TMPDIR=/tmp python3 -m unittest scripts.test_protected_target scripts.test_backend_burndown_api_load scripts.test_workflow_security scripts.test_release_notes
           sh scripts/test_promote_dockerhub_tags.sh
 
       - name: Test TorrentNG client workspace
