@@ -12,7 +12,7 @@ permissions:
 jobs:
   validate-release-tag:
     name: Validate release tag
-    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-validate-release-tag"]}}', github.run_id)) || 'ubuntu-latest' }}
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-validate-release-tag"]}}', github.run_id)) }}
     permissions:
       contents: read
     outputs:
@@ -52,7 +52,7 @@ jobs:
   release-notes:
     name: Assemble release notes
     needs: validate-release-tag
-    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-release-notes"]}}', github.run_id)) || 'ubuntu-latest' }}
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-release-notes"]}}', github.run_id)) }}
     permissions:
       contents: read
     outputs:
@@ -111,7 +111,7 @@ jobs:
   native-quality:
     name: TorrentNG client and compatible-client service quality gate
     needs: validate-release-tag
-    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-native-quality"]}}', github.run_id)) || 'ubuntu-latest' }}
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-native-quality"]}}', github.run_id)) }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -160,7 +160,7 @@ jobs:
   msrv-check:
     name: Main workspace MSRV gate
     needs: [validate-release-tag, native-quality]
-    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-msrv-check"]}}', github.run_id)) || 'ubuntu-latest' }}
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-msrv-check"]}}', github.run_id)) }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -190,7 +190,7 @@ jobs:
   msrv-check-sidecar:
     name: Compatible-client service MSRV gate
     needs: [validate-release-tag, native-quality]
-    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-msrv-check-sidecar"]}}', github.run_id)) || 'ubuntu-latest' }}
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-msrv-check-sidecar"]}}', github.run_id)) }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -220,7 +220,7 @@ jobs:
   security-audit:
     name: Release dependency security gate
     needs: [validate-release-tag, native-quality]
-    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-security-audit"]}}', github.run_id)) || 'ubuntu-latest' }}
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-security-audit"]}}', github.run_id)) }}
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -272,7 +272,7 @@ jobs:
   native-release-smoke:
     name: Native release-binary smoke
     needs: [validate-release-tag, native-quality, msrv-check, msrv-check-sidecar, security-audit]
-    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-native-release-smoke"]}}', github.run_id)) || 'ubuntu-latest' }}
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-native-release-smoke"]}}', github.run_id)) }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -332,21 +332,25 @@ jobs:
         include:
           - os: ubuntu-latest
             suffix: linux-x86_64
+            target: x86_64-unknown-linux-gnu
             binary: torrentngd
             archive: tar.gz
-          - os: ubuntu-24.04-arm
+          - os: ubuntu-latest
             suffix: linux-aarch64
+            target: aarch64-unknown-linux-gnu
             binary: torrentngd
             archive: tar.gz
           - os: macos-14
             suffix: macos-aarch64
+            target: aarch64-apple-darwin
             binary: torrentngd
             archive: tar.gz
-          - os: windows-latest
+          - os: ubuntu-latest
             suffix: windows-x86_64
+            target: x86_64-pc-windows-gnu
             binary: torrentngd.exe
             archive: zip
-    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && contains(fromJSON('["ubuntu-latest","ubuntu-24.04"]'), matrix.os) && (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-{1}-native-binaries"]}}', github.run_id, strategy.job-index)) || matrix.os }}
+    runs-on: ${{ matrix.os == 'macos-14' && fromJSON('{"group":"private-apple-builds","labels":["self-hosted","macOS","ARM64","private-apple"]}') || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-{1}-native-binaries"]}}', github.run_id, strategy.job-index)) }
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -367,6 +371,20 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux ARM64 cross compiler
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends gcc-aarch64-linux-gnu
+
+      - name: Install Windows GNU cross compiler
+        if: matrix.target == 'x86_64-pc-windows-gnu'
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends gcc-mingw-w64-x86-64
 
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -384,38 +402,69 @@ jobs:
           TNG_WEBUI_OUT_DIR=dist npm run build
 
       - name: Build TorrentNG client daemon
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
+          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: x86_64-w64-mingw32-gcc
+          CC_x86_64_pc_windows_gnu: x86_64-w64-mingw32-gcc
+          AR_x86_64_pc_windows_gnu: x86_64-w64-mingw32-ar
         shell: bash
-        run: cargo build --release --locked -p torrentngd
+        run: cargo build --target "$RELEASE_TARGET" --release --locked -p torrentngd
 
-      - name: Smoke TorrentNG client daemon version
+      - name: Verify TorrentNG client daemon artifact
         env:
           RELEASE_BINARY: ${{ matrix.binary }}
+          RELEASE_TARGET: ${{ matrix.target }}
         shell: bash
         run: |
           set -euo pipefail
-          "target/release/$RELEASE_BINARY" --version
+          binary="target/$RELEASE_TARGET/release/$RELEASE_BINARY"
+          if [[ "$RELEASE_TARGET" == "x86_64-unknown-linux-gnu" || "$RELEASE_TARGET" == "aarch64-apple-darwin" ]]; then
+            "$binary" --version
+          else
+            file "$binary"
+            case "$RELEASE_TARGET" in
+              aarch64-unknown-linux-gnu) file "$binary" | grep -Eq 'ARM aarch64|AArch64' ;;
+              x86_64-pc-windows-gnu) file "$binary" | grep -Eq 'PE32\+ executable.*x86-64' ;;
+              *) echo "unexpected cross target: $RELEASE_TARGET" >&2; exit 1 ;;
+            esac
+          fi
 
       - name: Package TorrentNG client assets
         env:
           RELEASE_ARCHIVE: ${{ matrix.archive }}
           RELEASE_BINARY: ${{ matrix.binary }}
           RELEASE_SUFFIX: ${{ matrix.suffix }}
+          RELEASE_TARGET: ${{ matrix.target }}
         shell: bash
         run: |
           set -euo pipefail
           tag="${RELEASE_TAG:?RELEASE_TAG must be set}"
           suffix="${RELEASE_SUFFIX:?RELEASE_SUFFIX must be set}"
           binary="${RELEASE_BINARY:?RELEASE_BINARY must be set}"
+          target="${RELEASE_TARGET:?RELEASE_TARGET must be set}"
           mkdir -p dist native/usr/bin native/usr/share/torrentng/webui
           artifact_suffix=""
           if [[ "$binary" == "torrentngd.exe" ]]; then
             artifact_suffix=".exe"
           fi
-          cp "target/release/$binary" "dist/torrentngd-${suffix}${artifact_suffix}"
-          cp "target/release/$binary" "native/usr/bin/$binary"
+          cp "target/$target/release/$binary" "dist/torrentngd-${suffix}${artifact_suffix}"
+          cp "target/$target/release/$binary" "native/usr/bin/$binary"
           cp -a webui/dist/. native/usr/share/torrentng/webui/
           if [[ "$RELEASE_ARCHIVE" == "zip" ]]; then
-            powershell -NoProfile -Command "Compress-Archive -Path native/* -DestinationPath dist/torrentngd-native-${tag}-${suffix}.zip -Force"
+            NATIVE_ROOT=native ARCHIVE_PATH="dist/torrentngd-native-${tag}-${suffix}.zip" python3 - <<'PY'
+          import os
+          from pathlib import Path
+          from zipfile import ZIP_DEFLATED, ZipFile
+
+          root = Path(os.environ["NATIVE_ROOT"])
+          with ZipFile(os.environ["ARCHIVE_PATH"], "w", ZIP_DEFLATED) as archive:
+              for path in sorted(root.rglob("*")):
+                  if path.is_file():
+                      archive.write(path, path.relative_to(root))
+          PY
           else
             tar -czf "dist/torrentngd-native-${tag}-${suffix}.tar.gz" -C native .
           fi
@@ -439,25 +488,29 @@ jobs:
         include:
           - os: ubuntu-latest
             suffix: linux-x86_64
+            target: x86_64-unknown-linux-gnu
             kind: linux
             desktop_bin: torrentng-desktop
             engine_bin: torrentngd-linux-x86_64
-          - os: ubuntu-24.04-arm
+          - os: ubuntu-latest
             suffix: linux-aarch64
+            target: aarch64-unknown-linux-gnu
             kind: linux
             desktop_bin: torrentng-desktop
             engine_bin: torrentngd-linux-aarch64
           - os: macos-14
             suffix: macos-aarch64
+            target: aarch64-apple-darwin
             kind: macos
             desktop_bin: torrentng-desktop
             engine_bin: torrentngd-macos-aarch64
-          - os: windows-latest
+          - os: ubuntu-latest
             suffix: windows-x86_64
+            target: x86_64-pc-windows-gnu
             kind: windows
             desktop_bin: torrentng-desktop.exe
             engine_bin: torrentngd-windows-x86_64.exe
-    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && contains(fromJSON('["ubuntu-latest","ubuntu-24.04"]'), matrix.os) && (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-{1}-desktop-bundles"]}}', github.run_id, strategy.job-index)) || matrix.os }}
+    runs-on: ${{ matrix.os == 'macos-14' && fromJSON('{"group":"private-apple-builds","labels":["self-hosted","macOS","ARM64","private-apple"]}') || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-{1}-desktop-bundles"]}}', github.run_id, strategy.job-index)) }
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -477,10 +530,32 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux ARM64 cross compiler
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends gcc-aarch64-linux-gnu
+
+      - name: Install Windows GNU cross compiler
+        if: matrix.target == 'x86_64-pc-windows-gnu'
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends gcc-mingw-w64-x86-64
 
       - name: Build desktop client
+        env:
+          BUNDLE_TARGET: ${{ matrix.target }}
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
+          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: x86_64-w64-mingw32-gcc
+          CC_x86_64_pc_windows_gnu: x86_64-w64-mingw32-gcc
+          AR_x86_64_pc_windows_gnu: x86_64-w64-mingw32-ar
         shell: bash
-        run: cargo build --release --locked --manifest-path crates/torrentng-desktop/Cargo.toml
+        run: cargo build --target "$BUNDLE_TARGET" --release --locked --manifest-path crates/torrentng-desktop/Cargo.toml
 
       # Bundle the exact daemon binary published as the Server download.
       - name: Download matching engine binary
@@ -494,13 +569,14 @@ jobs:
         env:
           BUNDLE_KIND: ${{ matrix.kind }}
           BUNDLE_SUFFIX: ${{ matrix.suffix }}
+          BUNDLE_TARGET: ${{ matrix.target }}
           DESKTOP_BIN: ${{ matrix.desktop_bin }}
           ENGINE_BIN: ${{ matrix.engine_bin }}
         run: |
           set -euo pipefail
           packaging/desktop/package.sh \
             "$BUNDLE_KIND" "$BUNDLE_SUFFIX" "${RELEASE_TAG:?}" \
-            "crates/torrentng-desktop/target/release/$DESKTOP_BIN" \
+            "crates/torrentng-desktop/target/$BUNDLE_TARGET/release/$DESKTOP_BIN" \
             "engine/$ENGINE_BIN" dist
 
       - name: Upload desktop artifacts
@@ -521,7 +597,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-linux-release-assets"]}}', github.run_id)) || 'ubuntu-latest' }}
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-linux-release-assets"]}}', github.run_id)) }}
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -794,7 +870,7 @@ jobs:
 
   publish:
     name: Publish release
-    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-publish"]}}', github.run_id)) || 'ubuntu-latest' }}
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-publish"]}}', github.run_id)) }}
     needs:
       - validate-release-tag
       - release-notes
@@ -863,12 +939,37 @@ jobs:
         shell: bash
         run: gh workflow run release-copr.yml --ref main -f "tag=$RELEASE_TAG"
 
-      - name: Dispatch Launchpad PPA publish
+      - name: Check legacy GHCR credential
+        id: legacy-ghcr
         env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.validate-release-tag.outputs.tag }}
+          GHCR_LEGACY_TOKEN: ${{ secrets.GHCR_LEGACY_TOKEN }}
         shell: bash
-        run: gh workflow run release-ppa.yml --ref main -f "tag=$RELEASE_TAG"
+        run: |
+          if [[ -n "${GHCR_LEGACY_TOKEN:-}" ]]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "Legacy GHCR aliases will be left unchanged because GHCR_LEGACY_TOKEN is not configured." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Set up Buildx for legacy GHCR aliases
+        if: steps.legacy-ghcr.outputs.configured == 'true'
+        continue-on-error: true
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to legacy GHCR packages
+        if: steps.legacy-ghcr.outputs.configured == 'true'
+        continue-on-error: true
+        env:
+          GHCR_LEGACY_TOKEN: ${{ secrets.GHCR_LEGACY_TOKEN }}
+        shell: bash
+        run: printf '%s' "$GHCR_LEGACY_TOKEN" | docker login ghcr.io --username snapetech --password-stdin
+
+      - name: Sync Unraid legacy GHCR aliases
+        if: steps.legacy-ghcr.outputs.configured == 'true'
+        continue-on-error: true
+        shell: bash
+        run: bash scripts/sync_legacy_ghcr_aliases.sh
 
       - name: Check Discord webhook configuration
         id: discord

@@ -208,14 +208,16 @@ class WorkflowSecurityTests(unittest.TestCase):
                 for expression in routed:
                     self.assertIn('"group":"ng-shared-main-jit"', expression)
                     if workflow_path.name == "release.yml":
-                        self.assertIn("github.event_name == 'push'", expression)
-                        self.assertIn("github.ref_type == 'tag'", expression)
-                        self.assertIn("startsWith(github.ref_name, 'v')", expression)
                         self.assertNotIn("workflow_dispatch", expression)
-                        self.assertRegex(
-                            expression,
-                            r"\|\| (?:'ubuntu-latest'|'ubuntu-24\.04'|matrix\.os)",
-                        )
+                        self.assertNotIn("ubuntu-latest", expression)
+                        self.assertNotIn("windows-latest", expression)
+                        if "matrix.os == 'macos-14'" in expression:
+                            self.assertIn('"group":"private-apple-builds"', expression)
+                            self.assertIn("|| fromJSON(format(", expression)
+                            self.assertNotIn("matrix.os }}", expression)
+                        else:
+                            self.assertNotIn("||", expression)
+                            self.assertIn("fromJSON(format(", expression)
                     elif workflow_path.name in {"release-aur.yml", "release-copr.yml"}:
                         self.assertIn("github.event_name == 'workflow_dispatch'", expression)
                         self.assertIn("github.ref == 'refs/heads/main'", expression)
@@ -334,10 +336,19 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("RELEASE_TAG: ${{ needs.validate-release-tag.outputs.tag }}", native_job)
         self.assertIn("RELEASE_BINARY: ${{ matrix.binary }}", package_step)
         self.assertIn("RELEASE_SUFFIX: ${{ matrix.suffix }}", package_step)
+        self.assertIn("RELEASE_TARGET: ${{ matrix.target }}", package_step)
         self.assertIn('binary="${RELEASE_BINARY:?RELEASE_BINARY must be set}"', package_step)
         self.assertIn('suffix="${RELEASE_SUFFIX:?RELEASE_SUFFIX must be set}"', package_step)
+        self.assertIn('target="${RELEASE_TARGET:?RELEASE_TARGET must be set}"', package_step)
+        self.assertIn('target/$target/release/$binary', package_step)
         self.assertIn('if [[ "$binary" == "torrentngd.exe" ]]', package_step)
+        self.assertNotIn("powershell", package_step)
         self.assertNotIn("steps.tag.outputs.tag", package_step)
+
+        self.assertIn("target: aarch64-unknown-linux-gnu", native_job)
+        self.assertIn("target: x86_64-pc-windows-gnu", native_job)
+        self.assertIn("gcc-aarch64-linux-gnu", native_job)
+        self.assertIn("gcc-mingw-w64-x86-64", native_job)
 
         publish_job = release.split("  publish:\n", 1)[1]
         checksum_step = publish_job.split("- name: Generate checksums", 1)[1].split(
@@ -346,6 +357,20 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("RELEASE_TAG: ${{ needs.validate-release-tag.outputs.tag }}", publish_job)
         self.assertNotIn("steps.tag.outputs.tag", checksum_step)
         self.assertEqual(release.count("${{ steps.tag.outputs.tag }}"), 1)
+
+    def test_release_security_scans_do_not_run_on_tags(self) -> None:
+        for workflow_name in (
+            "codeql.yml",
+            "semgrep-community.yml",
+            "trivy-filesystem.yml",
+        ):
+            source = (WORKFLOWS / workflow_name).read_text(encoding="utf-8")
+            self.assertIn("branches: [main]", source, workflow_name)
+            self.assertNotIn("tags:", source, workflow_name)
+            self.assertIn("if: github.ref == 'refs/heads/main'", source, workflow_name)
+
+        windows_smoke = (WORKFLOWS / "windows-smoke.yml").read_text(encoding="utf-8")
+        self.assertNotIn("tags:", windows_smoke)
 
     def test_aur_publish_stages_every_declared_package_source_file(self) -> None:
         aur = (WORKFLOWS / "release-aur.yml").read_text(encoding="utf-8")

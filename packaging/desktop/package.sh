@@ -75,9 +75,17 @@ CONTROL
     install -m755 "$desktop_bin" "$d/TorrentNG.exe"
     install -m755 "$engine_bin" "$d/torrentngd.exe"
     install -m644 "$here/README.txt" "$d/README.txt"
-    src="$d"; dst="$out/$name.zip"
-    if command -v cygpath >/dev/null 2>&1; then src="$(cygpath -w "$d")"; dst="$(cygpath -w "$dst")"; fi
-    powershell -NoProfile -Command "Compress-Archive -Path '$src' -DestinationPath '$dst' -Force"
+    python3 - "$d" "$out/$name.zip" <<'PY'
+from pathlib import Path
+import sys
+from zipfile import ZIP_DEFLATED, ZipFile
+
+root = Path(sys.argv[1])
+with ZipFile(sys.argv[2], "w", ZIP_DEFLATED) as archive:
+    for path in sorted(root.rglob("*")):
+        if path.is_file():
+            archive.write(path, path.relative_to(root))
+PY
     ;;
 
   *) echo "unknown kind: $kind" >&2; exit 2 ;;

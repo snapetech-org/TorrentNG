@@ -3,7 +3,7 @@ name: Trivy filesystem scan
 
 on:
   push:
-    tags: ['**']
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -15,6 +15,7 @@ concurrency:
 
 jobs:
   trivy:
+    if: github.ref == 'refs/heads/main'
     name: Trivy source, dependency, and configuration scan
     env:
       TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2

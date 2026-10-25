@@ -103,10 +103,16 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                     self.assertIn('"ng-shared-main-torrentng"', expression)
                     self.assertIn('"ng-main-run-{0}"', expression)
                     if workflow.name == "release.yml":
-                        self.assertIn("github.event_name == 'push'", expression)
-                        self.assertIn("github.ref_type == 'tag'", expression)
-                        self.assertIn("startsWith(github.ref_name, 'v')", expression)
                         self.assertNotIn("workflow_dispatch", expression)
+                        self.assertNotIn("ubuntu-latest", expression)
+                        self.assertNotIn("windows-latest", expression)
+                        if "matrix.os == 'macos-14'" in expression:
+                            self.assertIn('"group":"private-apple-builds"', expression)
+                            self.assertIn("|| fromJSON(format(", expression)
+                            self.assertNotIn("matrix.os }}", expression)
+                        else:
+                            self.assertNotIn("||", expression)
+                            self.assertIn("fromJSON(format(", expression)
                     elif workflow.name in {"release-aur.yml", "release-copr.yml"}:
                         self.assertIn("github.event_name == 'workflow_dispatch'", expression)
                         self.assertIn("github.ref == 'refs/heads/main'", expression)
@@ -116,10 +122,11 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                         self.assertIn("github.event_name == 'push'", expression)
                         self.assertIn("github.event_name == 'workflow_dispatch'", expression)
                         self.assertIn("github.ref == 'refs/heads/main'", expression)
-                    self.assertRegex(
-                        expression,
-                        r"\|\| (?:'ubuntu-latest'|'ubuntu-24\.04'|matrix\.os)",
-                    )
+                    if workflow.name != "release.yml":
+                        self.assertRegex(
+                            expression,
+                            r"\|\| (?:'ubuntu-latest'|'ubuntu-24\.04'|matrix\.os)",
+                        )
                 if workflow.name in {"codeql.yml", "semgrep-community.yml"}:
                     self.assertIn("github.event_name == 'schedule'", routed[0])
                 if workflow.name == "semgrep-community.yml":
