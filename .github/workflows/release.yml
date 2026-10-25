@@ -350,7 +350,7 @@ jobs:
             target: x86_64-pc-windows-gnu
             binary: torrentngd.exe
             archive: zip
-    runs-on: ${{ matrix.os == 'macos-14' && fromJSON('{"group":"private-apple-builds","labels":["self-hosted","macOS","ARM64","private-apple"]}') || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-{1}-native-binaries"]}}', github.run_id, strategy.job-index)) }
+    runs-on: ${{ matrix.os == 'macos-14' && fromJSON('{"group":"private-apple-builds","labels":["self-hosted","macOS","ARM64","private-apple"]}') || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-{1}-native-binaries"]}}', github.run_id, strategy.job-index)) }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -510,7 +510,7 @@ jobs:
             kind: windows
             desktop_bin: torrentng-desktop.exe
             engine_bin: torrentngd-windows-x86_64.exe
-    runs-on: ${{ matrix.os == 'macos-14' && fromJSON('{"group":"private-apple-builds","labels":["self-hosted","macOS","ARM64","private-apple"]}') || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-{1}-desktop-bundles"]}}', github.run_id, strategy.job-index)) }
+    runs-on: ${{ matrix.os == 'macos-14' && fromJSON('{"group":"private-apple-builds","labels":["self-hosted","macOS","ARM64","private-apple"]}') || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-{1}-desktop-bundles"]}}', github.run_id, strategy.job-index)) }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
