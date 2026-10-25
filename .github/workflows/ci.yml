@@ -629,6 +629,9 @@ jobs:
        (inputs.pr_number == '' && inputs.pr_sha == '' && inputs.target_run_id == ''))))
     timeout-minutes: 20
     runs-on: ${{ (github.event_name == 'workflow_dispatch' && (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-webui"]}}', github.run_id)) || (!(github.event_name == 'workflow_dispatch' && (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && ((vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (contains(fromJSON('["push","workflow_dispatch","schedule","release","repository_dispatch"]'), github.event_name) && (github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v')))) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-webui"]}}', github.run_id)) || 'ubuntu-latest')) }}
+    # Match the browser and Linux fonts used to create the checked-in visual baselines.
+    container:
+      image: mcr.microsoft.com/playwright@sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea # v1.64.1-noble
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -662,9 +665,11 @@ jobs:
         working-directory: webui
         run: npm test
 
-      - name: Install Playwright Chromium
+      - name: Verify pinned Playwright browser
         working-directory: webui
-        run: npx playwright install --with-deps chromium
+        run: |
+          node -e 'const version = require("@playwright/test/package.json").version; if (version !== "1.64.1") throw new Error(`Playwright image is 1.64.1 but package-lock resolves ${version}`)'
+          npx playwright install --list
 
       - name: Build webui
         working-directory: webui

@@ -1,7 +1,7 @@
 # TorrentNG Storage Certification Index
 
-- Generated: 2026-10-02T21:16:32Z
-- Commit: db4e333c
+- Generated: 2026-10-25T23:32:08Z
+- Commit: c4329b2e
 - Report directory: /home/keith/Documents/code/TorrentNG/certification/reports
 
 | Report | Kind | Generated | Host | Commit | Target | Selected backend | Fixed-buffer strategy | Real-root evidence | Result |
@@ -17,9 +17,11 @@
 | [storage-hardware-20260517T194907Z.md](../../certification/reports/storage-hardware-20260517T194907Z.md) | hardware matrix | 2026-05-17T19:49:07Z | kspld0 | f9e5f56 | multiple/see report | n/a | n/a | n/a | PASS |
 | [storage-hardware-20260517T195229Z.md](../../certification/reports/storage-hardware-20260517T195229Z.md) | hardware matrix | 2026-05-17T19:52:29Z | kspld0 | a99203a | multiple/see report | n/a | n/a | n/a | FAIL |
 | [storage-hardware-20260517T201259Z.md](../../certification/reports/storage-hardware-20260517T201259Z.md) | hardware matrix | 2026-05-17T20:12:59Z | kspld0 | d24450b | multiple/see report | n/a | n/a | n/a | PASS |
+| [storage-hardware-20261012T174336Z.md](../../certification/reports/storage-hardware-20261012T174336Z.md) | hardware matrix | 2026-10-12T17:43:37Z | kspls0 | 687e2c8a | multiple/see report | n/a | n/a | n/a | PASS |
 | [storage-hardware-kspls0-lvm-20260910-b393eb0.md](../../certification/reports/storage-hardware-kspls0-lvm-20260910-b393eb0.md) | hardware matrix | 2026-09-10T17:53:08Z | kspls0 | b393eb0 | multiple/see report | n/a | n/a | n/a | PASS |
 | [storage-hardware-kspls0-lvm-20260910-current.md](../../certification/reports/storage-hardware-kspls0-lvm-20260910-current.md) | hardware matrix | 2026-09-10T16:38:47Z | kspls0 | 674b283 | multiple/see report | n/a | n/a | n/a | PASS |
 | [storage-hardware-kspls0-lvm-20260910-final.md](../../certification/reports/storage-hardware-kspls0-lvm-20260910-final.md) | hardware matrix | 2026-09-10T16:54:08Z | kspls0 | 4a90048 | multiple/see report | n/a | n/a | n/a | PASS |
+| [storage-hardware-kspls0-lvm-c4329b2e.md](../../certification/reports/storage-hardware-kspls0-lvm-c4329b2e.md) | hardware matrix | 2026-10-25T23:23:20Z | kspls0 | c4329b2 | multiple/see report | n/a | n/a | n/a | PASS |
 | [storage-hardware-kspls0-lvm-hdd-20260517T201732Z.md](../../certification/reports/storage-hardware-kspls0-lvm-hdd-20260517T201732Z.md) | hardware matrix | 2026-05-17T20:17:32Z | kspls0 | unknown | multiple/see report | n/a | n/a | n/a | PASS |
 | [storage-hardware-kspls0-lvm-pvmap-20260517T202609Z.md](../../certification/reports/storage-hardware-kspls0-lvm-pvmap-20260517T202609Z.md) | hardware matrix | 2026-05-17T20:26:09Z | kspls0 | unknown | multiple/see report | n/a | n/a | n/a | PASS |
 | [storage-hardware-kspls0-nfs-20260910.md](../../certification/reports/storage-hardware-kspls0-nfs-20260910.md) | hardware matrix | 2026-09-10T16:34:19Z | kspld0 | 674b283 | multiple/see report | n/a | n/a | n/a | PASS |
@@ -44,6 +46,7 @@
 | [storage-uring-graduation-kspls0-lvm-20260910-b393eb0.md](../../certification/reports/storage-uring-graduation-kspls0-lvm-20260910-b393eb0.md) | io_uring capability/graduation | 2026-09-10T17:53:39Z | kspls0 | b393eb0 | /mnt/datapool_lvm_media/.torrentng-certification-20260910-b393eb0 | uring | frame_pool_slots | n/a | PASS |
 | [storage-uring-graduation-kspls0-lvm-20260910-current.md](../../certification/reports/storage-uring-graduation-kspls0-lvm-20260910-current.md) | io_uring capability/graduation | 2026-09-10T16:39:20Z | kspls0 | 674b283 | /mnt/datapool_lvm_media/.torrentng-certification-20260910-current | uring | frame_pool_slots | n/a | PASS |
 | [storage-uring-graduation-kspls0-lvm-20260910-final.md](../../certification/reports/storage-uring-graduation-kspls0-lvm-20260910-final.md) | io_uring capability/graduation | 2026-09-10T16:54:45Z | kspls0 | 4a90048 | /mnt/datapool_lvm_media/.torrentng-certification-20260910-final | uring | frame_pool_slots | n/a | PASS |
+| [storage-uring-graduation-kspls0-lvm-c4329b2e.md](../../certification/reports/storage-uring-graduation-kspls0-lvm-c4329b2e.md) | io_uring capability/graduation | 2026-10-25T23:24:11Z | kspls0 | c4329b2 | /mnt/datapool_lvm_media/.codex-tasks/torrentng-release-readiness-20261025-02/storage | uring | frame_pool_slots | n/a | PASS |
 | [storage-uring-graduation-release-20260517T230648Z.md](../../certification/reports/storage-uring-graduation-release-20260517T230648Z.md) | io_uring capability/graduation | 2026-05-17T23:06:55Z | kspld0 | 35b7b4b | certification/storage-release-root | uring | frame_pool_slots | n/a | PASS |
 | [storage-uring-graduation-release-20260518T182416Z.md](../../certification/reports/storage-uring-graduation-release-20260518T182416Z.md) | io_uring capability/graduation | 2026-05-18T18:24:23Z | kspld0 | 5360faa | certification/storage-release-root | uring | frame_pool_slots | n/a | PASS |
 | [storage-uring-graduation-release-20260518T182527Z.md](../../certification/reports/storage-uring-graduation-release-20260518T182527Z.md) | io_uring capability/graduation | 2026-05-18T18:25:29Z | kspld0 | 579c35b | certification/storage-release-root | uring | frame_pool_slots | n/a | PASS |
@@ -62,6 +65,7 @@
 | [storage-move-import-kspls0-lvm-20260910-b393eb0.md](../../certification/reports/storage-move-import-kspls0-lvm-20260910-b393eb0.md) | move/import | 2026-09-10T17:53:46Z | kspls0 | b393eb0 | /mnt/datapool_lvm_media/.torrentng-certification-20260910-b393eb0/move-import | n/a | n/a | yes | PASS |
 | [storage-move-import-kspls0-lvm-20260910-current.md](../../certification/reports/storage-move-import-kspls0-lvm-20260910-current.md) | move/import | 2026-09-10T16:39:27Z | kspls0 | 674b283 | /mnt/datapool_lvm_media/.torrentng-certification-20260910-current/move-import | n/a | n/a | yes | PASS |
 | [storage-move-import-kspls0-lvm-20260910-final.md](../../certification/reports/storage-move-import-kspls0-lvm-20260910-final.md) | move/import | 2026-09-10T16:54:52Z | kspls0 | 4a90048 | /mnt/datapool_lvm_media/.torrentng-certification-20260910-final/move-import | n/a | n/a | yes | PASS |
+| [storage-move-import-kspls0-lvm-c4329b2e.md](../../certification/reports/storage-move-import-kspls0-lvm-c4329b2e.md) | move/import | 2026-10-25T23:26:03Z | kspls0 | c4329b2 | /mnt/datapool_lvm_media/.codex-tasks/torrentng-release-readiness-20261025-02/storage/move-import | n/a | n/a | yes | PASS |
 | [storage-move-import-kspls0-nfs-20260910.md](../../certification/reports/storage-move-import-kspls0-nfs-20260910.md) | move/import | 2026-09-10T16:34:34Z | kspld0 | 674b283 | /mnt/datapool_lvm_media/.torrentng-certification-20260910/move-import | n/a | n/a | yes | PASS |
 | [storage-move-import-local-20260517T203216Z.md](../../certification/reports/storage-move-import-local-20260517T203216Z.md) | move/import | 2026-05-17T20:32:22Z | kspld0 | a8e6211 | not set | n/a | n/a | no | FAIL |
 | [storage-move-import-local-20260517T203340Z.md](../../certification/reports/storage-move-import-local-20260517T203340Z.md) | move/import | 2026-05-17T20:33:53Z | kspld0 | 729f4ca | not set | n/a | n/a | no | PASS |

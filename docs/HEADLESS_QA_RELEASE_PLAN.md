@@ -151,3 +151,39 @@ Agents must report exact commands, revisions, results, and artifact/log paths. C
 - **Release status: NOT READY for public release.** This run supplies broad local evidence but cannot prove the software bug-free. Clear the visual-runner mismatch, obtain passing physical-storage/public-network/soak and hosted CI evidence, review the security exception or fix, and rerun the strict release evidence and readiness gates on the same final source and image before release.
 
 The execution record is append-only for future candidate runs. A pass on a dirty development checkout is diagnostic evidence only and does not clear the release checklist above.
+
+### Run on 2026-10-25 — candidate `c4329b2e`
+
+#### Source and scope
+
+- Candidate application/deployment commit: `c4329b2e2e74aa0703ccceaf74165417aae88d82` (`main`, pushed to `origin/main`).
+- The run fixed actionable release QA blockers in security-scan failure handling, runtime image policy annotations, YunoHost bundle ownership, and the physical-storage benchmark fixture. These changes are in the preceding commit; the app UI/engine source is unchanged from `15b2ec73933f46ac836cfb94b5f47797a27b2438`.
+- Local/browser traffic used generated fixtures and loopback-only test services. No public torrent traffic was initiated.
+- The storage qualification ran from a clean exact-SHA worktree on `kspls0`, against its HDD-backed ext4 LVM target. Reports are copied into `certification/reports/`; complete logs and scanner JSON/SARIF remain in `/tmp/torrentng-release-readiness-20261025-02/` on `kspld0`.
+
+#### Results
+
+| Area | Result | Evidence |
+|---|---|---|
+| UX/UI and accessibility | Local PASS; hosted visual check pending repair | 57 unit tests, production build, lint, npm audit (0 findings), 30 desktop/mobile browser tests passed locally, 10 expected skips, and no serious automated accessibility findings. Desktop/mobile snapshots matched in the pinned runner and were reviewed. The first hosted run failed three screenshot checks because its unpinned renderer differed; see the hosted runner follow-up below. |
+| Native and release binary | PASS with scope limits | Optimized locked daemon build and authenticated loopback API smoke passed on `c4329b2e`; API list/transfer and qBittorrent facades, metrics, and SIGTERM shutdown passed. Broad local workspace-quality results were from base `15b2ec73`; they are not relabeled as exact-candidate hosted CI. Exact-candidate formatting, workflow/security harnesses, storage feature compile, and clean-checkout storage certification passed. |
+| Backup/restore | PASS | Exact-candidate SQLite integrity, session archive, daemon restore, and state/mutation checks passed. See `certification/reports/backup-restore-certification-c4329b2e.md`. |
+| Physical storage | PASS for tested target and workload | Exact-candidate physical HDD matrix, io_uring selection, real-root move/import, and storage self-test passed on `kspls0` LVM/ext4. In the synthetic shuffled fixture, 4,096 requests coalesced to 1 backend read. Sequential readahead reduced 4,096 submitted reads to 133 backend reads (30.8× read-count reduction). Timing was a single noisy trial and does not support a general speed or throughput claim. See the four `*-c4329b2e.md` storage reports in `certification/reports/`. |
+| Local security | PASS with hosted confirmation pending | Semgrep scanned 3,137 tracked files (531 rules run), 0 findings; Trivy found 0 HIGH/CRITICAL vulnerabilities across 8 lockfiles, 0 secrets, and 0 misconfigurations in 9 config files. RustSec reported 5 policy-allowed advisories. See `certification/reports/security-scan-20261025-c4329b2e.md`. |
+| External preflight | PASS_WITH_WARNINGS | Fresh `kspls0` preflight validated Docker access, writable physical target, and migration corpus. Public torrent opt-in was unset and the 24-hour soak was explicitly deferred. See `certification/reports/external-evidence-preflight-c4329b2e.md`. |
+| Hosted CI/security | PENDING | At record time, candidate CI `40244559651`, Semgrep `40244390980`, CodeQL `40244390962`, and Trivy `40244390929` had not completed. Local results do not substitute for these hosted runs. |
+| 24-hour soak/public network | INCOMPLETE | No source/image-bound 24-hour soak or public swarm transfer was run. The older 2026-10-03 soak report has no matching source/image identity. Public torrents remain an explicit opt-in. See `certification/reports/soak-final-20261025-c4329b2e.md`. |
+
+#### Release disposition
+
+**NOT READY for public release.** Local UX/UI, release-binary, restore, security, and target-specific storage checks are favorable, but hosted CI and hosted security are pending, and source/image-bound soak and opted-in public-network qualification have not been run. The strict certification status and release evidence suite must remain authoritative; no “bug-free” claim is justified by this finite test matrix.
+
+The previously queued release workflow for `v20261025-2` (`40241691247`) was canceled before its jobs ran and before publication. It targets older source `15b2ec73933f46ac836cfb94b5f47797a27b2438`. No new tag was created and no release was published.
+
+At record time the exact-candidate workflows were still pending/in progress; append their final results in a follow-up section rather than rewriting this run record. The release checklist above remains open until all required gates have fresh evidence on the same final candidate and artifact.
+
+#### Hosted WebUI runner follow-up
+
+- GitHub CI run `40244559651` on `c4329b2e` passed WebUI unit tests, build, and lint, then failed three visual snapshot comparisons in job `121323279457`. The failure artifact is preserved under `/tmp/torrentng-release-readiness-20261025-02/hosted-webui-failure/` and summarized in `certification/reports/webui-hosted-40244559651.md`.
+- Desktop and mobile rendered content remained legible and the controls matched; screenshot differences were font/spacing geometry. The same WebUI tree passed in Playwright `1.64.1-noble` with image digest `sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea`.
+- Updated `.github/workflows/ci.yml` to run the hosted WebUI job in that exact digest and verify the resolved Playwright package version before browser tests. This preserves the 1% visual threshold and existing snapshots. The hosted rerun on the workflow-fix commit is still required; until it passes, the WebUI hosted gate remains open.

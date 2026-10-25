@@ -5,6 +5,12 @@ Actions CI run was `35016899959` on commit `56d77e5`; all ten jobs passed.
 CodeQL run `35016899910` on the same commit also passed across actions, Rust,
 JavaScript/TypeScript, and Python analysis.
 
+Since that historical green run, the manual candidate run `40244559651` on
+`c4329b2e` has passed native quality and the WebUI unit/build/lint steps, but
+its WebUI browser job failed three visual comparisons on the unpinned Ubuntu
+runner. The WebUI runner fix is being revalidated on the new workflow commit;
+this run is not considered green until that hosted check passes.
+
 ## Failures fixed
 
 | Run / job | Actual failure | Fix | Evidence |
@@ -16,6 +22,7 @@ JavaScript/TypeScript, and Python analysis.
 | Final interop harness path | `curl | grep -q` let `grep` exit early and surfaced curl's SIGPIPE as a false failure under `pipefail`. | `83b70ce` captures the metrics response and checks it with a here-string. | Current 28/28 Docker matrix and final CI `33916500668` are green. |
 | `35014022485` / `native-quality` | A pure-v2 magnet recheck updated runtime `amount_left` but left the tracker detail row at its pre-recheck `left_bytes` value. | `7f66041` flushes runtime and tracker state after the recheck before acknowledging the command, and retains peer availability updates across rechecks. | The regression passed repeatedly locally; all ten jobs passed in hosted CI `35016899959`. |
 | `35016119210` / `webui` | The accessibility scan sometimes sampled a properties dialog during its 140 ms entrance animation, producing a transient contrast violation. | `56d77e5` waits for the dialog opacity to settle at `1` before running axe. | Ten repeated dialog scans, the full local browser suite, and hosted CI `35016899959` passed. |
+| `40244559651` / `webui` | Unit tests, production build, and lint passed, but three Playwright visual snapshots differed by 3–7% on the unpinned `ubuntu-latest` rendering environment. The page content and controls matched the locally passing pinned run; the screenshots differed in font weight and spacing. | Run the WebUI job in the exact Playwright `1.64.1-noble` container digest used for the visual baselines, verify the package/image version, and keep the existing 1% threshold. | Initial failure artifact `webui-browser-failure-40244559651` is retained; the hosted rerun on the workflow-fix commit is pending. |
 
 ## Other CI hardening included
 
