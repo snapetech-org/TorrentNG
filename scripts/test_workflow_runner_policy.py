@@ -198,7 +198,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                 self.assertIn('"TorrentNG"', source)
                 self.assertIn("gha-{0}-smoke", source)
                 self.assertNotIn("runs-on: windows-latest", source)
-                self.assertIn("scripts/enable-msvc-environment.ps1", source)
+                self.assertRegex(source, r"scripts[\\/]+enable-msvc-environment\.ps1")
                 continue
             if workflow.name in {
                 "codeql.yml",
