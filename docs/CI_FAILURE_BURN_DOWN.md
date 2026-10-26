@@ -1,15 +1,13 @@
 # TorrentNG CI Failure Burn-down
 
-Status: **green on `main`** as of 2026-09-15. The latest completed GitHub
-Actions CI run was `35016899959` on commit `56d77e5`; all ten jobs passed.
-CodeQL run `35016899910` on the same commit also passed across actions, Rust,
-JavaScript/TypeScript, and Python analysis.
-
-Since that historical green run, the manual candidate run `40244559651` on
-`c4329b2e` has passed native quality and the WebUI unit/build/lint steps, but
-its WebUI browser job failed three visual comparisons on the unpinned Ubuntu
-runner. The WebUI runner fix is being revalidated on the new workflow commit;
-this run is not considered green until that hosted check passes.
+Status: **not green** as of 2026-10-26. CodeQL (`40252195029`), Trivy
+(`40252194955`), and Semgrep (`40252195011`) are pending or queued for
+`30fe11b6afdbad34d0191001c221ebd073edf103`; there is no CI run for that SHA.
+A manual CI run on `83c24ea` reached the WebUI job but failed during setup
+because its private JIT runner has no Docker CLI, so the pinned Playwright
+container never started. The WebUI job now uses GitHub's Ubuntu 24.04 runner,
+which provides Docker for that container. CI and security checks must complete
+on the runner fix before those gates can close.
 
 ## Failures fixed
 
@@ -22,7 +20,8 @@ this run is not considered green until that hosted check passes.
 | Final interop harness path | `curl | grep -q` let `grep` exit early and surfaced curl's SIGPIPE as a false failure under `pipefail`. | `83b70ce` captures the metrics response and checks it with a here-string. | Current 28/28 Docker matrix and final CI `33916500668` are green. |
 | `35014022485` / `native-quality` | A pure-v2 magnet recheck updated runtime `amount_left` but left the tracker detail row at its pre-recheck `left_bytes` value. | `7f66041` flushes runtime and tracker state after the recheck before acknowledging the command, and retains peer availability updates across rechecks. | The regression passed repeatedly locally; all ten jobs passed in hosted CI `35016899959`. |
 | `35016119210` / `webui` | The accessibility scan sometimes sampled a properties dialog during its 140 ms entrance animation, producing a transient contrast violation. | `56d77e5` waits for the dialog opacity to settle at `1` before running axe. | Ten repeated dialog scans, the full local browser suite, and hosted CI `35016899959` passed. |
-| `40244559651` / `webui` | Unit tests, production build, and lint passed, but three Playwright visual snapshots differed by 3–7% on the unpinned `ubuntu-latest` rendering environment. The page content and controls matched the locally passing pinned run; the screenshots differed in font weight and spacing. | Run the WebUI job in the exact Playwright `1.64.1-noble` container digest used for the visual baselines, verify the package/image version, and keep the existing 1% threshold. | Initial failure artifact `webui-browser-failure-40244559651` is retained; the hosted rerun on the workflow-fix commit is pending. |
+| `40244559651` / `webui` | The visual comparisons differed on the unpinned rendering environment. | Pin the Playwright `1.64.1-noble` image digest, verify the package/image version, keep the 1% threshold, and run the job on GitHub's Ubuntu 24.04 runner so Docker can start the image. | The initial failure artifact is retained. The exact-SHA hosted rerun is pending. |
+| `40246072603` / `webui` | The private JIT runner had no Docker CLI, so the job-level Playwright container failed before checkout or browser tests. | Route this isolated, secret-free job to `ubuntu-24.04`; assert the runner and image digest in `scripts/test_workflow_runner_policy.py`. | The pinned-image job has not yet completed on the updated runner. |
 
 ## Other CI hardening included
 
@@ -35,15 +34,18 @@ this run is not considered green until that hosted check passes.
   clean checkout.
 
 The cancelled intermediate CI runs were superseded by later pushes while the
-same failure burn-down was in progress. They are not evidence of a remaining
-failure. Dependabot alerts, CodeQL alerts, and secret-scanning alerts are all
-currently zero.
+same failure burn-down was in progress. They are not evidence of a passing
+check. Dependabot alerts, CodeQL alerts, and secret-scanning alerts were last
+reported as zero in the prior audit; this document does not treat that as a
+current exact-SHA security result.
 
 ## Current boundary
 
-CI now covers TorrentNG-client quality, both declared MSRV floors, fuzz smoke,
-the compatible-client service, WebUI, dependency security, backup/restore, API/SSE load, and deterministic
-fault containment. The latest CodeQL orchestration also passed actions, Rust,
-JavaScript/TypeScript, and Python analysis. It does not certify target-device
+The CI workflow is configured to cover TorrentNG-client quality, both
+declared MSRV floors, fuzz smoke, the compatible-client service, WebUI,
+dependency security, backup/restore, API/SSE load, and deterministic fault
+containment. No complete CI run has passed on the current `main` head. The
+latest CodeQL and filesystem scan runs for that head are pending, not passed.
+CI does not certify target-device
 storage, public-swarm behavior, branch-protection enforcement, a 24-hour soak, production-corpus
 allocator/fairness profiling, or optional extended-capacity claims.

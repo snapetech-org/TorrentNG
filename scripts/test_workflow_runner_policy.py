@@ -49,7 +49,6 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             "fuzz-smoke",
             "sidecar",
             "desktop",
-            "webui",
             "backup-restore",
             "security-audit",
         ]
@@ -80,6 +79,20 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             self.assertIn("vars.NG_FORCE_JIT", expression, name)
             self.assertIn("github.run_attempt > 1", expression, name)
             self.assertIn("|| 'ubuntu-latest'", expression, name)
+
+    def test_webui_uses_hosted_runner_for_the_pinned_playwright_container(self) -> None:
+        source = (WORKFLOW_DIR / "ci.yml").read_text(encoding="utf-8")
+        match = re.search(
+            r"(?ms)^  webui:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+            source,
+        )
+        self.assertIsNotNone(match)
+        body = match.group("body")
+        self.assertRegex(body, r"(?m)^    runs-on: ubuntu-24\.04$")
+        self.assertIn(
+            "mcr.microsoft.com/playwright@sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea",
+            body,
+        )
 
     def test_other_workflows_use_github_hosted_runners(self) -> None:
         for workflow in WORKFLOW_DIR.glob("*.y*"):
