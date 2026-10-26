@@ -212,7 +212,7 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("persist-credentials: false", source)
         self.assertNotIn("TRUSTED_MAIN_RUNNERS_ENABLED", source)
 
-    def test_workflows_use_github_hosted_runners(self) -> None:
+    def test_workflows_use_declared_runner_routes(self) -> None:
         for workflow_path in WORKFLOWS.glob("*.y*"):
             source = workflow_path.read_text(encoding="utf-8")
             if workflow_path.name == "fork-safe-validation.yml":
@@ -229,6 +229,15 @@ class WorkflowSecurityTests(unittest.TestCase):
                 continue
             if workflow_path.name == TRANSFER_HARDWARE_WORKFLOW:
                 self.assert_transfer_hardware_runner_is_opt_in_and_main_only(source)
+                continue
+            if workflow_path.name == "windows-smoke.yml":
+                self.assertIn("packer-windows-jit-v1", source)
+                self.assertIn('"group":"packer-windows"', source)
+                self.assertIn('"on-demand"', source)
+                self.assertIn('"TorrentNG"', source)
+                self.assertIn("gha-{0}-smoke", source)
+                self.assertNotIn("runs-on: windows-latest", source)
+                self.assertIn("scripts/enable-msvc-environment.ps1", source)
                 continue
             if workflow_path.name in {
                 "codeql.yml",
@@ -247,10 +256,25 @@ class WorkflowSecurityTests(unittest.TestCase):
                     if workflow_path.name == "release.yml":
                         self.assertNotIn("workflow_dispatch", expression)
                         self.assertNotIn("ubuntu-latest", expression)
-                        self.assertNotIn("windows-latest", expression)
-                        if "matrix.os == 'macos-14'" in expression:
+                        if "matrix.os == 'windows'" in expression:
+                            self.assertIn('"group":"packer-windows"', expression)
+                            self.assertIn('"on-demand"', expression)
+                            self.assertIn('"TorrentNG"', expression)
+                            self.assertIn("strategy.job-index", expression)
+                            self.assertRegex(
+                                expression,
+                                r"gha-\{0\}-\{1\}-(?:native-binaries|desktop-bundles)",
+                            )
+                            self.assertIn("|| matrix.os == 'macos-14'", expression)
+                        elif "matrix.os == 'macos-14'" in expression:
                             self.assertIn('"group":"private-apple-builds"', expression)
-                            self.assertIn("|| fromJSON(format(", expression)
+                            self.assertIn('"on-demand"', expression)
+                            self.assertIn('"TorrentNG"', expression)
+                            self.assertIn("strategy.job-index", expression)
+                            self.assertRegex(
+                                expression,
+                                r"gha-\{0\}-\{1\}-(?:native-binaries|desktop-bundles)",
+                            )
                             self.assertNotIn("matrix.os }}", expression)
                         else:
                             self.assertNotIn("||", expression)
@@ -276,7 +300,10 @@ class WorkflowSecurityTests(unittest.TestCase):
             self.assertNotRegex(source, r"(?m)^\s*(?:runs-on|labels):.*self-hosted")
             self.assertNotIn("TRUSTED_MAIN_RUNNERS_ENABLED", source)
         windows = (WORKFLOWS / "windows-smoke.yml").read_text(encoding="utf-8")
-        self.assertRegex(windows, r"(?m)^\s*runs-on:\s*windows-latest\s*$")
+        self.assertIn("packer-windows-jit-v1", windows)
+        self.assertIn('"group":"packer-windows"', windows)
+        self.assertIn("gha-{0}-smoke", windows)
+        self.assertNotIn("runs-on: windows-latest", windows)
 
     def test_cargo_validation_steps_keep_the_selected_rust_toolchain(self) -> None:
         ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
@@ -383,9 +410,10 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertNotIn("steps.tag.outputs.tag", package_step)
 
         self.assertIn("target: aarch64-unknown-linux-gnu", native_job)
-        self.assertIn("target: x86_64-pc-windows-gnu", native_job)
+        self.assertIn("target: x86_64-pc-windows-msvc", native_job)
         self.assertIn("gcc-aarch64-linux-gnu", native_job)
-        self.assertIn("gcc-mingw-w64-x86-64", native_job)
+        self.assertIn("scripts/enable-msvc-environment.ps1", native_job)
+        self.assertNotIn("x86_64-pc-windows-gnu", native_job)
 
         publish_job = release.split("  publish:\n", 1)[1]
         checksum_step = publish_job.split("- name: Generate checksums", 1)[1].split(

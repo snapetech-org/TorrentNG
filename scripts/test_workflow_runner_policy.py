@@ -94,10 +94,19 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             body,
         )
 
-    def test_other_workflows_use_github_hosted_runners(self) -> None:
+    def test_other_workflows_use_declared_runner_routes(self) -> None:
         for workflow in WORKFLOW_DIR.glob("*.y*"):
             source = workflow.read_text(encoding="utf-8")
             if workflow.name in {PUBLIC_FORK_WORKFLOW, PROTECTED_TRANSFER_WORKFLOW, "ci.yml"}:
+                continue
+            if workflow.name == "windows-smoke.yml":
+                self.assertIn("packer-windows-jit-v1", source)
+                self.assertIn('"group":"packer-windows"', source)
+                self.assertIn('"on-demand"', source)
+                self.assertIn('"TorrentNG"', source)
+                self.assertIn("gha-{0}-smoke", source)
+                self.assertNotIn("runs-on: windows-latest", source)
+                self.assertIn("scripts/enable-msvc-environment.ps1", source)
                 continue
             if workflow.name in {
                 "codeql.yml",
@@ -118,10 +127,25 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                     if workflow.name == "release.yml":
                         self.assertNotIn("workflow_dispatch", expression)
                         self.assertNotIn("ubuntu-latest", expression)
-                        self.assertNotIn("windows-latest", expression)
-                        if "matrix.os == 'macos-14'" in expression:
+                        if "matrix.os == 'windows'" in expression:
+                            self.assertIn('"group":"packer-windows"', expression)
+                            self.assertIn('"on-demand"', expression)
+                            self.assertIn('"TorrentNG"', expression)
+                            self.assertIn("strategy.job-index", expression)
+                            self.assertRegex(
+                                expression,
+                                r"gha-\{0\}-\{1\}-(?:native-binaries|desktop-bundles)",
+                            )
+                            self.assertIn("|| matrix.os == 'macos-14'", expression)
+                        elif "matrix.os == 'macos-14'" in expression:
                             self.assertIn('"group":"private-apple-builds"', expression)
-                            self.assertIn("|| fromJSON(format(", expression)
+                            self.assertIn('"on-demand"', expression)
+                            self.assertIn('"TorrentNG"', expression)
+                            self.assertIn("strategy.job-index", expression)
+                            self.assertRegex(
+                                expression,
+                                r"gha-\{0\}-\{1\}-(?:native-binaries|desktop-bundles)",
+                            )
                             self.assertNotIn("matrix.os }}", expression)
                         else:
                             self.assertNotIn("||", expression)
@@ -203,9 +227,12 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         self.assertIn("github.event.pull_request.base.ref == 'main'", caller)
         self.assertNotIn("pull_request_target", source + caller)
 
-    def test_windows_smoke_uses_the_hosted_windows_runner(self) -> None:
+    def test_windows_smoke_uses_the_private_packer_runner(self) -> None:
         source = (WORKFLOW_DIR / "windows-smoke.yml").read_text(encoding="utf-8")
-        self.assertRegex(source, r"(?m)^\s*runs-on:\s*windows-latest\s*$")
+        self.assertIn("packer-windows-jit-v1", source)
+        self.assertIn('"group":"packer-windows"', source)
+        self.assertIn("gha-{0}-smoke", source)
+        self.assertNotIn("runs-on: windows-latest", source)
 
 
 if __name__ == "__main__":

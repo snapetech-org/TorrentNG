@@ -1,3 +1,5 @@
+# ng-runner-policy: private-jit-only-v1
+# packer-windows-jit-v1
 name: Windows Smoke
 
 on:
@@ -12,7 +14,7 @@ permissions:
 jobs:
   smoke:
     timeout-minutes: 45
-    runs-on: windows-latest
+    runs-on: ${{ fromJSON(format('{{"group":"packer-windows","labels":["self-hosted","Windows","X64","on-demand","packer-windows","TorrentNG","gha-{0}-smoke"]}}', github.run_id)) }}
     # The certification evidence contains paths longer than Win32's default
     # MAX_PATH. Expose Git's long-path setting to checkout and later Git calls.
     env:
@@ -44,6 +46,10 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "22.23.4"
+
+      - name: Enable Visual Studio compiler environment
+        run: .\scripts\enable-msvc-environment.ps1
+        shell: powershell
 
       - name: Build compatible-client service
         run: cargo build --locked --manifest-path sidecar/Cargo.toml
