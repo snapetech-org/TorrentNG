@@ -140,7 +140,7 @@ capture_failure_diagnostics() {
 }
 
 cleanup_container() {
-  local name="$1" output inspect_status
+  local name="$1" output output_lower inspect_status
   output="$(timeout --signal=TERM --kill-after=1s 10s docker inspect "$name" 2>&1)"
   inspect_status=$?
   if (( inspect_status == 0 )); then
@@ -148,7 +148,8 @@ cleanup_container() {
     output="$(timeout --signal=TERM --kill-after=1s 10s docker inspect "$name" 2>&1)"
     inspect_status=$?
   fi
-  (( inspect_status == 1 )) && [[ "$output" == *"No such object"* || "$output" == *"No such container"* ]]
+  output_lower="${output,,}"
+  (( inspect_status == 1 )) && [[ "$output_lower" == *"no such object"* || "$output_lower" == *"no such container"* ]]
 }
 
 remove_volume_path() {
