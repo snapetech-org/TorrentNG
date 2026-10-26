@@ -38,8 +38,9 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         self.assertIn("package-manager-cache: false", setup_step)
         self.assertLess(setup_match.start(), source.index("- name: Initialize CodeQL"))
 
-    def test_main_ci_routes_only_trusted_main_jobs_to_the_isolated_pool(self) -> None:
+    def test_main_ci_routes_release_jobs_only_to_private_jit(self) -> None:
         source = (WORKFLOW_DIR / "ci.yml").read_text(encoding="utf-8")
+        self.assertIn("# ng-runner-policy: private-jit-only-v1", source)
         jobs = [
             "native-quality",
             "backend-fault-matrix",
@@ -65,22 +66,12 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             self.assertIn('"ng-shared-main-torrentng"', expression, name)
             self.assertIn('"ng-main-run-{0}"', expression, name)
             self.assertIn("github.run_id", expression, name)
-            self.assertIn(
-                "contains(fromJSON('[\"push\",\"workflow_dispatch\",\"schedule\",\"release\",\"repository_dispatch\"]'), github.event_name)",
-                expression,
-                name,
-            )
-            self.assertIn(
-                "github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v'))",
-                expression,
-                name,
-            )
-            self.assertIn("vars.NG_HOSTED_FIRST", expression, name)
-            self.assertIn("vars.NG_FORCE_JIT", expression, name)
-            self.assertIn("github.run_attempt > 1", expression, name)
-            self.assertIn("|| 'ubuntu-latest'", expression, name)
+            self.assertNotIn("ubuntu-latest", expression, name)
+            self.assertNotIn("NG_HOSTED_FIRST", expression, name)
+            self.assertNotIn("NG_FORCE_JIT", expression, name)
+            self.assertNotIn("||", expression, name)
 
-    def test_webui_uses_hosted_runner_for_the_pinned_playwright_container(self) -> None:
+    def test_webui_uses_private_jit_and_installs_the_locked_playwright_browser(self) -> None:
         source = (WORKFLOW_DIR / "ci.yml").read_text(encoding="utf-8")
         match = re.search(
             r"(?ms)^  webui:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
@@ -88,11 +79,13 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         )
         self.assertIsNotNone(match)
         body = match.group("body")
-        self.assertRegex(body, r"(?m)^    runs-on: ubuntu-24\.04$")
-        self.assertIn(
-            "mcr.microsoft.com/playwright@sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea",
-            body,
-        )
+        runner = re.search(r"(?m)^    runs-on: (?P<runner>[^\n]+)$", body)
+        self.assertIsNotNone(runner)
+        self.assertIn('"group":"ng-shared-main-jit"', runner.group("runner"))
+        self.assertIn('"gha-{0}-webui"', runner.group("runner"))
+        self.assertNotIn("ubuntu-latest", runner.group("runner"))
+        self.assertNotIn("container:", body)
+        self.assertIn("npx playwright install --with-deps chromium", body)
         self.assertIn("inputs.candidate_sha == ''", body)
 
     def test_private_candidate_artifact_dispatch_is_exact_and_does_not_publish(self) -> None:
@@ -162,7 +155,19 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
     def test_other_workflows_use_declared_runner_routes(self) -> None:
         for workflow in WORKFLOW_DIR.glob("*.y*"):
             source = workflow.read_text(encoding="utf-8")
-            if workflow.name in {PUBLIC_FORK_WORKFLOW, PROTECTED_TRANSFER_WORKFLOW, "ci.yml"}:
+            if workflow.name == PROTECTED_TRANSFER_WORKFLOW:
+                self.assertIn('"group":"ng-shared-main-jit"', source)
+                self.assertIn('"gha-{0}-transfer-rebuild-correctness"', source)
+                self.assertNotIn("ubuntu-latest", source)
+                continue
+            if workflow.name == "ci.yml":
+                continue
+            if workflow.name == PUBLIC_FORK_WORKFLOW:
+                self.assertIn('"group":"public-fork-jit"', source)
+                self.assertNotIn("ubuntu-latest", source)
+                self.assertNotIn("ng-shared-main-jit", source)
+                self.assertIn("contents: read", source)
+                self.assertNotIn("secrets:", source)
                 continue
             if workflow.name == "windows-smoke.yml":
                 self.assertIn("packer-windows-jit-v1", source)
@@ -181,6 +186,9 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                 "release.yml",
                 "release-aur.yml",
                 "release-copr.yml",
+                "release-ppa.yml",
+                "backend-evidence.yml",
+                "package-smoke-disabled.yml",
             }:
                 expressions = re.findall(r"(?m)^\s*runs-on: (?P<runner>[^\n]+)$", source)
                 routed = [expression for expression in expressions if "ng-shared-main-jit" in expression]
@@ -215,22 +223,13 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                         else:
                             self.assertNotIn("||", expression)
                             self.assertIn("fromJSON(format(", expression)
-                    elif workflow.name in {"release-aur.yml", "release-copr.yml"}:
-                        self.assertIn("github.event_name == 'workflow_dispatch'", expression)
-                        self.assertIn("github.ref == 'refs/heads/main'", expression)
-                        self.assertNotIn("pull_request", expression)
-                        self.assertIn("|| 'ubuntu-latest'", expression)
                     else:
-                        self.assertIn("github.event_name == 'push'", expression)
-                        self.assertIn("github.event_name == 'workflow_dispatch'", expression)
-                        self.assertIn("github.ref == 'refs/heads/main'", expression)
-                    if workflow.name != "release.yml":
-                        self.assertRegex(
-                            expression,
-                            r"\|\| (?:'ubuntu-latest'|'ubuntu-24\.04'|matrix\.os)",
-                        )
+                        self.assertNotIn("ubuntu-latest", expression)
+                        self.assertNotIn("||", expression)
+                if workflow.name in {"release-aur.yml", "release-copr.yml", "release-ppa.yml"}:
+                    self.assertIn("github.ref == 'refs/heads/main'", source)
                 if workflow.name in {"codeql.yml", "semgrep-community.yml"}:
-                    self.assertIn("github.event_name == 'schedule'", routed[0])
+                    self.assertIn("schedule:", source)
                 if workflow.name == "semgrep-community.yml":
                     self.assertIn("docker info", source)
                     self.assertIn("docker run", source)
@@ -240,13 +239,14 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
 
     def test_transfer_hardware_runner_is_explicitly_opt_in_and_main_only(self) -> None:
         source = (WORKFLOW_DIR / PROTECTED_TRANSFER_WORKFLOW).read_text(encoding="utf-8")
-        self_hosted_lines = [
+        dedicated_hardware_lines = [
             line.strip()
             for line in source.splitlines()
             if re.match(r"\s*(?:runs-on|labels):.*self-hosted", line)
+            and "torrentng-transfer-perf" in line
         ]
         self.assertEqual(
-            self_hosted_lines,
+            dedicated_hardware_lines,
             ["runs-on: [self-hosted, linux, x64, torrentng-transfer-perf]"],
         )
         self.assertRegex(
@@ -264,20 +264,21 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             source,
             r"(?m)^\s*environment: transfer-rebuild-hardware\s*$",
         )
-        self.assertIn("needs: hosted-correctness", source)
+        self.assertIn("needs: private-jit-correctness", source)
         self.assertIn("persist-credentials: false", source)
         self.assertNotIn("TRUSTED_MAIN_RUNNERS_ENABLED", source)
 
-    def test_public_fork_validation_is_manual_and_stays_on_hosted_runners(self) -> None:
+    def test_public_fork_validation_uses_the_isolated_no_secret_jit_pool(self) -> None:
         source = (WORKFLOW_DIR / PUBLIC_FORK_WORKFLOW).read_text(encoding="utf-8")
         runs_on = next(
             line.strip()
             for line in source.splitlines()
             if line.strip().startswith("runs-on:")
         )
-        self.assertIn("runs-on: ubuntu-latest", runs_on)
-        self.assertNotIn("self-hosted", source)
-        self.assertNotIn("public-fork-jit", source)
+        self.assertIn('"group":"public-fork-jit"', runs_on)
+        self.assertIn("self-hosted", runs_on)
+        self.assertNotIn("ubuntu-latest", source)
+        self.assertNotIn("ng-shared-main-jit", source)
         self.assertIn(
             "github.event.pull_request.base.repo.full_name == 'snapetech-org/TorrentNG'",
             source,
@@ -288,6 +289,8 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         caller = (WORKFLOW_DIR / "public-fork-pr.yml").read_text(encoding="utf-8")
         self.assertRegex(caller, r"(?m)^  workflow_dispatch:\s*\{\}\s*$")
         self.assertNotRegex(caller, r"(?m)^  pull_request(?:_target)?:")
+        self.assertIn("uses: ./.github/workflows/fork-safe-validation.yml", caller)
+        self.assertNotIn("@7cb3c216a2473fd6db8ec07f70be209ac4fefe46", caller)
         self.assertIn("github.event.pull_request.head.repo.fork == true", caller)
         self.assertIn("github.event.pull_request.base.ref == 'main'", caller)
         self.assertNotIn("pull_request_target", source + caller)

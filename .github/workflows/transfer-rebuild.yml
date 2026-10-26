@@ -1,3 +1,4 @@
+# ng-runner-policy: private-jit-only-v1
 name: Transfer Rebuild Qualification
 
 on:
@@ -22,9 +23,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  hosted-correctness:
-    name: Hosted transfer-core correctness
-    runs-on: ubuntu-latest
+  private-jit-correctness:
+    name: Private JIT transfer-core correctness
+    if: github.ref == 'refs/heads/main'
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-transfer-rebuild-correctness"]}}', github.run_id)) }}
     timeout-minutes: 75
     steps:
       - name: Route temporary files to runner temp
@@ -97,7 +99,7 @@ jobs:
   dedicated-hardware:
     name: Dedicated storage and performance qualification
     if: github.ref == 'refs/heads/main' && inputs.run_dedicated_hardware == true
-    needs: hosted-correctness
+    needs: private-jit-correctness
     runs-on: [self-hosted, linux, x64, torrentng-transfer-perf]
     environment: transfer-rebuild-hardware
     timeout-minutes: 180

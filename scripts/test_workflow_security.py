@@ -184,13 +184,14 @@ class WorkflowSecurityTests(unittest.TestCase):
     def assert_transfer_hardware_runner_is_opt_in_and_main_only(
         self, source: str
     ) -> None:
-        self_hosted_lines = [
+        dedicated_hardware_lines = [
             line.strip()
             for line in source.splitlines()
             if re.match(r"\s*(?:runs-on|labels):.*self-hosted", line)
+            and "torrentng-transfer-perf" in line
         ]
         self.assertEqual(
-            self_hosted_lines,
+            dedicated_hardware_lines,
             ["runs-on: [self-hosted, linux, x64, torrentng-transfer-perf]"],
         )
         self.assertRegex(
@@ -208,7 +209,7 @@ class WorkflowSecurityTests(unittest.TestCase):
             source,
             r"(?m)^\s*environment: transfer-rebuild-hardware\s*$",
         )
-        self.assertIn("needs: hosted-correctness", source)
+        self.assertIn("needs: private-jit-correctness", source)
         self.assertIn("persist-credentials: false", source)
         self.assertNotIn("TRUSTED_MAIN_RUNNERS_ENABLED", source)
 
@@ -216,9 +217,10 @@ class WorkflowSecurityTests(unittest.TestCase):
         for workflow_path in WORKFLOWS.glob("*.y*"):
             source = workflow_path.read_text(encoding="utf-8")
             if workflow_path.name == "fork-safe-validation.yml":
-                self.assertRegex(source, r"(?m)^\s*runs-on: ubuntu-latest$")
-                self.assertNotIn("self-hosted", source)
-                self.assertNotIn("public-fork-jit", source)
+                self.assertIn('"group":"public-fork-jit"', source)
+                self.assertIn("self-hosted", source)
+                self.assertNotIn("ubuntu-latest", source)
+                self.assertNotIn("ng-shared-main-jit", source)
                 self.assertIn(
                     "github.event.pull_request.base.repo.full_name == 'snapetech-org/TorrentNG'",
                     source,
@@ -228,6 +230,9 @@ class WorkflowSecurityTests(unittest.TestCase):
                 self.assertNotIn("pull_request_target", source)
                 continue
             if workflow_path.name == TRANSFER_HARDWARE_WORKFLOW:
+                self.assertIn('"group":"ng-shared-main-jit"', source)
+                self.assertIn('"gha-{0}-transfer-rebuild-correctness"', source)
+                self.assertNotIn("runs-on: ubuntu-latest", source)
                 self.assert_transfer_hardware_runner_is_opt_in_and_main_only(source)
                 continue
             if workflow_path.name == "windows-smoke.yml":
@@ -247,6 +252,9 @@ class WorkflowSecurityTests(unittest.TestCase):
                 "release.yml",
                 "release-aur.yml",
                 "release-copr.yml",
+                "release-ppa.yml",
+                "backend-evidence.yml",
+                "package-smoke-disabled.yml",
             }:
                 expressions = re.findall(r"(?m)^\s*runs-on: (?P<runner>[^\n]+)$", source)
                 routed = [expression for expression in expressions if "ng-shared-main-jit" in expression]
@@ -279,18 +287,11 @@ class WorkflowSecurityTests(unittest.TestCase):
                         else:
                             self.assertNotIn("||", expression)
                             self.assertIn("fromJSON(format(", expression)
-                    elif workflow_path.name in {"release-aur.yml", "release-copr.yml"}:
-                        self.assertIn("github.event_name == 'workflow_dispatch'", expression)
-                        self.assertIn("github.ref == 'refs/heads/main'", expression)
-                        self.assertNotIn("pull_request", expression)
-                        self.assertIn("|| 'ubuntu-latest'", expression)
                     else:
-                        self.assertIn("github.event_name == 'push'", expression)
-                        self.assertIn("github.event_name == 'workflow_dispatch'", expression)
-                        self.assertIn("github.ref == 'refs/heads/main'", expression)
-                        self.assertIn("|| 'ubuntu-latest'", expression)
+                        self.assertNotIn("ubuntu-latest", expression)
+                        self.assertNotIn("||", expression)
                 if workflow_path.name in {"codeql.yml", "semgrep-community.yml"}:
-                    self.assertIn("github.event_name == 'schedule'", routed[0])
+                    self.assertIn("schedule:", source)
                 if workflow_path.name == "semgrep-community.yml":
                     self.assertIn("docker info", source)
                     self.assertIn("docker run", source)
