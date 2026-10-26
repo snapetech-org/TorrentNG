@@ -267,10 +267,10 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             if re.match(r"\s*(?:runs-on|labels):.*self-hosted", line)
             and "torrentng-transfer-perf" in line
         ]
-        self.assertEqual(
-            dedicated_hardware_lines,
-            ["runs-on: [self-hosted, linux, x64, torrentng-transfer-perf]"],
-        )
+        self.assertEqual(len(dedicated_hardware_lines), 1)
+        self.assertIn('"group":"ng-shared-main-jit"', dedicated_hardware_lines[0])
+        self.assertIn('"on-demand"', dedicated_hardware_lines[0])
+        self.assertIn('"gha-{0}-dedicated-hardware"', dedicated_hardware_lines[0])
         self.assertRegex(
             source,
             r"(?m)^\s*if: github\.ref == 'refs/heads/main' && "
@@ -288,6 +288,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         )
         self.assertIn("needs: private-jit-correctness", source)
         self.assertIn("persist-credentials: false", source)
+        self.assertNotIn("ubuntu-latest", source)
         self.assertNotIn("TRUSTED_MAIN_RUNNERS_ENABLED", source)
 
     def test_public_fork_validation_uses_the_isolated_no_secret_jit_pool(self) -> None:
