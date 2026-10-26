@@ -41,6 +41,23 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
     def test_main_ci_routes_release_jobs_only_to_private_jit(self) -> None:
         source = (WORKFLOW_DIR / "ci.yml").read_text(encoding="utf-8")
         self.assertIn("# ng-runner-policy: private-jit-only-v1", source)
+        self.assertRegex(
+            source,
+            r"(?ms)^  pull_request_target:\n"
+            r"    branches:\n      - main\n"
+            r"    types:\n      - opened\n      - synchronize\n"
+            r"      - reopened\n      - ready_for_review\n",
+        )
+        dispatcher = re.search(
+            r"(?ms)^  dispatch-owner-pr:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+            source,
+        )
+        self.assertIsNotNone(dispatcher)
+        self.assertIn("github.event.pull_request.user.login == 'snapetech'", dispatcher.group("body"))
+        self.assertIn("github.event.pull_request.head.repo.id == github.repository_id", dispatcher.group("body"))
+        self.assertIn("contents: none", dispatcher.group("body"))
+        self.assertNotIn("actions/checkout", dispatcher.group("body"))
+        self.assertNotIn("secrets.", dispatcher.group("body"))
         jobs = [
             "native-quality",
             "backend-fault-matrix",
