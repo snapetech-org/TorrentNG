@@ -60,6 +60,8 @@ def run_interop_preflight(
         ),
         "jq": "#!/bin/sh\nexit 0\n",
         "base64": "#!/bin/sh\nexit 0\n",
+        "aria2c": "#!/bin/sh\nexit 0\n",
+        "curl": "#!/bin/sh\nexit 0\n",
     }
     for name, contents in stubs.items():
         executable = bin_path / name
@@ -1648,7 +1650,7 @@ class WorkflowSecurityTests(unittest.TestCase):
             workdir.mkdir()
             protected_file = workdir / "keep-me.txt"
             protected_file.write_text("user data", encoding="utf-8")
-            for name in ("docker", "jq"):
+            for name in ("docker", "jq", "aria2c", "curl", "base64"):
                 executable = bin_path / name
                 executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
                 executable.chmod(0o700)
