@@ -1801,13 +1801,17 @@ async fn write_utp_handshake(
     Ok(())
 }
 
-fn metadata_handshake_flags(_info_hash: MetadataInfoHash) -> ExtensionFlags {
-    // A v1 magnet can resolve to a hybrid info dictionary. Keep the BEP 52
-    // capability advertised even while the wire identity is the v1 hash, so
-    // the peer can provide the hybrid's piece layers over hash exchange.
-    // The metadata decoder also accepts BEP 6 Fast messages, so the standard
-    // capability set is safe for this short-lived connection.
-    ExtensionFlags::with_v2_support()
+fn metadata_handshake_flags(info_hash: MetadataInfoHash) -> ExtensionFlags {
+    // BEP 52's v2-upgrade bit is for a known hybrid identity. Setting it on a
+    // v1-only magnet can make libtorrent reject the peer handshake and can
+    // poison its later v1 metadata state. A v1 metadata fetch can still learn
+    // that the remote supports v2 from the remote handshake itself.
+    match info_hash {
+        MetadataInfoHash::V1(_) => ExtensionFlags::with_extension_protocol_and_fast(),
+        MetadataInfoHash::V2(_) | MetadataInfoHash::Hybrid { .. } => {
+            ExtensionFlags::with_v2_support()
+        }
+    }
 }
 
 async fn read_utp_handshake(stream: &mut UtpStream) -> anyhow::Result<Handshake> {
@@ -2620,6 +2624,27 @@ mod tests {
 
     fn empty_registry() -> Arc<RwLock<SessionRegistry>> {
         Arc::new(RwLock::new(SessionRegistry::new()))
+    }
+
+    #[test]
+    fn metadata_handshake_only_advertises_v2_for_v2_aware_magnets() {
+        let v1 = metadata_handshake_flags(MetadataInfoHash::V1([0x11; 20]));
+        assert!(v1.supports_extension_protocol());
+        assert!(v1.supports_fast_extension());
+        assert!(!v1.supports_v2());
+
+        let v2 = metadata_handshake_flags(MetadataInfoHash::V2([0x22; 32]));
+        assert!(v2.supports_extension_protocol());
+        assert!(v2.supports_fast_extension());
+        assert!(v2.supports_v2());
+
+        let hybrid = metadata_handshake_flags(MetadataInfoHash::Hybrid {
+            v1: [0x33; 20],
+            v2: [0x44; 32],
+        });
+        assert!(hybrid.supports_extension_protocol());
+        assert!(hybrid.supports_fast_extension());
+        assert!(hybrid.supports_v2());
     }
 
     #[test]
