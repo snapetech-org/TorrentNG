@@ -123,7 +123,7 @@ async function installApiMock(page: Page) {
     if (path === '/api/v1/storage') {
       return json({
         roots: [
-          { path: '/data/library', total_bytes: 10_000_000_000_000, available_bytes: 4_000_000_000_000, used_bytes: 6_000_000_000_000, used_percent: 60, readonly: false, ok: true, error: null },
+          { path: '/data/library', total_bytes: 10_000_000_000_000, available_bytes: 4_000_000_000_000, used_bytes: 6_000_000_000_000, readonly: false, ok: true, error: null },
         ],
       })
     }
@@ -279,6 +279,8 @@ test('settings storage panel renders with mocked root', async ({ page, isMobile 
   await expect(page.getByRole('tab', { name: /Library/i })).toBeVisible()
   await expect(page.getByText('Storage Plan')).toBeVisible()
   await expect(page.getByTitle('/data/library', { exact: true })).toBeVisible()
+  await expect(page.getByText('60.0% used', { exact: true })).toBeVisible()
+  await expect(page.getByRole('progressbar', { name: '/data/library storage used' })).toHaveAttribute('aria-valuenow', '60')
   await expect(page.getByLabel('Storage operation')).toBeVisible()
 })
 

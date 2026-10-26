@@ -3,6 +3,7 @@ import { useInterfaceLanguage } from '../lib/interfaceLocale'
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { formatRegionalNumber } from '../lib/localeFormat'
+import { storageUsedPercent } from '../lib/storage'
 import { api, type Job, type StoragePlanRequest, type StoragePlanResponse } from '../api/client'
 
 function fmtBytes(bytes: number): string {
@@ -422,17 +423,18 @@ function SummaryPill({ label, value }: { label: string; value: string }) {
 
 function StorageRootCard({ root }: { root: NonNullable<Awaited<ReturnType<typeof api.storage>>['roots']>[number] }) {
   const { t: localize, textProps } = useInterfaceLanguage()
+  const usedPercent = storageUsedPercent(root)
   const tone = !root.ok
     ? 'var(--danger)'
-    : root.used_percent >= 90
+    : usedPercent >= 90
       ? 'var(--danger)'
-      : root.used_percent >= 75
+      : usedPercent >= 75
         ? 'var(--warning)'
         : 'var(--success)'
   return (
     <div
       className="tng-card tng-storage-root"
-      data-tone={!root.ok ? 'error' : root.used_percent >= 90 ? 'error' : root.used_percent >= 75 ? 'warn' : 'ok'}
+      data-tone={!root.ok ? 'error' : usedPercent >= 90 ? 'error' : usedPercent >= 75 ? 'warn' : 'ok'}
       style={{
         border: '1px solid var(--border)',
         borderRadius: 7,
@@ -456,14 +458,14 @@ function StorageRootCard({ root }: { root: NonNullable<Awaited<ReturnType<typeof
           }}><LocalizedText source="read-only" /></span>
         )}
         <span {...textProps(root.ok ? '{percent}% used' : 'Unavailable')} style={{ color: tone, fontSize: 12, fontWeight: 700 }}>
-          {root.ok ? localize('{percent}% used', { percent: formatRegionalNumber(root.used_percent, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) }) : localize('Unavailable')}
+          {root.ok ? localize('{percent}% used', { percent: formatRegionalNumber(usedPercent, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) }) : localize('Unavailable')}
         </span>
       </div>
 
       {root.ok ? (
         <>
-            <div className="tng-storage-meter" role="progressbar" aria-label={localize('{path} storage used', { path: root.path })} {...textProps('{path} storage used')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.max(0, Math.min(100, root.used_percent))} style={{ height: 8, background: 'var(--surface-2)', borderRadius: 99, overflow: 'hidden', marginBottom: 9 }}>
-            <div style={{ width: `${Math.min(100, root.used_percent)}%`, height: '100%', background: tone }} />
+            <div className="tng-storage-meter" role="progressbar" aria-label={localize('{path} storage used', { path: root.path })} {...textProps('{path} storage used')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={usedPercent} style={{ height: 8, background: 'var(--surface-2)', borderRadius: 99, overflow: 'hidden', marginBottom: 9 }}>
+            <div style={{ width: `${usedPercent}%`, height: '100%', background: tone }} />
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8, fontSize: 12 }}>
             <StorageMetric label="Used" value={fmtBytes(root.used_bytes)} />

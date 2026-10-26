@@ -3283,6 +3283,7 @@ pub struct StorageRootView {
     total_bytes: u64,
     available_bytes: u64,
     used_bytes: u64,
+    used_percent: f64,
     readonly: bool,
     ok: bool,
     error: Option<String>,
@@ -4466,6 +4467,11 @@ pub async fn apply_rss_rules(
 
 impl From<EngineStorageRoot> for StorageRootView {
     fn from(root: EngineStorageRoot) -> Self {
+        let used_percent = if root.ok && root.total_bytes > 0 {
+            (root.used_bytes.min(root.total_bytes) as f64 / root.total_bytes as f64) * 100.0
+        } else {
+            0.0
+        };
         Self {
             id: root.id,
             path: root.path,
@@ -4473,6 +4479,7 @@ impl From<EngineStorageRoot> for StorageRootView {
             total_bytes: root.total_bytes,
             available_bytes: root.available_bytes,
             used_bytes: root.used_bytes,
+            used_percent,
             readonly: false,
             ok: root.ok,
             error: root.error,
@@ -10259,6 +10266,34 @@ mod tests {
             .unwrap();
         }
         (build_router(state), hash)
+    }
+
+    #[test]
+    fn storage_root_view_includes_finite_used_percentage() {
+        let view = StorageRootView::from(EngineStorageRoot {
+            id: "root-1".to_owned(),
+            path: PathBuf::from("/data"),
+            profile: "default".to_owned(),
+            total_bytes: 100,
+            available_bytes: 25,
+            used_bytes: 75,
+            ok: true,
+            error: None,
+        });
+        let value = serde_json::to_value(view).unwrap();
+        assert_eq!(value["used_percent"].as_f64(), Some(75.0));
+
+        let empty = StorageRootView::from(EngineStorageRoot {
+            id: "empty-root".to_owned(),
+            path: PathBuf::from("/empty"),
+            profile: "default".to_owned(),
+            total_bytes: 0,
+            available_bytes: 0,
+            used_bytes: 0,
+            ok: true,
+            error: None,
+        });
+        assert_eq!(empty.used_percent, 0.0);
     }
 
     #[test]
