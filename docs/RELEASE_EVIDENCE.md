@@ -6,9 +6,39 @@ establishing release readiness on an exact source revision.
 The previously published worktree qualification snapshot is at `1dea3ea`; older runtime product and
 LVM evidence remains tied to the commit recorded by each report. GitHub Actions
 evidence cited below is historical hosted-run evidence. A `main` ruleset was
-added on 2026-10-06 to require pull requests and named CI checks; it has not yet
-been exercised by a PR from this checkout. Neither CI nor branch protection
+added on 2026-10-06 to require pull requests and named CI checks. A live GitHub
+API snapshot on 2026-10-26 reports no repository rulesets or branch protection
+for `main`; the latest four main commits have no associated pull requests.
+Recheck the live rules before each delivery and follow the current repository
+workflow and standing authorization. Neither CI nor branch protection
 certifies broader public-network, target-device, or scale behavior.
+
+## Private Linux build-only candidate artifact — 2026-10-26
+
+The CI workflow has a separate manual path for producing a Linux x64 daemon
+artifact without creating a tag or starting release publication:
+
+1. Read the exact main SHA to build with git rev-parse origin/main.
+2. Dispatch only the private candidate job with:
+   gh workflow run ci.yml --ref main -f candidate_sha=<full-main-sha>.
+3. Watch that run to completion and download its
+   torrentng-candidate-linux-x64-<sha> artifact into task-scoped scratch.
+4. Verify build-metadata.json names the requested SHA, run
+   sha256sum -c SHA256SUMS, extract torrentngd-linux-x64.tar.gz to preserve
+   its executable mode, and confirm the authenticated smoke report says
+   Overall status: PASS.
+
+This path is restricted to a trusted dispatch from main and the private
+ng-shared-main-jit runner group. It checks out the exact workflow SHA, runs
+the workflow-runner policy test, builds the optimized daemon, and exercises the
+authenticated release-binary smoke. Candidate mode skips the other CI jobs,
+including the hosted WebUI job, and uploads a 30-day Actions artifact with the
+binary, executable tarball, checksums, source SHA, toolchain versions, and
+smoke report. It has no tagging, release, package, or announcement step.
+
+The artifact is a build deliverable, not a release qualification result. It
+does not replace the full exact-candidate test, security, UX/UI, compatibility,
+storage, soak, and external-evidence gates below.
 
 ## Current checkout status — 2026-10-06
 
