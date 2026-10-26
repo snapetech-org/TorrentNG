@@ -699,6 +699,11 @@ for cycle in $(seq 1 "$CHURN_CYCLES"); do
 done
 
 for cycle in $(seq 1 "$PUBLIC_CYCLES"); do
+  public_save_path="/downloads/$CHURN_DOWNLOAD_DIR/public/$cycle"
+  # The public torrent writes as torrentngd, so prepare its cycle directory with that owner.
+  # shellcheck disable=SC2016
+  bounded_command docker run --rm -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.20 \
+    sh -c 'mkdir -p -- "$1" && chown "$2" "$1"' sh "$public_save_path" "$APP_RUNTIME_OWNER"
   code="$(curl -q -sS --noproxy "*" --connect-timeout 3 --max-time 10 -o "$BODY" -w '%{http_code}' -b "$COOKIE_JAR" \
     -F "urls=$PUBLIC_TORRENT_URL" \
     -F "savepath=/data/$CHURN_DOWNLOAD_DIR/public/$cycle" \

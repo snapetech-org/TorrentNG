@@ -621,6 +621,9 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn('output_lower="${output,,}"', churn)
         self.assertIn('"no such object"', churn)
         self.assertIn('"no such container"', churn)
+        public_cycle = churn.split('for cycle in $(seq 1 "$PUBLIC_CYCLES"); do', 1)[1]
+        self.assertIn('chown "$2" "$1"', public_cycle)
+        self.assertIn('"$APP_RUNTIME_OWNER"', public_cycle)
         self.assertIn('"$REPORT_WRITE_FAILED" == "1"', churn)
         self.assertIn("test ! -e", churn)
         self.assertIn("expected_sha256.lower() == actual_sha256.lower()", validation)
