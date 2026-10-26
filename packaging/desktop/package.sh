@@ -75,7 +75,11 @@ CONTROL
     install -m755 "$desktop_bin" "$d/TorrentNG.exe"
     install -m755 "$engine_bin" "$d/torrentngd.exe"
     install -m644 "$here/README.txt" "$d/README.txt"
-    python3 - "$d" "$out/$name.zip" <<'PY'
+    python_cmd=python3
+    if ! command -v "$python_cmd" >/dev/null 2>&1; then
+      python_cmd=python
+    fi
+    "$python_cmd" - "$d" "$out/$name.zip" <<'PY'
 from pathlib import Path
 import sys
 from zipfile import ZIP_DEFLATED, ZipFile

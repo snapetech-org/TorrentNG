@@ -1,3 +1,4 @@
+# ng-runner-policy: private-jit-only-v1
 name: Package Smoke Disabled
 
 on:
@@ -13,7 +14,7 @@ jobs:
   disabled:
     # Kept dormant intentionally; no workflow with this fixed name can match.
     if: github.workflow == '__disabled_package_smoke__'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-package-smoke-disabled"]}}', github.run_id)) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

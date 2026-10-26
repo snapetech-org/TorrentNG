@@ -1,4 +1,5 @@
-# ng-runner-policy: hosted-first-v1
+# ng-runner-policy: private-jit-only-v1
+# packer-windows-jit-v1
 name: Release
 
 on:
@@ -353,12 +354,12 @@ jobs:
             target: aarch64-apple-darwin
             binary: torrentngd
             archive: tar.gz
-          - os: ubuntu-latest
+          - os: windows
             suffix: windows-x86_64
-            target: x86_64-pc-windows-gnu
+            target: x86_64-pc-windows-msvc
             binary: torrentngd.exe
             archive: zip
-    runs-on: ${{ matrix.os == 'macos-14' && fromJSON('{"group":"private-apple-builds","labels":["self-hosted","macOS","ARM64","private-apple"]}') || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-{1}-native-binaries"]}}', github.run_id, strategy.job-index)) }}
+    runs-on: ${{ matrix.os == 'windows' && fromJSON(format('{{"group":"packer-windows","labels":["self-hosted","Windows","X64","on-demand","packer-windows","TorrentNG","gha-{0}-{1}-native-binaries"]}}', github.run_id, strategy.job-index)) || matrix.os == 'macos-14' && fromJSON(format('{{"group":"private-apple-builds","labels":["self-hosted","macOS","ARM64","on-demand","private-apple","TorrentNG","gha-{0}-{1}-native-binaries"]}}', github.run_id, strategy.job-index)) || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-{1}-native-binaries"]}}', github.run_id, strategy.job-index)) }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -388,11 +389,10 @@ jobs:
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross
 
-      - name: Install Windows GNU cross compiler
-        if: matrix.target == 'x86_64-pc-windows-gnu'
-        run: |
-          sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends gcc-mingw-w64-x86-64
+      - name: Enable Visual Studio compiler environment
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        run: .\scripts\enable-msvc-environment.ps1
+        shell: powershell
 
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -415,9 +415,6 @@ jobs:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
           AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
-          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: x86_64-w64-mingw32-gcc
-          CC_x86_64_pc_windows_gnu: x86_64-w64-mingw32-gcc
-          AR_x86_64_pc_windows_gnu: x86_64-w64-mingw32-ar
         shell: bash
         run: cargo build --target "$RELEASE_TARGET" --release --locked -p torrentngd
 
@@ -429,13 +426,12 @@ jobs:
         run: |
           set -euo pipefail
           binary="target/$RELEASE_TARGET/release/$RELEASE_BINARY"
-          if [[ "$RELEASE_TARGET" == "x86_64-unknown-linux-gnu" || "$RELEASE_TARGET" == "aarch64-apple-darwin" ]]; then
+          if [[ "$RELEASE_TARGET" == "x86_64-unknown-linux-gnu" || "$RELEASE_TARGET" == "aarch64-apple-darwin" || "$RELEASE_TARGET" == "x86_64-pc-windows-msvc" ]]; then
             "$binary" --version
           else
             file "$binary"
             case "$RELEASE_TARGET" in
               aarch64-unknown-linux-gnu) file "$binary" | grep -Eq 'ARM aarch64|AArch64' ;;
-              x86_64-pc-windows-gnu) file "$binary" | grep -Eq 'PE32\+ executable.*x86-64' ;;
               *) echo "unexpected cross target: $RELEASE_TARGET" >&2; exit 1 ;;
             esac
           fi
@@ -512,13 +508,13 @@ jobs:
             kind: macos
             desktop_bin: torrentng-desktop
             engine_bin: torrentngd-macos-aarch64
-          - os: ubuntu-latest
+          - os: windows
             suffix: windows-x86_64
-            target: x86_64-pc-windows-gnu
+            target: x86_64-pc-windows-msvc
             kind: windows
             desktop_bin: torrentng-desktop.exe
             engine_bin: torrentngd-windows-x86_64.exe
-    runs-on: ${{ matrix.os == 'macos-14' && fromJSON('{"group":"private-apple-builds","labels":["self-hosted","macOS","ARM64","private-apple"]}') || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-{1}-desktop-bundles"]}}', github.run_id, strategy.job-index)) }}
+    runs-on: ${{ matrix.os == 'windows' && fromJSON(format('{{"group":"packer-windows","labels":["self-hosted","Windows","X64","on-demand","packer-windows","TorrentNG","gha-{0}-{1}-desktop-bundles"]}}', github.run_id, strategy.job-index)) || matrix.os == 'macos-14' && fromJSON(format('{{"group":"private-apple-builds","labels":["self-hosted","macOS","ARM64","on-demand","private-apple","TorrentNG","gha-{0}-{1}-desktop-bundles"]}}', github.run_id, strategy.job-index)) || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-{1}-desktop-bundles"]}}', github.run_id, strategy.job-index)) }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -547,11 +543,10 @@ jobs:
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross
 
-      - name: Install Windows GNU cross compiler
-        if: matrix.target == 'x86_64-pc-windows-gnu'
-        run: |
-          sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends gcc-mingw-w64-x86-64
+      - name: Enable Visual Studio compiler environment
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        run: .\scripts\enable-msvc-environment.ps1
+        shell: powershell
 
       - name: Build desktop client
         env:
@@ -559,9 +554,6 @@ jobs:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
           AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
-          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: x86_64-w64-mingw32-gcc
-          CC_x86_64_pc_windows_gnu: x86_64-w64-mingw32-gcc
-          AR_x86_64_pc_windows_gnu: x86_64-w64-mingw32-ar
         shell: bash
         run: cargo build --target "$BUNDLE_TARGET" --release --locked --manifest-path crates/torrentng-desktop/Cargo.toml
 

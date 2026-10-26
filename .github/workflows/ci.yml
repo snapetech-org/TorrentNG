@@ -1,4 +1,4 @@
-# ng-runner-policy: hosted-first-v1
+# ng-runner-policy: private-jit-only-v1
 name: CI
 run-name: >-
   ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha != '' &&
@@ -11,6 +11,14 @@ on:
   push:
     tags:
       - '**'
+  pull_request_target:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
   workflow_dispatch:
     inputs:
 
@@ -57,7 +65,7 @@ jobs:
       )
     name: TorrentNG client quality
     timeout-minutes: 60
-    runs-on: ${{ (github.event_name == 'workflow_dispatch' && (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-native-quality"]}}', github.run_id)) || (!(github.event_name == 'workflow_dispatch' && (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && ((vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (contains(fromJSON('["push","workflow_dispatch","schedule","release","repository_dispatch"]'), github.event_name) && (github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v')))) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-native-quality"]}}', github.run_id)) || 'ubuntu-latest')) }}
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-native-quality"]}}', github.run_id)) }}
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -161,7 +169,7 @@ jobs:
     name: Backend fault-containment matrix
     needs: native-quality
     timeout-minutes: 20
-    runs-on: ${{ (github.event_name == 'workflow_dispatch' && (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-backend-fault-matrix"]}}', github.run_id)) || (!(github.event_name == 'workflow_dispatch' && (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && ((vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (contains(fromJSON('["push","workflow_dispatch","schedule","release","repository_dispatch"]'), github.event_name) && (github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v')))) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-backend-fault-matrix"]}}', github.run_id)) || 'ubuntu-latest')) }}
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-backend-fault-matrix"]}}', github.run_id)) }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -207,7 +215,7 @@ jobs:
     name: Isolated TorrentNG API/SSE load harness
     needs: native-quality
     timeout-minutes: 30
-    runs-on: ${{ (github.event_name == 'workflow_dispatch' && (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-backend-api-load"]}}', github.run_id)) || (!(github.event_name == 'workflow_dispatch' && (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && ((vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (contains(fromJSON('["push","workflow_dispatch","schedule","release","repository_dispatch"]'), github.event_name) && (github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v')))) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-backend-api-load"]}}', github.run_id)) || 'ubuntu-latest')) }}
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-backend-api-load"]}}', github.run_id)) }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -294,7 +302,7 @@ jobs:
        (inputs.pr_number == '' && inputs.pr_sha == '' && inputs.target_run_id == ''))))
       )
     timeout-minutes: 60
-    runs-on: ${{ (github.event_name == 'workflow_dispatch' && (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-msrv-check"]}}', github.run_id)) || (!(github.event_name == 'workflow_dispatch' && (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && ((vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (contains(fromJSON('["push","workflow_dispatch","schedule","release","repository_dispatch"]'), github.event_name) && (github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v')))) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-msrv-check"]}}', github.run_id)) || 'ubuntu-latest')) }}
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-msrv-check"]}}', github.run_id)) }}
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -357,7 +365,7 @@ jobs:
       )
     name: Compatible-client service MSRV gate
     timeout-minutes: 30
-    runs-on: ${{ (github.event_name == 'workflow_dispatch' && (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-msrv-check-sidecar"]}}', github.run_id)) || (!(github.event_name == 'workflow_dispatch' && (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && ((vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (contains(fromJSON('["push","workflow_dispatch","schedule","release","repository_dispatch"]'), github.event_name) && (github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v')))) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-msrv-check-sidecar"]}}', github.run_id)) || 'ubuntu-latest')) }}
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-msrv-check-sidecar"]}}', github.run_id)) }}
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -416,7 +424,7 @@ jobs:
        (inputs.pr_number == '' && inputs.pr_sha == '' && inputs.target_run_id == ''))))
       )
     timeout-minutes: 30
-    runs-on: ${{ (github.event_name == 'workflow_dispatch' && (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-fuzz-smoke"]}}', github.run_id)) || (!(github.event_name == 'workflow_dispatch' && (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && ((vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (contains(fromJSON('["push","workflow_dispatch","schedule","release","repository_dispatch"]'), github.event_name) && (github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v')))) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-fuzz-smoke"]}}', github.run_id)) || 'ubuntu-latest')) }}
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-fuzz-smoke"]}}', github.run_id)) }}
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -537,7 +545,7 @@ jobs:
       )
     name: Compatible-client service quality
     timeout-minutes: 30
-    runs-on: ${{ (github.event_name == 'workflow_dispatch' && (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-sidecar"]}}', github.run_id)) || (!(github.event_name == 'workflow_dispatch' && (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && ((vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (contains(fromJSON('["push","workflow_dispatch","schedule","release","repository_dispatch"]'), github.event_name) && (github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v')))) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-sidecar"]}}', github.run_id)) || 'ubuntu-latest')) }}
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-sidecar"]}}', github.run_id)) }}
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -597,7 +605,7 @@ jobs:
       )
     name: Desktop client quality
     timeout-minutes: 40
-    runs-on: ${{ (github.event_name == 'workflow_dispatch' && (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-desktop"]}}', github.run_id)) || (!(github.event_name == 'workflow_dispatch' && (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && ((vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (contains(fromJSON('["push","workflow_dispatch","schedule","release","repository_dispatch"]'), github.event_name) && (github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v')))) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-desktop"]}}', github.run_id)) || 'ubuntu-latest')) }}
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-desktop"]}}', github.run_id)) }}
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -662,14 +670,9 @@ jobs:
         (github.event_name != 'workflow_dispatch' ||
          (inputs.pr_number == '' && inputs.pr_sha == '' && inputs.target_run_id == ''))))
       )
-    timeout-minutes: 20
-    # The pinned Playwright job uses a job container; the private JIT runner
-    # image does not include Docker. Release.yml builds the WebUI from the tag,
-    # so skip this duplicate hosted job on tag pushes.
-    runs-on: ubuntu-24.04
-    # Match the browser and Linux fonts used to create the checked-in visual baselines.
-    container:
-      image: mcr.microsoft.com/playwright@sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea # v1.64.1-noble
+    timeout-minutes: 45
+    # Release.yml builds the WebUI from the tag, so skip this duplicate on tag pushes.
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-webui"]}}', github.run_id)) }}
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -703,11 +706,11 @@ jobs:
         working-directory: webui
         run: npm test
 
-      - name: Verify pinned Playwright browser
+      - name: Install pinned Playwright browser
         working-directory: webui
         run: |
-          node -e 'const version = require("@playwright/test/package.json").version; if (version !== "1.64.1") throw new Error(`Playwright image is 1.64.1 but package-lock resolves ${version}`)'
-          npx playwright install --list
+          node -e 'const version = require("@playwright/test/package.json").version; if (version !== "1.64.1") throw new Error(`Expected Playwright 1.64.1 but package-lock resolves ${version}`)'
+          npx playwright install --with-deps chromium
 
       - name: Build webui
         working-directory: webui
@@ -751,7 +754,7 @@ jobs:
     name: Backup and restore drill
     needs: native-quality
     timeout-minutes: 30
-    runs-on: ${{ (github.event_name == 'workflow_dispatch' && (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-backup-restore"]}}', github.run_id)) || (!(github.event_name == 'workflow_dispatch' && (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && ((vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (contains(fromJSON('["push","workflow_dispatch","schedule","release","repository_dispatch"]'), github.event_name) && (github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v')))) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-backup-restore"]}}', github.run_id)) || 'ubuntu-latest')) }}
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-backup-restore"]}}', github.run_id)) }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -807,7 +810,7 @@ jobs:
       )
     name: Dependency security audit
     timeout-minutes: 30
-    runs-on: ${{ (github.event_name == 'workflow_dispatch' && (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-security-audit"]}}', github.run_id)) || (!(github.event_name == 'workflow_dispatch' && (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && ((vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (contains(fromJSON('["push","workflow_dispatch","schedule","release","repository_dispatch"]'), github.event_name) && (github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v')))) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-security-audit"]}}', github.run_id)) || 'ubuntu-latest')) }}
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-security-audit"]}}', github.run_id)) }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
