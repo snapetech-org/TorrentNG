@@ -100,7 +100,7 @@ jobs:
     name: Dedicated storage and performance qualification
     if: github.ref == 'refs/heads/main' && inputs.run_dedicated_hardware == true
     needs: private-jit-correctness
-    runs-on: [self-hosted, linux, x64, torrentng-transfer-perf]
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","torrentng-transfer-perf","on-demand","gha-{0}-dedicated-hardware"]}}', github.run_id)) }}
     environment: transfer-rebuild-hardware
     timeout-minutes: 180
     steps:

@@ -1278,6 +1278,10 @@ impl TorrentTask {
             };
             match outcome {
                 ReceiveOutcome::Accepted { actions, .. } => {
+                    // The ledger returns one exact cancel action for every
+                    // other owner of this block. Keep duplicate cancellation
+                    // here instead of rescanning every peer's request vector
+                    // on the per-block hot path.
                     self.apply_transfer_actions(actions);
                     if let Some(peer) = peer {
                         if let Some(handle) = self.active_peers.get_mut(&peer) {
@@ -1321,11 +1325,6 @@ impl TorrentTask {
             self.record_download(event.network_bytes.unwrap_or(event.block.data.len() as u64))
                 .await;
             let complete = self.picker.block_received_pending(piece as usize, offset);
-            self.cancel_endgame_duplicates(BlockRequest {
-                piece,
-                begin: offset,
-                length: event.block.data.len() as u32,
-            });
             if complete {
                 let work = self.ensure_pending_transfer_piece(piece);
                 work.aggregate_write = true;
@@ -1531,11 +1530,6 @@ impl TorrentTask {
                 let mut complete_piece = false;
                 if accept_written_block {
                     complete_piece = self.picker.block_received_pending(piece as usize, offset);
-                    self.cancel_endgame_duplicates(BlockRequest {
-                        piece,
-                        begin: offset,
-                        length: u32::try_from(length).unwrap_or(u32::MAX),
-                    });
                     if complete_piece {
                         if let Some(work) = self.pending_transfer_pieces.get_mut(&piece) {
                             work.verify_ready = true;
@@ -1945,30 +1939,6 @@ impl TorrentTask {
             }
         }
         (on_wire, cancel)
-    }
-
-    /// Ask every other peer that has this accepted block outstanding to stop
-    /// sending a duplicate. The peer loop retains an on-wire response lease
-    /// until Piece, Reject, timeout, or disconnect because Cancel can race a
-    /// response already in flight.
-    pub(super) fn cancel_endgame_duplicates(&mut self, accepted: BlockRequest) {
-        let mut queue_full = 0u64;
-        for handle in self.active_peers.values() {
-            let owns_request = handle.requested.iter().any(|request| {
-                request.piece == accepted.piece
-                    && request.begin == accepted.begin
-                    && request.length == accepted.length
-            });
-            if owns_request
-                && handle
-                    .cmd_tx
-                    .try_send(PeerCommand::Cancel { request: accepted })
-                    .is_err()
-            {
-                queue_full = queue_full.saturating_add(1);
-            }
-        }
-        self.peer_command_queue_full = self.peer_command_queue_full.saturating_add(queue_full);
     }
 
     pub(super) async fn drain_transfer_jobs(&mut self) {

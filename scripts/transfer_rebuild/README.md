@@ -895,14 +895,16 @@ for the new path. The old candidate-vector capacities were
 one-peer case uses the production no-other-source fast path. These are
 diagnostic picker measurements, not process CPU, RSS, or disk-I/O results.
 
-## PERF-115 hosted and dedicated hardware lanes
+## PERF-115 private JIT and dedicated hardware lanes
 
 `.github/workflows/transfer-rebuild.yml` provides a manually dispatched
-hosted lane for the transfer-core Rust suites and rebuild-harness regression
-sources. Its optional hardware job runs only from `main`, requires the
-protected `transfer-rebuild-hardware` environment, and selects a runner with
-the `torrentng-transfer-perf` label. Pull-request code never reaches that
-self-hosted machine.
+private JIT lane for the transfer-core Rust suites and rebuild-harness
+regression sources. Its optional hardware job also runs only from `main` and
+requires the protected `transfer-rebuild-hardware` environment. It selects a
+private JIT runner with the `torrentng-transfer-perf`, `on-demand`, and exact
+run/job-scoped labels. There is no hosted or persistent-runner fallback. The
+hardware job remains queued until a private JIT provider has the dedicated
+storage target attached and the workflow route is authorized.
 
 The hardware job requires an operator-provisioned disposable storage directory
 and records the exact commit, worktree state, Rust toolchain, host, and mount
@@ -910,10 +912,11 @@ identity. `hardware_lane.sh` retains the picker and changed-snapshot benchmark
 logs and runs the real-root storage move/import exercise against the supplied
 directory. It preserves all exit statuses so later checks can diagnose each
 command. These outputs are diagnostic artifacts; workflow completion alone
-does not qualify a storage or performance gate. Hosted Transfer Rebuild and
-Windows Smoke passed on exact commit `94c8c1b3`; the protected hardware job was
-skipped because no runner is registered for its label. `hardware_lane.sh` was
-run twice manually on `kspls0` at `eb5f3158`, so that hardware evidence remains
+does not qualify a storage or performance gate. Older hosted Transfer Rebuild
+and Windows Smoke results on exact commit `94c8c1b3` predate the private-JIT
+directive and do not qualify this lane. The protected hardware job was skipped
+because no runner is registered for its label. `hardware_lane.sh` was run
+twice manually on `kspls0` at `eb5f3158`, so that hardware evidence remains
 historical and is not a protected-runner result for the current source.
 
 ## PERF-112 v2 and restart invariants

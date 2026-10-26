@@ -18101,7 +18101,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn endgame_cancel_targets_only_exact_duplicate_requests() {
+    async fn transfer_ledger_actions_cancel_only_the_exact_duplicate_owner() {
         let temp = tempfile::tempdir().unwrap();
         let conn = Connection::open_in_memory().unwrap();
         rt_db::migrate(&conn).unwrap();
@@ -18178,6 +18178,15 @@ mod tests {
             begin: 0,
             length: 4,
         };
+        let block = BlockExtent::new(accepted.piece, accepted.begin, accepted.length);
+        let accepted_conn = task.active_peers.get(&accepted_peer).unwrap().transfer_conn;
+        let duplicate_conn = task.active_peers.get(&duplicate_peer).unwrap().transfer_conn;
+        task.transfer_ledger
+            .reserve(accepted_conn, block, &ReserveMode::Exclusive)
+            .unwrap();
+        task.transfer_ledger
+            .reserve(duplicate_conn, block, &ReserveMode::Endgame)
+            .unwrap();
         task.active_peers
             .get_mut(&duplicate_peer)
             .unwrap()
@@ -18192,7 +18201,12 @@ mod tests {
                 ..accepted
             });
 
-        task.cancel_endgame_duplicates(accepted);
+        let ReceiveOutcome::Accepted { actions, .. } =
+            task.transfer_ledger.on_block(accepted_conn, block)
+        else {
+            panic!("expected the reserved block to be accepted");
+        };
+        task.apply_transfer_actions(actions);
 
         assert!(matches!(
             duplicate_commands.try_recv(),
