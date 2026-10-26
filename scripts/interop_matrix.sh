@@ -1172,8 +1172,9 @@ run_magnet_tracker_case() {
   add_to_client qbittorrent "$torrent" seed || status="FAIL"
   qb_force_start "$info_hash" || status="FAIL"
   add_rust_url "$magnet" "$(download_dir torrentngd)" || status="FAIL"
-  bridge_client_peer_to_rust qbittorrent "$info_hash" || true
-  wait_explicit_peer_complete "$TIMEOUT_LOCAL" "$fixture" "$info_hash" qbittorrent qbittorrent torrentngd || status="FAIL"
+  # Keep this tracker-only: a direct peer bridge would make the tracker
+  # result ambiguous and can hide a failed announce/peer-discovery path.
+  wait_clients_complete "$TIMEOUT_LOCAL" "$fixture" qbittorrent torrentngd || status="FAIL"
   verify_fixture_hashes torrentngd "$fixture" || status="FAIL"
   append_report "- Seeder: qbittorrent"
   append_report "- Leecher: torrentngd"
@@ -1186,7 +1187,7 @@ run_magnet_tracker_case() {
 }
 
 run_trackerless_magnet_case() {
-  local status="PASS" fixture torrent info_hash name magnet
+  local status="PASS" fixture torrent info_hash name magnet peer_ip
   append_report "## Protocol Local: rust-trackerless-magnet"
   append_report ""
   log "running protocol local case rust-trackerless-magnet"
@@ -1194,18 +1195,19 @@ run_trackerless_magnet_case() {
   torrent="$(make_torrent "$fixture" "$fixture" trackerless)"
   info_hash="$(torrent_info_hash "$torrent")"
   name="$(torrent_name "$torrent")"
-  magnet="magnet:?xt=urn:btih:$info_hash&dn=$(urlencode "$name")"
+  peer_ip="$(container_ip qbittorrent)"
+  magnet="magnet:?xt=urn:btih:$info_hash&dn=$(urlencode "$name")&x.pe=$(urlencode "$peer_ip:6882")"
   seed_fixture_for_client qbittorrent "$fixture"
   add_to_client qbittorrent "$torrent" seed || status="FAIL"
   qb_force_start "$info_hash" || status="FAIL"
   add_rust_url "$magnet" "$(download_dir torrentngd)" || status="FAIL"
-  bridge_client_peer_to_rust qbittorrent "$info_hash" || status="FAIL"
-  wait_explicit_peer_complete "$TIMEOUT_LOCAL" "$fixture" "$info_hash" qbittorrent qbittorrent torrentngd || status="FAIL"
+  # Exercise BEP 9 x.pe from the magnet itself, without qB API addPeers.
+  wait_clients_complete "$TIMEOUT_LOCAL" "$fixture" qbittorrent torrentngd || status="FAIL"
   verify_fixture_hashes torrentngd "$fixture" || status="FAIL"
   append_report "- Seeder: qbittorrent"
   append_report "- Leecher: torrentngd"
   append_report "- Fixture: single-16m"
-  append_report "- Add method: trackerless magnet plus explicit peer bridge"
+  append_report "- Add method: trackerless magnet with one BEP 9 x.pe peer hint"
   append_report "- Info hash: $info_hash"
   append_report "- Status: **$status**"
   append_report ""
