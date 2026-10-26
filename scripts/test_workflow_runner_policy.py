@@ -93,6 +93,71 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             "mcr.microsoft.com/playwright@sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea",
             body,
         )
+        self.assertIn("inputs.candidate_sha == ''", body)
+
+    def test_private_candidate_artifact_dispatch_is_exact_and_does_not_publish(self) -> None:
+        source = (WORKFLOW_DIR / "ci.yml").read_text(encoding="utf-8")
+        self.assertRegex(
+            source,
+            r"(?m)^      candidate_sha:\n        description: Exact main SHA for a private Linux x64 build artifact \(no release\)\n        required: false\n        type: string$",
+        )
+
+        match = re.search(
+            r"(?ms)^  candidate-artifact:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+            source,
+        )
+        self.assertIsNotNone(match)
+        body = match.group("body")
+        self.assertIn("github.event_name == 'workflow_dispatch'", body)
+        self.assertIn("github.actor == 'snapetech'", body)
+        self.assertIn("github.ref == 'refs/heads/main'", body)
+        self.assertIn("inputs.candidate_sha != ''", body)
+        self.assertIn("inputs.candidate_sha == github.sha", body)
+        self.assertIn("inputs.pr_number == ''", body)
+        self.assertIn('"group":"ng-shared-main-jit"', body)
+        self.assertIn('"ng-shared-main-torrentng"', body)
+        self.assertIn('"gha-{0}-candidate-artifact"', body)
+        self.assertNotIn("ubuntu-latest", body)
+        self.assertIn('[[ "$candidate_sha" == "${GITHUB_SHA,,}" ]]', body)
+        self.assertIn("cargo build --release --locked -p torrentngd", body)
+        self.assertIn("scripts/backend_burndown_native_release_smoke.sh", body)
+        self.assertIn("torrentngd-linux-x64.tar.gz", body)
+        self.assertIn("actions/upload-artifact@", body)
+        self.assertIn("retention-days: 30", body)
+        self.assertNotIn("gh release", body.lower())
+        self.assertNotIn("git push", body.lower())
+
+        for name in [
+            "native-quality",
+            "backend-fault-matrix",
+            "backend-api-load",
+            "msrv-check",
+            "msrv-check-sidecar",
+            "fuzz-smoke",
+            "sidecar",
+            "desktop",
+            "webui",
+            "backup-restore",
+            "security-audit",
+        ]:
+            job = re.search(
+                rf"(?ms)^  {re.escape(name)}:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+                source,
+            )
+            self.assertIsNotNone(job, name)
+            job_body = job.group("body")
+            self.assertIn("inputs.candidate_sha == ''", job_body, name)
+            condition = re.search(
+                r"(?ms)^    if: >-\n(?P<condition>.*?)(?=^    (?:name|needs|timeout-minutes|runs-on):)",
+                job_body,
+            )
+            self.assertIsNotNone(condition, name)
+            if name != "webui":
+                self.assertRegex(
+                    condition.group("condition"),
+                    r"inputs\.candidate_sha == ''\s*&&\s*\(\s*\(\(",
+                )
+                self.assertTrue(condition.group("condition").rstrip().endswith(")"), name)
 
     def test_other_workflows_use_github_hosted_runners(self) -> None:
         for workflow in WORKFLOW_DIR.glob("*.y*"):
