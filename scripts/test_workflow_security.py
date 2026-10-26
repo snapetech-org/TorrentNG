@@ -604,6 +604,75 @@ class WorkflowSecurityTests(unittest.TestCase):
             self.assertIn("67108864", source)
             self.assertIn("tng_write_qbit_login_body", source)
 
+    def test_transfer_churn_requires_payload_evidence_and_checked_cleanup(self) -> None:
+        churn = (ROOT / "scripts" / "transfer_churn_soak.sh").read_text(encoding="utf-8")
+        validation = (ROOT / "scripts" / "transfer_churn_validation.py").read_text(encoding="utf-8")
+        report = (ROOT / "scripts" / "transfer_churn_report.sh").read_text(encoding="utf-8")
+
+        self.assertIn('python3 "$ROOT/scripts/transfer_churn_validation.py" complete', churn)
+        self.assertIn('python3 "$ROOT/scripts/transfer_churn_validation.py" public', churn)
+        self.assertIn('python3 "$ROOT/scripts/transfer_churn_validation.py" category-hashes', churn)
+        self.assertIn('source "$ROOT/scripts/transfer_churn_report.sh"', churn)
+        self.assertIn('sha256sum "$path"', churn)
+        self.assertIn("TRANSFER_CHURN_PUBLIC_MIN_DOWNLOADED_BYTES", churn)
+        self.assertIn("bounded_for_deadline", churn)
+        self.assertIn("timeout --signal=TERM --kill-after=1s", churn)
+        self.assertIn("cleanup_failures+=", churn)
+        self.assertIn('"$REPORT_WRITE_FAILED" == "1"', churn)
+        self.assertIn("test ! -e", churn)
+        self.assertIn("expected_sha256.lower() == actual_sha256.lower()", validation)
+        self.assertIn('REPORT_WRITE_FAILED="1"', report)
+        self.assertIn('printf \'%s\' "$content" >> "$OUT"', report)
+        self.assertNotIn('printf \'{"progress":1,"downloaded":%s}\'', churn)
+        self.assertNotIn('docker rm -f "$seeder" >/dev/null 2>&1 || true', churn)
+
+    def test_transfer_churn_report_write_failures_are_fatal(self) -> None:
+        if not Path("/dev/full").exists():
+            self.skipTest("/dev/full is only available on Linux")
+        helper = ROOT / "scripts" / "transfer_churn_report.sh"
+        command = (
+            f'source "{helper}"; '
+            'status=PASS; REPORT_WRITE_FAILED=0; OUT=/dev/full; '
+            'if report_append probe; then exit 3; fi; '
+            '[[ "$REPORT_WRITE_FAILED" == 1 && "$status" == FAIL ]] || exit 4; '
+            'REPORT_WRITE_FAILED=0; status=PASS; '
+            'if report_create probe; then exit 5; fi; '
+            '[[ "$REPORT_WRITE_FAILED" == 1 && "$status" == FAIL ]] || exit 6'
+        )
+        result = subprocess.run(["bash", "-c", command], text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr.count("ERROR: unable to write transfer-churn QA report"), 2)
+
+    def test_transfer_churn_report_failure_exits_nonzero_through_cleanup_trap(self) -> None:
+        if not Path("/dev/full").exists():
+            self.skipTest("/dev/full is only available on Linux")
+        with tempfile.TemporaryDirectory() as temporary:
+            temp_path = Path(temporary)
+            bin_path = temp_path / "bin"
+            bin_path.mkdir()
+            docker_stub = bin_path / "docker"
+            docker_stub.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            docker_stub.chmod(0o700)
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "CERT_ENV_FILE": "/dev/null",
+                    "TNG_HOST_URL": "http://localhost:1",
+                    "TRANSFER_CHURN_ID": "report-failure-test",
+                    "TMPDIR": temporary,
+                    "PATH": f"{bin_path}:{environment['PATH']}",
+                }
+            )
+            result = subprocess.run(
+                ["bash", str(ROOT / "scripts" / "transfer_churn_soak.sh"), "/dev/full"],
+                text=True,
+                capture_output=True,
+                timeout=15,
+                env=environment,
+            )
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("ERROR: unable to write transfer-churn QA report", result.stderr)
+
     def test_fixture_identifiers_and_sizes_fail_closed_before_docker(self) -> None:
         cases = (
             (
@@ -612,6 +681,8 @@ class WorkflowSecurityTests(unittest.TestCase):
             ),
             ("app_add_job_certification.sh", {"FIXTURE_BYTES": "1048576;touch-this"}),
             ("transfer_churn_soak.sh", {"TRANSFER_CHURN_ID": "../outside"}),
+            ("transfer_churn_soak.sh", {"TRANSFER_CHURN_PUBLIC_MIN_DOWNLOADED_BYTES": "0"}),
+            ("transfer_churn_soak.sh", {"TRANSFER_CHURN_DOCKER_COMMAND_TIMEOUT_SECS": "0"}),
             ("arr_app_certification.sh", {"FIXTURE_BYTES": "999999999"}),
         )
         for script_name, overrides in cases:

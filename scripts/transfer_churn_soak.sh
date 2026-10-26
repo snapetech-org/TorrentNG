@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/curl_policy.sh
 source "$ROOT/scripts/curl_policy.sh"
+# shellcheck source=scripts/transfer_churn_report.sh
+source "$ROOT/scripts/transfer_churn_report.sh"
 ENV_FILE="${CERT_ENV_FILE:-$ROOT/deploy/certification/.env}"
 COMPOSE_PROJECT="${CERT_COMPOSE_PROJECT:-certification}"
 COMPOSE_NETWORK="${CERT_COMPOSE_NETWORK:-${COMPOSE_PROJECT}_default}"
@@ -28,6 +30,8 @@ READY_TIMEOUT_SECS="${TRANSFER_CHURN_READY_TIMEOUT_SECS:-60}"
 MAX_RSS_MB="${TRANSFER_CHURN_MAX_RSS_MB:-500}"
 PUBLIC_TORRENT_URL="${PUBLIC_TORRENT_URL:-https://mirror.arizona.edu/debian-cd/current/amd64/bt-cd/debian-13.4.0-amd64-netinst.iso.torrent}"
 PUBLIC_CYCLES="${TRANSFER_CHURN_PUBLIC_CYCLES:-0}"
+MIN_PUBLIC_DOWNLOADED_BYTES="${TRANSFER_CHURN_PUBLIC_MIN_DOWNLOADED_BYTES:-16384}"
+DOCKER_COMMAND_TIMEOUT_SECS="${TRANSFER_CHURN_DOCKER_COMMAND_TIMEOUT_SECS:-90}"
 FIXTURE_ID_SEED="${TRANSFER_CHURN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 
 if [[ ! "$FIXTURE_ID_SEED" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$ || "$FIXTURE_ID_SEED" == *..* ]]; then
@@ -56,6 +60,13 @@ TRANSFER_TIMEOUT_SECS="$(normalize_uint TRANSFER_CHURN_TIMEOUT_SECS "$TRANSFER_T
 READY_TIMEOUT_SECS="$(normalize_uint TRANSFER_CHURN_READY_TIMEOUT_SECS "$READY_TIMEOUT_SECS" 1 300)"
 MAX_RSS_MB="$(normalize_uint TRANSFER_CHURN_MAX_RSS_MB "$MAX_RSS_MB" 1 65536)"
 PUBLIC_CYCLES="$(normalize_uint TRANSFER_CHURN_PUBLIC_CYCLES "$PUBLIC_CYCLES" 0 20)"
+MIN_PUBLIC_DOWNLOADED_BYTES="$(normalize_uint TRANSFER_CHURN_PUBLIC_MIN_DOWNLOADED_BYTES "$MIN_PUBLIC_DOWNLOADED_BYTES" 1 67108864)"
+DOCKER_COMMAND_TIMEOUT_SECS="$(normalize_uint TRANSFER_CHURN_DOCKER_COMMAND_TIMEOUT_SECS "$DOCKER_COMMAND_TIMEOUT_SECS" 1 300)"
+
+command -v timeout >/dev/null || {
+  echo "timeout is required for bounded Docker readiness probes" >&2
+  exit 2
+}
 
 CHURN_DOWNLOAD_DIR="transfer-churn-$FIXTURE_ID"
 CATEGORY="cert-transfer-churn-$FIXTURE_ID"
@@ -64,10 +75,13 @@ FILESERVER_NAME="tng-churn-files-$FIXTURE_ID"
 COOKIE_JAR=""
 BODY=""
 AUTH_BODY_FILE=""
+DOCKER_RESOURCES_ATTEMPTED="0"
+FINALIZED="0"
 
 mkdir -p "$(dirname "$OUT")"
 
-mapped="$(docker port "$TNG_CONTAINER" 8080/tcp 2>/dev/null | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p' | head -1 || true)"
+mapped="$(timeout --signal=TERM --kill-after=1s 5s \
+  docker port "$TNG_CONTAINER" 8080/tcp 2>/dev/null | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p' | head -1 || true)"
 if [[ -n "$mapped" && "$TNG_HOST_URL" == http://localhost:* ]]; then
   TNG_HOST_URL="http://localhost:$mapped"
 fi
@@ -77,16 +91,20 @@ BODY="$(mktemp "${TMPDIR:-/tmp}/tng-churn-body.XXXXXX")"
 AUTH_BODY_FILE="$(mktemp "${TMPDIR:-/tmp}/tng-churn-auth.XXXXXX")"
 
 status="PASS"
+REPORT_WRITE_FAILED="0"
 FAILURE_DIAGNOSTICS_CAPTURED="0"
+TNG_AUTHENTICATED="0"
 seeders=()
+cleanup_failures=()
 
 mark() {
   local name="$1"
   local result="$2"
-  local detail="$3"
+  local detail="$3" record
   detail="${detail//$'\n'/ }"
   detail="${detail//|/\\|}"
-  printf '| %s | %s | %s |\n' "$name" "$result" "$detail" >> "$OUT"
+  printf -v record '| %s | %s | %s |\n' "$name" "$result" "$detail"
+  report_append "$record" || return 1
   [[ "$result" == "FAIL" ]] && status="FAIL"
   return 0
 }
@@ -94,61 +112,151 @@ mark() {
 capture_failure_diagnostics() {
   [[ "$status" == "FAIL" && "$FAILURE_DIAGNOSTICS_CAPTURED" == "0" ]] || return 0
   FAILURE_DIAGNOSTICS_CAPTURED="1"
-  {
+  local diagnostics container
+  diagnostics="$(
     echo
     echo "## Failure Diagnostics"
     if [[ -s "$COOKIE_JAR" ]]; then
       local torrent_state
-      torrent_state="$(curl -q -sS --noproxy "*" -b "$COOKIE_JAR" \
+      torrent_state="$(curl -q -sS --noproxy "*" --connect-timeout 2 --max-time 5 -b "$COOKIE_JAR" \
         "$TNG_HOST_URL/api/qb/v2/torrents/info?category=$CATEGORY" 2>/dev/null \
         | jq -c '[.[] | {name,state,progress,downloaded,dlspeed,num_seeds,num_leechs,category}]' 2>/dev/null || true)"
       echo "- Torrent state: ${torrent_state:-unavailable}"
     fi
     echo
     echo "### TorrentNG daemon log tail"
-    docker logs --tail 100 "$TNG_CONTAINER" 2>&1 || true
-    local container
+    timeout --signal=TERM --kill-after=1s 5s docker logs --tail 100 "$TNG_CONTAINER" 2>&1 || true
     for container in "$TRACKER_NAME" "$FILESERVER_NAME" "${seeders[@]}"; do
       [[ -n "$container" ]] || continue
-      if docker inspect "$container" >/dev/null 2>&1; then
+      if timeout --signal=TERM --kill-after=1s 5s docker inspect "$container" >/dev/null 2>&1; then
         echo
         echo "### $container"
-        docker inspect --format 'state={{.State.Status}} exit={{.State.ExitCode}} error={{.State.Error}}' "$container" 2>/dev/null || true
-        docker logs --tail 80 "$container" 2>&1 || true
+        timeout --signal=TERM --kill-after=1s 5s docker inspect --format 'state={{.State.Status}} exit={{.State.ExitCode}} error={{.State.Error}}' "$container" 2>/dev/null || true
+        timeout --signal=TERM --kill-after=1s 5s docker logs --tail 80 "$container" 2>&1 || true
       fi
     done
-  } >> "$OUT"
+  )"
+  report_append "$diagnostics"$'\n'
 }
 
+cleanup_container() {
+  local name="$1" output inspect_status
+  output="$(timeout --signal=TERM --kill-after=1s 10s docker inspect "$name" 2>&1)"
+  inspect_status=$?
+  if (( inspect_status == 0 )); then
+    timeout --signal=TERM --kill-after=1s 10s docker rm -f "$name" >/dev/null 2>&1 || return 1
+    output="$(timeout --signal=TERM --kill-after=1s 10s docker inspect "$name" 2>&1)"
+    inspect_status=$?
+  fi
+  (( inspect_status == 1 )) && [[ "$output" == *"No such object"* || "$output" == *"No such container"* ]]
+}
+
+remove_volume_path() {
+  local path="$1" suffix
+  if [[ "$path" != "/downloads/$CHURN_DOWNLOAD_DIR" ]]; then
+    suffix="${path#"/downloads/$CHURN_DOWNLOAD_DIR/"}"
+    [[ "$suffix" =~ ^([0-9]+|public/[0-9]+)$ ]] || return 2
+  fi
+  # These single-quoted commands are interpreted inside the Alpine container.
+  # shellcheck disable=SC2016
+  timeout --signal=TERM --kill-after=1s 30s \
+    docker run --rm -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.20 sh -c 'rm -rf -- "$1"' sh "$path" >/dev/null 2>&1 || return 1
+  # shellcheck disable=SC2016
+  if timeout --signal=TERM --kill-after=1s 30s \
+    docker run --rm -v "$DOWNLOADS_VOLUME:/downloads:ro" alpine:3.20 sh -c 'test ! -e "$1"' sh "$path" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
+# shellcheck disable=SC2329 # Called by cleanup, which is installed as an EXIT trap.
+finalize_report() {
+  [[ "$FINALIZED" == "1" ]] && return 0
+  FINALIZED="1"
+  report_append $'\n## Cleanup\n\n| Check | Result | Detail |\n|---|---|---|\n' || status="FAIL"
+  if (( ${#cleanup_failures[@]} == 0 )); then
+    mark "task resources removed" "PASS" "category, named containers, and run-scoped volume directory verified clean" || status="FAIL"
+  else
+    local detail
+    detail="$(IFS=', '; echo "${cleanup_failures[*]}")"
+    mark "task resource cleanup" "FAIL" "$detail" || status="FAIL"
+  fi
+  [[ "$REPORT_WRITE_FAILED" == "1" ]] && status="FAIL"
+  report_append $'\nOverall status: '"$status"$'\n' || status="FAIL"
+  printf '%s\n' "$OUT"
+}
+
+# shellcheck disable=SC2329 # Called by the EXIT/INT/TERM/HUP traps.
 cleanup() {
+  local original_exit=$? name
+  trap - EXIT INT TERM HUP
+  set +e
+  if (( original_exit != 0 )); then
+    status="FAIL"
+  fi
   capture_failure_diagnostics
-  if [[ -s "$COOKIE_JAR" ]]; then
-    delete_category_torrents || true
+  if [[ "$TNG_AUTHENTICATED" == "1" ]] && ! delete_category_torrents; then
+    cleanup_failures+=("could not confirm removal of category $CATEGORY")
   fi
-  if ((${#seeders[@]} > 0)); then
-    for seeder in "${seeders[@]}"; do
-      docker rm -f "$seeder" >/dev/null 2>&1 || true
-    done
+  if [[ "$DOCKER_RESOURCES_ATTEMPTED" == "1" ]]; then
+    if ! timeout --signal=TERM --kill-after=1s 5s docker info >/dev/null 2>&1; then
+      cleanup_failures+=("Docker daemon unavailable; task containers and volume directory could not be verified")
+    else
+      for name in "${seeders[@]}" "$FILESERVER_NAME" "$TRACKER_NAME"; do
+        [[ -n "$name" ]] || continue
+        if ! cleanup_container "$name"; then
+          cleanup_failures+=("container $name remains or could not be verified absent")
+        fi
+      done
+      if ! remove_volume_path "/downloads/$CHURN_DOWNLOAD_DIR"; then
+        cleanup_failures+=("volume path /downloads/$CHURN_DOWNLOAD_DIR remains or could not be verified absent")
+      fi
+    fi
   fi
-  docker rm -f "$FILESERVER_NAME" "$TRACKER_NAME" >/dev/null 2>&1 || true
-  docker run --rm -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.20 \
-    sh -c "rm -rf -- /downloads/$CHURN_DOWNLOAD_DIR" >/dev/null 2>&1 || true
-  rm -f -- "$COOKIE_JAR" "$BODY" "$AUTH_BODY_FILE"
+  for name in "$COOKIE_JAR" "$BODY" "$AUTH_BODY_FILE"; do
+    [[ -n "$name" ]] || continue
+    if ! rm -f -- "$name" || [[ -e "$name" ]]; then
+      cleanup_failures+=("temporary file $name remains")
+    fi
+  done
+  if (( original_exit != 0 )) && [[ "$status" == "PASS" ]]; then
+    status="FAIL"
+  fi
+  finalize_report
+  if [[ "$status" == "FAIL" || "$REPORT_WRITE_FAILED" == "1" || $original_exit -ne 0 ]]; then
+    exit 1
+  fi
+  exit 0
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
 tng_write_qbit_login_body "$TNG_API_TOKEN" "$AUTH_BODY_FILE"
 
 http_code() {
   local url="$1"
   shift || true
-  curl -q -sS --noproxy "*" -o "$BODY" -w '%{http_code}' "$@" "$url" || true
+  curl -q -sS --noproxy "*" --connect-timeout 3 --max-time 10 \
+    -o "$BODY" -w '%{http_code}' "$@" "$url" || true
+}
+
+bounded_command() {
+  timeout --signal=TERM --kill-after=1s "${DOCKER_COMMAND_TIMEOUT_SECS}s" "$@"
+}
+
+bounded_for_deadline() {
+  local deadline="$1" remaining
+  shift
+  remaining=$((deadline - SECONDS))
+  (( remaining > 0 )) || return 124
+  timeout --signal=TERM --kill-after=1s "${remaining}s" "$@"
 }
 
 wait_for_container_dns() {
   local hostname="$1"
   local deadline=$((SECONDS + READY_TIMEOUT_SECS))
   while (( SECONDS < deadline )); do
-    if docker exec "$TNG_CONTAINER" getent hosts "$hostname" >/dev/null 2>&1; then
+    if bounded_for_deadline "$deadline" docker exec "$TNG_CONTAINER" getent hosts "$hostname" >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
@@ -158,8 +266,10 @@ wait_for_container_dns() {
 
 container_http_code() {
   local url="$1"
-  docker exec "$TNG_CONTAINER" curl -q -sS --noproxy "*" --max-time 2 \
-    -o /dev/null -w '%{http_code}' "$url" 2>/dev/null || true
+  local deadline="$2"
+  bounded_for_deadline "$deadline" docker exec "$TNG_CONTAINER" curl -q -sS --noproxy "*" \
+    --connect-timeout 1 --max-time 2 -o /dev/null -w '%{http_code}' "$url" 2>/dev/null || printf '000'
+  return 0
 }
 
 wait_for_container_http_status() {
@@ -168,7 +278,7 @@ wait_for_container_http_status() {
   local deadline=$((SECONDS + READY_TIMEOUT_SECS))
   local code
   while (( SECONDS < deadline )); do
-    code="$(container_http_code "$url")"
+    code="$(container_http_code "$url" "$deadline")"
     if [[ "$code" == "$expected" ]]; then
       return 0
     fi
@@ -182,7 +292,7 @@ wait_for_container_http_response() {
   local deadline=$((SECONDS + READY_TIMEOUT_SECS))
   local code
   while (( SECONDS < deadline )); do
-    code="$(container_http_code "$url")"
+    code="$(container_http_code "$url" "$deadline")"
     if [[ "$code" =~ ^[1-5][0-9]{2}$ ]]; then
       return 0
     fi
@@ -196,9 +306,9 @@ wait_for_seeder_listener() {
   local deadline=$((SECONDS + READY_TIMEOUT_SECS))
   local state logs
   while (( SECONDS < deadline )); do
-    state="$(docker inspect --format '{{.State.Status}}' "$container" 2>/dev/null || true)"
+    state="$(bounded_for_deadline "$deadline" docker inspect --format '{{.State.Status}}' "$container" 2>/dev/null || true)"
     if [[ "$state" == "running" ]]; then
-      logs="$(docker logs "$container" 2>&1 || true)"
+      logs="$(bounded_for_deadline "$deadline" docker logs --tail 100 "$container" 2>&1 || true)"
       if [[ "$logs" == *"Listening to incoming peer connections"* ]]; then
         return 0
       fi
@@ -210,7 +320,7 @@ wait_for_seeder_listener() {
 
 torrent_info_hash() {
   local torrent_path="$1"
-  docker exec "$TNG_CONTAINER" cat "$torrent_path" | python3 -c '
+  bounded_command docker exec "$TNG_CONTAINER" cat "$torrent_path" | python3 -c '
 import hashlib, sys
 data = sys.stdin.buffer.read()
 
@@ -252,9 +362,11 @@ else:
 
 tracker_complete_count() {
   local info_hash="$1"
+  local deadline="$2"
   local encoded_hash
   encoded_hash="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote_from_bytes(bytes.fromhex(sys.argv[1]), safe=""))' "$info_hash")"
-  docker exec "$TNG_CONTAINER" curl -q -sS --noproxy "*" --max-time 2 \
+  bounded_for_deadline "$deadline" docker exec "$TNG_CONTAINER" curl -q -sS --noproxy "*" \
+    --connect-timeout 1 --max-time 2 \
     "http://$TRACKER_NAME:6969/scrape?info_hash=$encoded_hash" 2>/dev/null \
     | python3 -c '
 import sys
@@ -296,7 +408,7 @@ wait_for_tracker_seed() {
   local deadline=$((SECONDS + READY_TIMEOUT_SECS))
   local count
   while (( SECONDS < deadline )); do
-    count="$(tracker_complete_count "$info_hash")"
+    count="$(tracker_complete_count "$info_hash" "$deadline")"
     if [[ "$count" =~ ^[0-9]+$ ]] && (( count >= 1 )); then
       return 0
     fi
@@ -307,7 +419,9 @@ wait_for_tracker_seed() {
 
 runtime_owner() {
   local owner
-  owner="$(docker exec "$TNG_CONTAINER" sh -lc '
+  # The single-quoted program is interpreted by the container's shell.
+  # shellcheck disable=SC2016
+  owner="$(bounded_command docker exec "$TNG_CONTAINER" sh -lc '
 for status in /proc/[0-9]*/status; do
   [ -r "$status" ] || continue
   name="$(awk "/^Name:/ {print \$2; exit}" "$status")"
@@ -321,7 +435,9 @@ done
 }
 
 rss_mb() {
-  docker exec "$TNG_CONTAINER" sh -lc '
+  # The single-quoted program is interpreted by the container's shell.
+  # shellcheck disable=SC2016
+  bounded_command docker exec "$TNG_CONTAINER" sh -lc '
 for status in /proc/[0-9]*/status; do
   [ -r "$status" ] || continue
   name="$(awk "/^Name:/ {print \$2; exit}" "$status")"
@@ -334,42 +450,93 @@ exit 1
 }
 
 delete_category_torrents() {
-  local hashes
-  hashes="$(curl -q -sS --noproxy "*" -b "$COOKIE_JAR" "$TNG_HOST_URL/api/qb/v2/torrents/info?category=$CATEGORY" \
-    | jq -r '.[].hash' | paste -sd '|' -)"
-  if [[ -n "$hashes" ]]; then
-    curl -q -sS --noproxy "*" -b "$COOKIE_JAR" -X POST \
-      -d "hashes=$hashes" \
-      -d "deleteFiles=true" \
-      "$TNG_HOST_URL/api/qb/v2/torrents/delete" >/dev/null || true
-  fi
-  return 0
+  local code hashes deadline
+  code="$(curl -q -sS --noproxy "*" --connect-timeout 2 --max-time 5 -b "$COOKIE_JAR" \
+    -o "$BODY" -w '%{http_code}' \
+    "$TNG_HOST_URL/api/qb/v2/torrents/info?category=$CATEGORY")" || return 1
+  [[ "$code" == "200" ]] || return 1
+  jq -e 'type == "array"' "$BODY" >/dev/null 2>&1 || return 1
+  hashes="$(python3 "$ROOT/scripts/transfer_churn_validation.py" category-hashes < "$BODY")" || return 1
+  [[ "$hashes" != "EMPTY" ]] || return 0
+
+  code="$(curl -q -sS --noproxy "*" --connect-timeout 2 --max-time 5 -b "$COOKIE_JAR" \
+    -X POST -d "hashes=$hashes" -d "deleteFiles=true" \
+    -o "$BODY" -w '%{http_code}' "$TNG_HOST_URL/api/qb/v2/torrents/delete")" || return 1
+  [[ "$code" == "200" ]] || return 1
+
+  deadline=$((SECONDS + 15))
+  while (( SECONDS < deadline )); do
+    code="$(curl -q -sS --noproxy "*" --connect-timeout 2 --max-time 5 -b "$COOKIE_JAR" \
+      -o "$BODY" -w '%{http_code}' \
+      "$TNG_HOST_URL/api/qb/v2/torrents/info?category=$CATEGORY")" || return 1
+    if [[ "$code" == "200" ]] && jq -e 'type == "array" and length == 0' "$BODY" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
 }
 
 read_disk_bytes() {
-  local path="$1"
-  docker run --rm -v "$DOWNLOADS_VOLUME:/downloads:ro" alpine:3.20 \
-    sh -lc "if [ -f '$path' ]; then wc -c < '$path'; else printf 0; fi" 2>/dev/null \
-    | tr -d '[:space:]' || echo 0
+  local path="$1" deadline="$2" result
+  # The single-quoted command is interpreted inside the Alpine container.
+  # shellcheck disable=SC2016
+  result="$(bounded_for_deadline "$deadline" docker run --rm -v "$DOWNLOADS_VOLUME:/downloads:ro" alpine:3.20 \
+    sh -c 'if [ -f "$1" ]; then wc -c < "$1"; else printf 0; fi' sh "$path" 2>/dev/null)" || return 1
+  result="$(tr -d '[:space:]' <<<"$result")"
+  [[ "$result" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$result"
+}
+
+read_file_sha256() {
+  local path="$1" deadline="$2" digest
+  digest="$(bounded_for_deadline "$deadline" docker run --rm -v "$DOWNLOADS_VOLUME:/downloads:ro" alpine:3.20 \
+    sha256sum "$path" 2>/dev/null | awk '{print $1}')" || return 1
+  [[ "$digest" =~ ^[[:xdigit:]]{64}$ ]] || return 1
+  printf '%s\n' "$digest"
 }
 
 wait_for_completion() {
   local name="$1"
   local path="$2"
   local bytes="$3"
+  local expected_sha256="$4"
+  local deadline=$((SECONDS + TRANSFER_TIMEOUT_SECS))
+  while (( SECONDS < deadline )); do
+    local row observed actual_sha256
+    row="$(bounded_for_deadline "$deadline" curl -q -sS --noproxy "*" --connect-timeout 2 --max-time 5 \
+      -b "$COOKIE_JAR" "$TNG_HOST_URL/api/qb/v2/torrents/info?category=$CATEGORY" \
+      | jq -c --arg name "$name" '.[] | select(.name==$name)' | head -1 || true)"
+    if [[ -n "$row" ]] && jq -e --argjson bytes "$bytes" \
+      '(.progress >= 1) and (.downloaded >= $bytes)' <<<"$row" >/dev/null 2>&1; then
+      observed="$(read_disk_bytes "$path" "$deadline")" || observed=""
+      if [[ "$observed" == "$bytes" ]]; then
+        actual_sha256="$(read_file_sha256 "$path" "$deadline")" || actual_sha256=""
+        if [[ -n "$actual_sha256" ]] && printf '%s\n' "$row" | \
+          python3 "$ROOT/scripts/transfer_churn_validation.py" complete \
+            --expected-bytes "$bytes" --disk-bytes "$observed" \
+            --expected-sha256 "$expected_sha256" --actual-sha256 "$actual_sha256"; then
+          printf '%s' "$row"
+          return 0
+        fi
+      fi
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+wait_for_public_transfer() {
   local deadline=$((SECONDS + TRANSFER_TIMEOUT_SECS))
   while (( SECONDS < deadline )); do
     local row
-    row="$(curl -q -sS --noproxy "*" -b "$COOKIE_JAR" "$TNG_HOST_URL/api/qb/v2/torrents/info?category=$CATEGORY" \
-      | jq -c --arg name "$name" '.[] | select(.name==$name)' | head -1 || true)"
-    if [[ -n "$row" && "$(jq -r '.progress >= 1' <<<"$row")" == "true" ]]; then
+    row="$(bounded_for_deadline "$deadline" curl -q -sS --noproxy "*" --connect-timeout 2 --max-time 5 \
+      -b "$COOKIE_JAR" "$TNG_HOST_URL/api/qb/v2/torrents/info?category=$CATEGORY" \
+      | jq -c '.[0] // empty' || true)"
+    if [[ -n "$row" ]] && printf '%s\n' "$row" | \
+      python3 "$ROOT/scripts/transfer_churn_validation.py" public \
+        --minimum-downloaded-bytes "$MIN_PUBLIC_DOWNLOADED_BYTES"; then
       printf '%s' "$row"
-      return 0
-    fi
-    local observed
-    observed="$(read_disk_bytes "$path")"
-    if [[ "$observed" == "$bytes" ]]; then
-      printf '{"progress":1,"downloaded":%s}' "$observed"
       return 0
     fi
     sleep 2
@@ -377,72 +544,77 @@ wait_for_completion() {
   return 1
 }
 
-{
-  echo "# TorrentNG Transfer Churn Soak"
-  echo
-  echo "- Date UTC: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  echo "- TorrentNG URL: $TNG_HOST_URL"
-  echo "- Docker network: $COMPOSE_NETWORK"
-  echo "- Downloads volume: $DOWNLOADS_VOLUME"
-  echo "- Local cycles: $CHURN_CYCLES"
-  echo "- Fixture bytes per cycle: $FIXTURE_BYTES"
-  echo "- Public Linux torrent cycles: $PUBLIC_CYCLES"
-  [[ "$PUBLIC_CYCLES" != "0" ]] && echo "- Public torrent URL: $PUBLIC_TORRENT_URL"
-  echo "- Transfer timeout seconds: $TRANSFER_TIMEOUT_SECS"
-  echo "- Max RSS MB: $MAX_RSS_MB"
-  echo
-  echo "## Checks"
-  echo
-  echo "| Check | Result | Detail |"
-  echo "|---|---|---|"
-} > "$OUT"
+report_header="# TorrentNG Transfer Churn Soak
+
+- Date UTC: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+- Run ID: $FIXTURE_ID
+- TorrentNG URL: $TNG_HOST_URL
+- Docker network: $COMPOSE_NETWORK
+- Downloads volume: $DOWNLOADS_VOLUME
+- Local cycles: $CHURN_CYCLES
+- Fixture bytes per cycle: $FIXTURE_BYTES
+- Public Linux torrent cycles: $PUBLIC_CYCLES"
+if [[ "$PUBLIC_CYCLES" != "0" ]]; then
+  report_header+=$'\n- Public torrent URL: '"$PUBLIC_TORRENT_URL"
+  report_header+=$'\n- Minimum public payload bytes: '"$MIN_PUBLIC_DOWNLOADED_BYTES"
+fi
+report_header+=$'\n- Transfer timeout seconds: '"$TRANSFER_TIMEOUT_SECS"
+report_header+=$'\n- Readiness timeout seconds: '"$READY_TIMEOUT_SECS"
+report_header+=$'\n- Docker command timeout seconds: '"$DOCKER_COMMAND_TIMEOUT_SECS"
+report_header+=$'\n- Max RSS MB: '"$MAX_RSS_MB"
+report_header+=$'\n\n## Checks\n\n| Check | Result | Detail |\n|---|---|---|\n'
+if ! report_create "$report_header"; then
+  exit 1
+fi
 
 code="$(http_code "$TNG_HOST_URL/api/qb/v2/auth/login" -X POST --data-binary "@$AUTH_BODY_FILE" -c "$COOKIE_JAR")"
 if [[ "$code" == "200" && "$(cat "$BODY")" == "Ok." ]]; then
+  TNG_AUTHENTICATED="1"
   mark "qBit auth" "PASS" "session cookie accepted"
 else
   mark "qBit auth" "FAIL" "HTTP $code body=$(tr '\n' ' ' <"$BODY")"
-  echo >> "$OUT"; echo "Overall status: $status" >> "$OUT"; echo "$OUT"; exit 1
+  exit 1
 fi
 
-delete_category_torrents
+if ! delete_category_torrents; then
+  mark "initial category cleanup" "FAIL" "could not verify the run-scoped category is empty"
+  exit 1
+fi
 
-docker run -d --name "$TRACKER_NAME" --network "$COMPOSE_NETWORK" alpine:3.20 \
+DOCKER_RESOURCES_ATTEMPTED="1"
+bounded_command docker run -d --label "com.torrentng.transfer-churn.run=$FIXTURE_ID" \
+  --name "$TRACKER_NAME" --network "$COMPOSE_NETWORK" alpine:3.20 \
   sh -lc 'apk add --no-cache opentracker >/dev/null && exec opentracker -i 0.0.0.0 -p 6969 -P 6969' >/dev/null
 if wait_for_container_dns "$TRACKER_NAME" \
   && wait_for_container_http_response "http://$TRACKER_NAME:6969/announce"; then
   mark "local tracker" "PASS" "DNS and HTTP ready at http://$TRACKER_NAME:6969/announce"
 else
   mark "local tracker" "FAIL" "DNS/HTTP readiness timed out after ${READY_TIMEOUT_SECS}s"
-  echo >> "$OUT"; echo "Overall status: $status" >> "$OUT"; echo "$OUT"; exit 1
+  exit 1
 fi
 
 APP_RUNTIME_OWNER="$(runtime_owner)" || {
   mark "app runtime identity" "FAIL" "could not read torrentngd UID/GID from the container"
-  echo >> "$OUT"; echo "Overall status: $status" >> "$OUT"; echo "$OUT"; exit 1
+  exit 1
 }
 mark "app runtime identity" "PASS" "torrentngd runs as $APP_RUNTIME_OWNER"
 
-docker run --rm -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.20 \
-  sh -c "mkdir -p -- /downloads/$CHURN_DOWNLOAD_DIR"
+# The single-quoted command is interpreted inside the Alpine container.
+# shellcheck disable=SC2016
+bounded_command docker run --rm -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.20 sh -c 'mkdir -p -- "$1"' sh "/downloads/$CHURN_DOWNLOAD_DIR"
 
-docker run -d --name "$FILESERVER_NAME" --network "$COMPOSE_NETWORK" -v "$DOWNLOADS_VOLUME:/downloads:ro" alpine:3.20 \
+bounded_command docker run -d --label "com.torrentng.transfer-churn.run=$FIXTURE_ID" \
+  --name "$FILESERVER_NAME" --network "$COMPOSE_NETWORK" -v "$DOWNLOADS_VOLUME:/downloads:ro" alpine:3.20 \
   sh -lc "apk add --no-cache busybox-extras >/dev/null && exec httpd -f -p 8081 -h /downloads/$CHURN_DOWNLOAD_DIR" >/dev/null
 if wait_for_container_dns "$FILESERVER_NAME" \
   && wait_for_container_http_response "http://$FILESERVER_NAME:8081/"; then
   mark "fixture file server" "PASS" "DNS and HTTP ready at http://$FILESERVER_NAME:8081/"
 else
   mark "fixture file server" "FAIL" "DNS/HTTP readiness timed out after ${READY_TIMEOUT_SECS}s"
-  echo >> "$OUT"; echo "Overall status: $status" >> "$OUT"; echo "$OUT"; exit 1
+  exit 1
 fi
 
-{
-  echo
-  echo "## Transfer Cycles"
-  echo
-  echo "| Cycle | Type | Seeder tracked | Add HTTP | Progress | Downloaded | RSS MB | Result |"
-  echo "|---:|---|---|---:|---:|---:|---:|---|"
-} >> "$OUT"
+report_append $'\n## Transfer Cycles\n\n| Cycle | Type | Seeder tracked | Add HTTP | Progress | Downloaded | Payload SHA-256 | RSS MB | Result |\n|---:|---|---|---:|---:|---:|---|---:|---|\n'
 
 max_rss="0"
 for cycle in $(seq 1 "$CHURN_CYCLES"); do
@@ -451,7 +623,7 @@ for cycle in $(seq 1 "$CHURN_CYCLES"); do
   seeder="tng-churn-seeder-$FIXTURE_ID-$cycle"
   seeders+=("$seeder")
 
-  docker run --rm --network "$COMPOSE_NETWORK" -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.20 sh -lc "
+  bounded_command docker run --rm --network "$COMPOSE_NETWORK" -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.20 sh -lc "
     set -e
     apk add --no-cache mktorrent >/dev/null
     mkdir -p /downloads/$CHURN_DOWNLOAD_DIR/$cycle/seed /downloads/$CHURN_DOWNLOAD_DIR/$cycle/leech
@@ -460,7 +632,14 @@ for cycle in $(seq 1 "$CHURN_CYCLES"); do
     mktorrent -a http://$TRACKER_NAME:6969/announce -o /downloads/$CHURN_DOWNLOAD_DIR/$cycle/$torrent /downloads/$CHURN_DOWNLOAD_DIR/$cycle/seed/$name >/dev/null
   "
 
-  docker run -d --name "$seeder" --network "$COMPOSE_NETWORK" -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.20 \
+  seed_path="/downloads/$CHURN_DOWNLOAD_DIR/$cycle/seed/$name"
+  expected_sha256="$(read_file_sha256 "$seed_path" "$((SECONDS + DOCKER_COMMAND_TIMEOUT_SECS))")" || {
+    mark "local fixture source hash" "FAIL" "could not hash generated seeder payload"
+    exit 1
+  }
+
+  bounded_command docker run -d --label "com.torrentng.transfer-churn.run=$FIXTURE_ID" \
+    --name "$seeder" --network "$COMPOSE_NETWORK" -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.20 \
     sh -lc "apk add --no-cache transmission-cli >/dev/null && exec transmission-cli -M -et -w /downloads/$CHURN_DOWNLOAD_DIR/$cycle/seed /downloads/$CHURN_DOWNLOAD_DIR/$cycle/$torrent" >/dev/null
 
   fixture_url="http://$FILESERVER_NAME:8081/$cycle/$torrent"
@@ -470,7 +649,7 @@ for cycle in $(seq 1 "$CHURN_CYCLES"); do
     && info_hash="$(torrent_info_hash "$torrent_path")" \
     && wait_for_tracker_seed "$info_hash"; then
     seeder_tracked="PASS"
-    code="$(curl -q -sS --noproxy "*" -o "$BODY" -w '%{http_code}' -b "$COOKIE_JAR" \
+    code="$(curl -q -sS --noproxy "*" --connect-timeout 3 --max-time 10 -o "$BODY" -w '%{http_code}' -b "$COOKIE_JAR" \
       -F "urls=$fixture_url" \
       -F "savepath=/data/$CHURN_DOWNLOAD_DIR/$cycle/leech" \
       -F "category=$CATEGORY" \
@@ -483,50 +662,73 @@ for cycle in $(seq 1 "$CHURN_CYCLES"); do
 
   progress="0"
   downloaded="0"
+  payload_hash="NOT VERIFIED"
   result="FAIL"
-  if [[ "$code" == "200" && "$(cat "$BODY")" == "Ok." ]] && row="$(wait_for_completion "$name" "/downloads/$CHURN_DOWNLOAD_DIR/$cycle/leech/$name" "$FIXTURE_BYTES")"; then
+  if [[ "$code" == "200" && "$(cat "$BODY")" == "Ok." ]] && \
+    row="$(wait_for_completion "$name" "/downloads/$CHURN_DOWNLOAD_DIR/$cycle/leech/$name" "$FIXTURE_BYTES" "$expected_sha256")"; then
     progress="$(jq -r '.progress' <<<"$row")"
     downloaded="$(jq -r '.downloaded' <<<"$row")"
+    payload_hash="MATCH"
     result="PASS"
   fi
 
   rss="$(rss_mb)"
   awk -v a="$rss" -v b="$max_rss" 'BEGIN {exit !(a > b)}' && max_rss="$rss"
-  printf '| %s | local fixture | %s | %s | %s | %s | %s | %s |\n' \
-    "$cycle" "$seeder_tracked" "$code" "$progress" "$downloaded" "$rss" "$result" >> "$OUT"
+  printf -v cycle_record '| %s | local fixture | %s | %s | %s | %s | %s | %s | %s |\n' \
+    "$cycle" "$seeder_tracked" "$code" "$progress" "$downloaded" "$payload_hash" "$rss" "$result"
+  report_append "$cycle_record"
   if [[ "$result" != "PASS" ]]; then
     status="FAIL"
     capture_failure_diagnostics
   fi
 
-  delete_category_torrents
-  docker rm -f "$seeder" >/dev/null 2>&1 || true
-  docker run --rm -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.20 \
-    sh -c "rm -rf -- /downloads/$CHURN_DOWNLOAD_DIR/$cycle" >/dev/null 2>&1 || true
+  if ! delete_category_torrents; then
+    mark "cycle $cycle cleanup" "FAIL" "could not confirm removal of the run-scoped torrent"
+    exit 1
+  fi
+  if ! cleanup_container "$seeder"; then
+    mark "cycle $cycle cleanup" "FAIL" "could not remove seeder container $seeder"
+    exit 1
+  fi
+  if ! remove_volume_path "/downloads/$CHURN_DOWNLOAD_DIR/$cycle"; then
+    mark "cycle $cycle cleanup" "FAIL" "could not remove the cycle payload directory"
+    exit 1
+  fi
+  seeders=()
 done
 
 for cycle in $(seq 1 "$PUBLIC_CYCLES"); do
-  code="$(curl -q -sS --noproxy "*" -o "$BODY" -w '%{http_code}' -b "$COOKIE_JAR" \
+  code="$(curl -q -sS --noproxy "*" --connect-timeout 3 --max-time 10 -o "$BODY" -w '%{http_code}' -b "$COOKIE_JAR" \
     -F "urls=$PUBLIC_TORRENT_URL" \
     -F "savepath=/data/$CHURN_DOWNLOAD_DIR/public/$cycle" \
     -F "category=$CATEGORY" \
     -F "stopped=false" \
     "$TNG_HOST_URL/api/qb/v2/torrents/add" || true)"
-  sleep 10
-  row="$(curl -q -sS --noproxy "*" -b "$COOKIE_JAR" "$TNG_HOST_URL/api/qb/v2/torrents/info?category=$CATEGORY" | jq -c '.[0] // empty' || true)"
-  progress="$(jq -r '.progress // 0' <<<"${row:-{}}")"
-  downloaded="$(jq -r '.downloaded // 0' <<<"${row:-{}}")"
+  progress="0"
+  downloaded="0"
+  result="FAIL"
+  if [[ "$code" == "200" && "$(cat "$BODY")" == "Ok." ]] && row="$(wait_for_public_transfer)"; then
+    progress="$(jq -r '.progress' <<<"$row")"
+    downloaded="$(jq -r '.downloaded' <<<"$row")"
+    result="PASS"
+  fi
   rss="$(rss_mb)"
   awk -v a="$rss" -v b="$max_rss" 'BEGIN {exit !(a > b)}' && max_rss="$rss"
-  result="$([[ "$code" == "200" && -n "$row" ]] && echo PASS || echo FAIL)"
-  printf '| %s | public Linux torrent | %s | %s | %s | %s | %s |\n' "$cycle" "$code" "$progress" "$downloaded" "$rss" "$result" >> "$OUT"
+  printf -v cycle_record '| %s | public Linux torrent | N/A | %s | %s | %s | N/A | %s | %s |\n' \
+    "$cycle" "$code" "$progress" "$downloaded" "$rss" "$result"
+  report_append "$cycle_record"
   if [[ "$result" != "PASS" ]]; then
     status="FAIL"
     capture_failure_diagnostics
   fi
-  delete_category_torrents
-  docker run --rm -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.20 \
-    sh -c "rm -rf -- /downloads/$CHURN_DOWNLOAD_DIR/public/$cycle" >/dev/null 2>&1 || true
+  if ! delete_category_torrents; then
+    mark "public cycle $cycle cleanup" "FAIL" "could not confirm removal of the run-scoped torrent"
+    exit 1
+  fi
+  if ! remove_volume_path "/downloads/$CHURN_DOWNLOAD_DIR/public/$cycle"; then
+    mark "public cycle $cycle cleanup" "FAIL" "could not remove the cycle payload directory"
+    exit 1
+  fi
 done
 
 if awk -v rss="$max_rss" -v limit="$MAX_RSS_MB" 'BEGIN {exit !(rss <= limit)}'; then
@@ -535,10 +737,4 @@ else
   mark "memory ceiling" "FAIL" "torrentngd process high-water RSS ${max_rss}MB > ${MAX_RSS_MB}MB"
 fi
 
-{
-  echo
-  echo "Overall status: $status"
-} >> "$OUT"
-
-echo "$OUT"
-[[ "$status" == "PASS" ]]
+exit 0
