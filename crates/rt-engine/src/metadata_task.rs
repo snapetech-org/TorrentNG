@@ -455,6 +455,7 @@ pub async fn run_metadata_task(
                                     &task_tx,
                                     &info_hash_hex,
                                     &trackers,
+                                    None,
                                     info,
                                 )
                                 .await,
@@ -507,6 +508,7 @@ pub async fn run_metadata_task(
                                     &task_tx,
                                     &info_hash_hex,
                                     &trackers,
+                                    None,
                                     info,
                                 )
                                 .await,
@@ -1036,7 +1038,16 @@ async fn try_fetch_from_peers(
     while let Some((peer, result)) = in_flight.next().await {
         match result {
             Ok(info) => {
-                if complete_metadata(engine_tx, task_tx, info_hash_hex, trackers, info).await {
+                if complete_metadata(
+                    engine_tx,
+                    task_tx,
+                    info_hash_hex,
+                    trackers,
+                    Some(peer),
+                    info,
+                )
+                .await
+                {
                     return true;
                 }
             }
@@ -1276,6 +1287,7 @@ async fn complete_metadata(
     task_tx: &mpsc::Sender<TorrentCmd>,
     info_hash_hex: &str,
     trackers: &[String],
+    metadata_peer: Option<SocketAddr>,
     fetched: FetchedMetadata,
 ) -> bool {
     let FetchedMetadata {
@@ -1303,6 +1315,7 @@ async fn complete_metadata(
             info_hash: info_hash_hex.to_owned(),
             raw,
             metadata_memory_lease,
+            metadata_peer,
             source: task_tx.clone(),
         },
         "metadata_completion",
@@ -3453,8 +3466,14 @@ mod tests {
         );
         let cmd = engine_rx.recv().await.unwrap();
         match cmd {
-            EngineCmd::CompleteMagnet { info_hash, raw, .. } => {
+            EngineCmd::CompleteMagnet {
+                info_hash,
+                raw,
+                metadata_peer,
+                ..
+            } => {
                 assert_eq!(info_hash, info_hash_hex);
+                assert_eq!(metadata_peer, Some(peer_addr));
                 let parsed = rt_metainfo::parse_torrent(&raw).unwrap();
                 assert_eq!(parsed.name(), "test");
             }
@@ -3650,6 +3669,7 @@ mod tests {
                 &task_tx,
                 &info_hash,
                 &trackers,
+                None,
                 FetchedMetadata {
                     bytes: info,
                     piece_layers: Vec::new(),

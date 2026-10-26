@@ -2725,6 +2725,7 @@ impl Engine {
                 info_hash,
                 raw,
                 metadata_memory_lease,
+                metadata_peer,
                 source,
             } => {
                 if !self.metadata_task_is_current(&info_hash, &source) {
@@ -2820,6 +2821,7 @@ impl Engine {
                             metadata_memory_lease,
                             parse_memory_lease,
                             completion_guard,
+                            metadata_peer,
                             source,
                         },
                         "magnet_metadata_parse_completion",
@@ -2861,6 +2863,7 @@ impl Engine {
                 metadata_memory_lease,
                 parse_memory_lease,
                 completion_guard,
+                metadata_peer,
                 source,
             } => {
                 if !self.metadata_task_is_current(&info_hash, &source) {
@@ -2883,6 +2886,7 @@ impl Engine {
                                 metadata_memory_lease,
                                 parse_memory_lease,
                                 completion_guard,
+                                metadata_peer,
                                 source,
                             ),
                         Ok(()) => {
@@ -2915,6 +2919,7 @@ impl Engine {
                             metadata_memory_lease,
                             parse_memory_lease,
                             completion_guard,
+                            metadata_peer,
                             source,
                         );
                     }
@@ -2939,6 +2944,7 @@ impl Engine {
                 metadata_memory_lease,
                 parse_memory_lease,
                 completion_guard,
+                metadata_peer,
                 source,
             } => {
                 if !self.metadata_task_is_current(&info_hash, &source) {
@@ -2962,7 +2968,12 @@ impl Engine {
                         let mut retry_meta = Some(meta);
                         let mut retry_blob = staged_blob;
                         let result = self
-                            .complete_magnet_persisted(&info_hash, &mut retry_meta, &mut retry_blob)
+                            .complete_magnet_persisted(
+                                &info_hash,
+                                &mut retry_meta,
+                                &mut retry_blob,
+                                metadata_peer,
+                            )
                             .await;
                         (retry_meta, retry_blob, result)
                     }
@@ -2989,6 +3000,7 @@ impl Engine {
                                 metadata_memory_lease,
                                 parse_memory_lease,
                                 completion_guard,
+                                metadata_peer,
                                 source.clone(),
                             );
                         }
@@ -16151,6 +16163,7 @@ mod tests {
                 metadata_memory_lease: test_metadata_lease(1),
                 parse_memory_lease: test_metadata_lease(1),
                 completion_guard: try_acquire_engine_magnet_completion_task().unwrap(),
+                metadata_peer: None,
                 source: old_source,
             })
             .await;
@@ -16165,9 +16178,12 @@ mod tests {
         let mut config = Config::default();
         config.storage.download_dir = temp.path().join("downloads");
         config.daemon.session_dir = temp.path().join("session");
+        config.tracker.allow_loopback_egress = true;
         std::fs::create_dir_all(&config.storage.download_dir).unwrap();
         std::fs::create_dir_all(&config.daemon.session_dir).unwrap();
         std::fs::create_dir_all(torrent_blob_dir(&config)).unwrap();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let metadata_peer = listener.local_addr().unwrap();
 
         let conn = Connection::open_in_memory().unwrap();
         rt_db::migrate(&conn).unwrap();
@@ -16270,6 +16286,7 @@ mod tests {
                 metadata_memory_lease: test_metadata_lease(raw.len().saturating_mul(2)),
                 parse_memory_lease: test_metadata_lease(1),
                 completion_guard: try_acquire_engine_magnet_completion_task().unwrap(),
+                metadata_peer: Some(metadata_peer),
                 source,
             })
             .await;
@@ -16288,6 +16305,14 @@ mod tests {
             .await
             .expect("metadata completion retry was not queued")
             .expect("engine command channel closed");
+        let EngineCmd::PreparedMagnetMetadata {
+            metadata_peer: retry_peer,
+            ..
+        } = &retry
+        else {
+            panic!("unexpected command while waiting for metadata retry: {retry:?}");
+        };
+        assert_eq!(*retry_peer, Some(metadata_peer));
         assert!(matches!(retry, EngineCmd::PreparedMagnetMetadata { .. }));
         engine.handle_cmd(retry).await;
 
@@ -16295,6 +16320,14 @@ mod tests {
             .await
             .expect("magnet blob persistence did not complete")
             .expect("engine command channel closed");
+        let EngineCmd::PreparedMagnetBlob {
+            metadata_peer: blob_peer,
+            ..
+        } = &blob_completion
+        else {
+            panic!("unexpected command while waiting for magnet blob: {blob_completion:?}");
+        };
+        assert_eq!(*blob_peer, Some(metadata_peer));
         assert!(matches!(
             blob_completion,
             EngineCmd::PreparedMagnetBlob { .. }
@@ -16307,6 +16340,27 @@ mod tests {
             TorrentState::Downloading
         );
         assert!(engine.runtime.torrent_chans.contains_key(&info_hash));
+        // Manual peers prefer uTP and fall back to TCP after the bounded
+        // three-second uTP connect deadline; this listener exercises the TCP
+        // fallback without mutating process-wide transport settings.
+        let (mut peer_stream, _) = tokio::time::timeout(Duration::from_secs(6), listener.accept())
+            .await
+            .expect("metadata peer was not handed to the active torrent task")
+            .unwrap();
+        let mut handshake = [0; 68];
+        tokio::time::timeout(Duration::from_secs(2), async {
+            tokio::io::AsyncReadExt::read_exact(&mut peer_stream, &mut handshake).await
+        })
+        .await
+        .expect("active torrent task did not send a peer handshake")
+        .unwrap();
+        assert_eq!(
+            rt_peer_wire::Handshake::parse(&handshake)
+                .unwrap()
+                .info_hash,
+            parse_info_hash_hex(&info_hash).unwrap()
+        );
+        drop(peer_stream);
         engine.shutdown_torrent_tasks().await;
     }
 

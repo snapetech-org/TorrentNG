@@ -1330,6 +1330,9 @@ pub(crate) enum EngineCmd {
         info_hash: String,
         raw: Vec<u8>,
         metadata_memory_lease: MemoryLease,
+        /// Outbound peer that supplied the metadata, so the active torrent
+        /// task can continue the transfer after replacing the metadata task.
+        metadata_peer: Option<SocketAddr>,
         source: mpsc::Sender<TorrentCmd>,
     },
     /// Cleanup notification for a detached magnet parser/blob worker whose
@@ -1353,6 +1356,7 @@ pub(crate) enum EngineCmd {
         /// lease is admitted during completion.
         parse_memory_lease: MemoryLease,
         completion_guard: EngineMagnetCompletionGuard,
+        metadata_peer: Option<SocketAddr>,
         source: mpsc::Sender<TorrentCmd>,
     },
     /// Internal completion after the validated magnet blob has been written
@@ -1366,6 +1370,7 @@ pub(crate) enum EngineCmd {
         /// persistent metadata admission.
         parse_memory_lease: MemoryLease,
         completion_guard: EngineMagnetCompletionGuard,
+        metadata_peer: Option<SocketAddr>,
         source: mpsc::Sender<TorrentCmd>,
     },
     /// Internal completion from detached DHT-registration metadata parsing.

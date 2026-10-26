@@ -3049,6 +3049,10 @@ pub struct TorrentTask {
     rate_waiting_peers: HashSet<SocketAddr>,
     shutting_down_peers: bool,
     known_tracker_peers: HashSet<SocketAddr>,
+    /// Explicit peers received while a startup/recovery recheck is draining
+    /// the command queue. They are admitted after the scan instead of being
+    /// silently discarded before the actor reaches its main command loop.
+    deferred_priority_peers: Vec<SocketAddr>,
     /// The cache is pre-sized and its reservation covers the hash table's
     /// bounded capacity for the task lifetime. This prevents tracker, DHT,
     /// PEX, and manual peer churn from growing an ungoverned address cache.
@@ -3466,6 +3470,7 @@ impl TorrentTask {
             rate_waiting_peers: HashSet::new(),
             shutting_down_peers: false,
             known_tracker_peers,
+            deferred_priority_peers: Vec::new(),
             _tracker_peer_cache_memory_lease: tracker_peer_cache_memory_lease,
             last_peerless_reannounce: None,
             egress_policy,
@@ -5187,6 +5192,14 @@ impl TorrentTask {
             .await;
         self.completion_verifying = false;
         self.recheck_subset = None;
+        if !self.paused
+            && matches!(
+                &outcome,
+                RecheckOutcome::Complete | RecheckOutcome::Cancelled
+            )
+        {
+            self.connect_deferred_priority_peers().await;
+        }
         outcome
     }
 
@@ -5712,7 +5725,9 @@ impl TorrentTask {
                     return Some(RecheckOutcome::Cancelled);
                 }
                 Ok(TorrentCmd::NewPeers(_)) => {}
-                Ok(TorrentCmd::PriorityPeers(_)) => {}
+                Ok(TorrentCmd::PriorityPeers(peers)) => {
+                    self.defer_priority_peers(peers);
+                }
                 Ok(TorrentCmd::BanPeer(peer)) => {
                     self.evict_peer(peer).await;
                 }

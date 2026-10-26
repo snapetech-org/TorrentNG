@@ -125,6 +125,42 @@ impl TorrentTask {
         }
     }
 
+    pub(super) fn defer_priority_peers(&mut self, addrs: Vec<SocketAddr>) {
+        let cap = self.peer_capacity();
+        let mut dropped = 0usize;
+        for addr in addrs {
+            if self.deferred_priority_peers.contains(&addr) {
+                continue;
+            }
+            if self.deferred_priority_peers.len() >= cap {
+                dropped = dropped.saturating_add(1);
+                continue;
+            }
+            self.deferred_priority_peers.push(addr);
+        }
+        if dropped > 0 {
+            debug!(
+                component = "peer",
+                operation = "defer_priority",
+                torrent = %self.info_hash_hex,
+                dropped,
+                result = "bounded",
+                "dropping priority peers beyond the torrent's bounded capacity during recheck"
+            );
+        }
+    }
+
+    pub(super) async fn connect_deferred_priority_peers(&mut self) {
+        if self.deferred_priority_peers.is_empty() {
+            return;
+        }
+        let peers = std::mem::take(&mut self.deferred_priority_peers);
+        if self.meta.private {
+            self.remember_tracker_peers(&peers);
+        }
+        self.connect_priority_peers(peers).await;
+    }
+
     pub(super) async fn connect_priority_peers(&mut self, addrs: Vec<SocketAddr>) {
         let mut allowed_addrs = Vec::with_capacity(addrs.len());
         for addr in addrs {

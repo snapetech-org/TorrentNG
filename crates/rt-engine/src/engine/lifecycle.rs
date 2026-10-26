@@ -519,6 +519,7 @@ impl Engine {
         metadata_memory_lease: MemoryLease,
         parse_memory_lease: MemoryLease,
         completion_guard: EngineMagnetCompletionGuard,
+        metadata_peer: Option<SocketAddr>,
         source: mpsc::Sender<TorrentCmd>,
     ) {
         let config = Arc::clone(&self.config);
@@ -553,6 +554,7 @@ impl Engine {
                     metadata_memory_lease,
                     parse_memory_lease,
                     completion_guard,
+                    metadata_peer,
                     source,
                 },
                 "magnet_blob_completion",
@@ -582,6 +584,7 @@ impl Engine {
         metadata_memory_lease: MemoryLease,
         parse_memory_lease: MemoryLease,
         completion_guard: EngineMagnetCompletionGuard,
+        metadata_peer: Option<SocketAddr>,
         source: mpsc::Sender<TorrentCmd>,
     ) {
         let cmd_tx = self.cmd_tx.clone();
@@ -599,6 +602,7 @@ impl Engine {
                     metadata_memory_lease,
                     parse_memory_lease,
                     completion_guard,
+                    metadata_peer,
                     source,
                 },
                 "magnet_metadata_storage_retry",
@@ -625,6 +629,7 @@ impl Engine {
         metadata_memory_lease: MemoryLease,
         parse_memory_lease: MemoryLease,
         completion_guard: EngineMagnetCompletionGuard,
+        metadata_peer: Option<SocketAddr>,
         source: mpsc::Sender<TorrentCmd>,
     ) {
         let cmd_tx = self.cmd_tx.clone();
@@ -643,6 +648,7 @@ impl Engine {
                     metadata_memory_lease,
                     parse_memory_lease,
                     completion_guard,
+                    metadata_peer,
                     source,
                 },
                 "magnet_blob_storage_retry",
@@ -669,6 +675,7 @@ impl Engine {
         info_hash_hex: &str,
         meta: &mut Option<TorrentMeta>,
         staged_blob: &mut Option<PathBuf>,
+        metadata_peer: Option<SocketAddr>,
     ) -> CmdResult<()> {
         if self.runtime.pending_torrent_deletes.contains(info_hash_hex) {
             self.remove_magnet_blob_candidate_best_effort(
@@ -929,6 +936,27 @@ impl Engine {
                 }
             });
         }
+        if !start_paused {
+            if let Some(peer) = metadata_peer {
+                // A fresh torrent actor may still be finishing its startup
+                // recheck. It preserves PriorityPeers received during that
+                // scan and connects them once the payload state is verified.
+                if let Err(error) = self
+                    .send_to_torrent(info_hash_hex, TorrentCmd::PriorityPeers(vec![peer]))
+                    .await
+                {
+                    warn!(
+                        component = "metadata",
+                        operation = "transfer_peer_handoff",
+                        torrent = %info_hash_hex,
+                        peer = %peer,
+                        result = "error",
+                        error = %error,
+                        "metadata peer could not be forwarded to the active torrent task"
+                    );
+                }
+            }
+        }
         if !start_paused && !is_private {
             self.register_dht_torrent(dht_info_hash, info_hash_hex)
                 .await;
@@ -954,7 +982,7 @@ impl Engine {
             .map_err(|error| error.to_string())?;
         let mut meta = Some(meta);
         let mut staged_blob = None;
-        self.complete_magnet_persisted(info_hash_hex, &mut meta, &mut staged_blob)
+        self.complete_magnet_persisted(info_hash_hex, &mut meta, &mut staged_blob, None)
             .await
     }
 
