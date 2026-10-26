@@ -993,7 +993,10 @@ jobs:
               json.dump(metadata, handle, indent=2, sort_keys=True)
               handle.write("\n")
           PY
-          sha256sum "$BUILD_BUNDLE/torrentngd" "$BUILD_BUNDLE/torrentngd-linux-x64.tar.gz" > "$BUILD_BUNDLE/SHA256SUMS"
+          (
+            cd "$BUILD_BUNDLE"
+            sha256sum torrentngd torrentngd-linux-x64.tar.gz > SHA256SUMS
+          )
           {
             printf '## Private candidate artifact\n\n'
             printf -- '- Source SHA: %s\n' "$CANDIDATE_SHA"

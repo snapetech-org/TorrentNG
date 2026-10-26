@@ -132,6 +132,11 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         self.assertIn("cargo build --release --locked -p torrentngd", body)
         self.assertIn("scripts/backend_burndown_native_release_smoke.sh", body)
         self.assertIn("torrentngd-linux-x64.tar.gz", body)
+        self.assertIn('cd "$BUILD_BUNDLE"', body)
+        self.assertIn(
+            "sha256sum torrentngd torrentngd-linux-x64.tar.gz > SHA256SUMS",
+            body,
+        )
         self.assertIn("actions/upload-artifact@", body)
         self.assertIn("retention-days: 30", body)
         self.assertNotIn("gh release", body.lower())
