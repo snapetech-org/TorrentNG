@@ -2037,6 +2037,7 @@ main() {
   require_cmd curl
   require_cmd jq
   require_cmd base64
+  require_cmd aria2c
   validate_local_suite
   validate_protocol_only
   validate_workdir

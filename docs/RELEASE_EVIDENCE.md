@@ -182,6 +182,10 @@ Run Docker client interop:
 scripts/universal_live_certification.sh
 ```
 
+The direct interoperability matrix also requires `aria2c` to inspect torrent
+names, hashes, and sizes. Its preflight checks this command before it starts or
+changes any containers.
+
 Enable public legal torrent downloads only when that is allowed for the release
 environment:
 
