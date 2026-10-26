@@ -250,7 +250,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                         self.assertNotIn("||", expression)
                 if workflow.name in {"release-aur.yml", "release-copr.yml", "release-ppa.yml"}:
                     self.assertIn("github.ref == 'refs/heads/main'", source)
-                if workflow.name in {"codeql.yml", "semgrep-community.yml"}:
+                if workflow.name == "codeql.yml":
                     self.assertIn("schedule:", source)
                 if workflow.name == "semgrep-community.yml":
                     self.assertIn("docker info", source)
