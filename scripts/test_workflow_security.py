@@ -138,13 +138,48 @@ class WorkflowSecurityTests(unittest.TestCase):
 
         self.assertIn("timeout-minutes: 240", public_job)
         self.assertIn('INTEROP_PUBLIC_TIMEOUT_SECS: "7200"', public_job)
-        self.assertIn('INTEROP_PUBLIC_MAX_PARALLEL: "3"', public_job)
+        self.assertIn("max-parallel: 2", public_job)
+        self.assertIn("torrent: [debian, ubuntu, fedora]", public_job)
+        self.assertIn('INTEROP_PUBLIC_MAX_PARALLEL: "1"', public_job)
+        self.assertIn("INTEROP_PUBLIC_ONLY: ${{ matrix.torrent }}", public_job)
         self.assertIn(
-            "INTEROP_WORKDIR: ${{ runner.temp }}/torrentng-interop-${{ github.run_id }}-public",
+            "INTEROP_COMPOSE_PROJECT_NAME: torrentng-qa-${{ github.run_id }}-${{ matrix.torrent }}",
+            public_job,
+        )
+        self.assertIn(
+            "INTEROP_WORKDIR: ${{ runner.temp }}/torrentng-interop-${{ github.run_id }}-public-${{ matrix.torrent }}",
             public_job,
         )
         self.assertIn("ref: ${{ github.sha }}", public_job)
-        self.assertIn("interop-matrix-public-${{ github.run_id }}.md", public_job)
+        self.assertIn(
+            "interop-matrix-public-${{ matrix.torrent }}-${{ github.run_id }}.md",
+            public_job,
+        )
+
+    def test_interop_compose_project_override_is_safe_and_scoped(self) -> None:
+        script = (ROOT / "scripts" / "interop_matrix.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            'COMPOSE_PROJECT_NAME="${INTEROP_COMPOSE_PROJECT_NAME:-torrentng-interop}"',
+            script,
+        )
+        self.assertIn(
+            '[[ ! "$COMPOSE_PROJECT_NAME" =~ ^[a-z0-9][a-z0-9_-]{0,62}$ ]]',
+            script,
+        )
+        self.assertIn(
+            'docker compose --project-name "$COMPOSE_PROJECT_NAME"',
+            script,
+        )
+
+        manifest = (ROOT / "deploy" / "interop" / "public-torrents.toml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            'clients = ["torrentngd", "qbittorrent", "transmission", "deluge", "rtorrent"]',
+            manifest,
+        )
+        self.assertIn('clients = ["torrentngd", "qbittorrent"]', manifest)
+        self.assertIn('clients = ["torrentngd"]', manifest)
 
     def assert_transfer_hardware_runner_is_opt_in_and_main_only(
         self, source: str
@@ -1698,6 +1733,10 @@ class WorkflowSecurityTests(unittest.TestCase):
                         "INTEROP_PROTOCOL_ONLY": "rust-magnet-with-tracker",
                     },
                     "can only be used with INTEROP_LOCAL_SUITE=all or protocol",
+                ),
+                (
+                    {"INTEROP_COMPOSE_PROJECT_NAME": "../unrelated-stack"},
+                    "refusing invalid INTEROP_COMPOSE_PROJECT_NAME",
                 ),
             )
             for index, (overrides, expected_error) in enumerate(cases):

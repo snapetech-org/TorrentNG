@@ -6,6 +6,7 @@ ROOT="$(realpath -- "$(dirname "${BASH_SOURCE[0]}")/..")"
 source "$ROOT/scripts/curl_policy.sh"
 COMPOSE_FILE="$ROOT/deploy/interop/compose.yml"
 PUBLIC_TOML="$ROOT/deploy/interop/public-torrents.toml"
+COMPOSE_PROJECT_NAME="${INTEROP_COMPOSE_PROJECT_NAME:-torrentng-interop}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 WORKDIR_OVERRIDE="${INTEROP_WORKDIR:-}"
 if [[ -n "$WORKDIR_OVERRIDE" && -L "$WORKDIR_OVERRIDE" ]]; then
@@ -16,6 +17,11 @@ WORKDIR="${WORKDIR_OVERRIDE:-$ROOT/certification/interop-runs/$STAMP-$$}"
 WORKDIR="$(realpath -m -- "$WORKDIR")"
 REPORT_DIR="$ROOT/certification/reports"
 REPORT="${INTEROP_REPORT:-$REPORT_DIR/interop-matrix-$STAMP-$$.md}"
+
+if [[ ! "$COMPOSE_PROJECT_NAME" =~ ^[a-z0-9][a-z0-9_-]{0,62}$ ]]; then
+  echo "refusing invalid INTEROP_COMPOSE_PROJECT_NAME: $COMPOSE_PROJECT_NAME" >&2
+  exit 2
+fi
 
 MODE="all"
 LOCAL_SUITE="${INTEROP_LOCAL_SUITE:-all}"
@@ -75,6 +81,7 @@ Environment:
   INTEROP_PUBLIC_MIN_RUST_PEERS=2
   INTEROP_INCLUDE_LIBREOFFICE=1
   INTEROP_PUBLIC_ONLY=debian
+  INTEROP_COMPOSE_PROJECT_NAME=torrentng-interop
   INTEROP_EXTENDED_ONLY=1
   INTEROP_SKIP_BUILD=1
   INTEROP_KEEP_STACK=1
@@ -101,7 +108,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 compose() {
-  INTEROP_WORKDIR="$WORKDIR" docker compose -f "$COMPOSE_FILE" "$@"
+  INTEROP_WORKDIR="$WORKDIR" docker compose --project-name "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" "$@"
 }
 
 log() {

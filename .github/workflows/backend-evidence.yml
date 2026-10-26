@@ -252,10 +252,15 @@ jobs:
           if-no-files-found: warn
 
   public-torrent-interop:
-    name: Public torrent client interop
+    name: Public torrent client interop (${{ matrix.torrent }})
     if: github.ref == 'refs/heads/main' && inputs.run_public_compat == true
     runs-on: ubuntu-latest
     timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        torrent: [debian, ubuntu, fedora]
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -274,15 +279,17 @@ jobs:
       - name: Run public torrent client interop suite
         env:
           INTEROP_PUBLIC_TIMEOUT_SECS: "7200"
-          INTEROP_PUBLIC_MAX_PARALLEL: "3"
-          INTEROP_WORKDIR: ${{ runner.temp }}/torrentng-interop-${{ github.run_id }}-public
-          INTEROP_REPORT: certification/reports/interop-matrix-public-${{ github.run_id }}.md
+          INTEROP_PUBLIC_MAX_PARALLEL: "1"
+          INTEROP_PUBLIC_ONLY: ${{ matrix.torrent }}
+          INTEROP_COMPOSE_PROJECT_NAME: torrentng-qa-${{ github.run_id }}-${{ matrix.torrent }}
+          INTEROP_WORKDIR: ${{ runner.temp }}/torrentng-interop-${{ github.run_id }}-public-${{ matrix.torrent }}
+          INTEROP_REPORT: certification/reports/interop-matrix-public-${{ matrix.torrent }}-${{ github.run_id }}.md
         run: scripts/interop_matrix.sh --public
 
       - name: Upload public torrent interop evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: backend-public-interop-${{ github.run_id }}
-          path: certification/reports/interop-matrix-public-${{ github.run_id }}.md
+          name: backend-public-interop-${{ matrix.torrent }}-${{ github.run_id }}
+          path: certification/reports/interop-matrix-public-${{ matrix.torrent }}-${{ github.run_id }}.md
           if-no-files-found: warn

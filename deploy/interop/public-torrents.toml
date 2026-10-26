@@ -8,6 +8,9 @@ legal_note = "Official Debian BitTorrent image published by the Debian project."
 max_runtime_secs = 7200
 clients = ["torrentngd", "qbittorrent", "transmission", "deluge", "rtorrent"]
 
+# Public transfers run on standard CI runners with limited scratch storage.
+# Debian covers all clients; Ubuntu adds a qBittorrent public transfer; Fedora
+# exercises TorrentNG's public transfer. Local suites cover all five clients.
 [[torrent]]
 id = "ubuntu"
 enabled = true
@@ -16,7 +19,7 @@ resolver_url = "https://releases.ubuntu.com/"
 resolver_pattern = "ubuntu-[0-9][^\"]*-live-server-amd64\\.iso\\.torrent"
 legal_note = "Official Ubuntu torrent published through Ubuntu releases infrastructure."
 max_runtime_secs = 7200
-clients = ["torrentngd", "qbittorrent", "transmission", "deluge", "rtorrent"]
+clients = ["torrentngd", "qbittorrent"]
 
 [[torrent]]
 id = "fedora"
@@ -26,7 +29,7 @@ resolver_url = "https://torrent.fedoraproject.org/torrents/"
 resolver_pattern = "Fedora-Server-dvd-x86_64-[0-9][^\"]*\\.torrent"
 legal_note = "Official Fedora torrent published by the Fedora project."
 max_runtime_secs = 7200
-clients = ["torrentngd", "qbittorrent", "transmission", "deluge", "rtorrent"]
+clients = ["torrentngd"]
 
 [[torrent]]
 id = "libreoffice"
