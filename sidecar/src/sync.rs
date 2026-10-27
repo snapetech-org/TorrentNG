@@ -396,7 +396,7 @@ async fn tick_bounded(
     {
         Ok(summary) => {
             write_live_speeds(summary.rates.download, summary.rates.upload).await;
-            for t in &summary.moving {
+            for t in &summary.torrents {
                 if let Err(error) = validate_torrent_projection(t) {
                     bounded.full_cycle_had_errors = true;
                     warn!(

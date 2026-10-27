@@ -352,7 +352,7 @@ impl TorrentBackend for TorrentngBackend {
     async fn live_summary(&self, _view: &str, _limit: i64) -> Result<super::LiveSummary> {
         Ok(super::LiveSummary {
             rates: self.transfer_rates().await?,
-            moving: Vec::new(),
+            torrents: Vec::new(),
         })
     }
 

@@ -89,7 +89,7 @@ pub struct TransferRates {
 #[derive(Debug, Clone, Default)]
 pub struct LiveSummary {
     pub rates: TransferRates,
-    pub moving: Vec<RawTorrent>,
+    pub torrents: Vec<RawTorrent>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -235,7 +235,7 @@ impl Client {
 
         Ok(LiveSummary {
             rates: TransferRates { download, upload },
-            moving: parse_torrent_rows(rows)?,
+            torrents: parse_torrent_rows(rows)?,
         })
     }
 

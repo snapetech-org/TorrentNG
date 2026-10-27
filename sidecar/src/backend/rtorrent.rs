@@ -1,6 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use super::{BackendCapabilities, BackendStatus, BackendType, RemoveOutcome, TorrentBackend};
 use crate::rtorrent::{
@@ -207,10 +207,24 @@ impl TorrentBackend for RtorrentBackend {
     }
 
     async fn live_summary(&self, _view: &str, limit: i64) -> Result<LiveSummary> {
-        // A torrent with a nonzero transfer rate must be in rTorrent's
-        // `started` view. Avoid scanning the full `main` view, which can
-        // contain thousands of stopped torrents during each sync tick.
-        self.client.live_summary("started", limit).await
+        // `started` returns torrents with nonzero rates. Also read the bounded
+        // `leeching` view, which includes active incomplete torrents at zero
+        // rate, so stalled downloads keep a fresh live sample.
+        let mut summary = self.client.live_summary("started", limit).await?;
+        let leeching = self.client.live_summary("leeching", limit).await?;
+
+        let mut seen = HashSet::with_capacity(summary.torrents.len() + leeching.torrents.len());
+        summary
+            .torrents
+            .retain(|torrent| seen.insert(torrent.hash.to_ascii_lowercase()));
+        summary.torrents.extend(
+            leeching
+                .torrents
+                .into_iter()
+                .filter(|torrent| seen.insert(torrent.hash.to_ascii_lowercase())),
+        );
+
+        Ok(summary)
     }
 
     async fn feature_status(&self) -> (String, String) {

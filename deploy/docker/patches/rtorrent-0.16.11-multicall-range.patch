@@ -148,6 +148,7 @@ index 23e262c..ebb3674 100644
 +  if (view_itr == viewManager->end())
 +    throw torrent::input_error("Could not find view.");
 +
++  const bool include_idle = arg->as_string() == "leeching";
 +  const int64_t limit = (++arg)->as_value();
 +
 +  if (limit < 0)
@@ -169,7 +170,7 @@ index 23e262c..ebb3674 100644
 +    const int64_t down_rate = (*itr)->info()->down_rate()->rate();
 +    const int64_t up_rate   = (*itr)->info()->up_rate()->rate();
 +
-+    if (down_rate <= 0 && up_rate <= 0)
++    if (!include_idle && down_rate <= 0 && up_rate <= 0)
 +      continue;
 +
 +    auto target = rpc::make_target(*itr);

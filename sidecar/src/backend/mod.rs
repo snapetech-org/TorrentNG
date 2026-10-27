@@ -1173,7 +1173,7 @@ pub trait TorrentBackend: Send + Sync {
     async fn live_summary(&self, _view: &str, _limit: i64) -> Result<LiveSummary> {
         Ok(LiveSummary {
             rates: self.transfer_rates().await?,
-            moving: Vec::new(),
+            torrents: Vec::new(),
         })
     }
 
