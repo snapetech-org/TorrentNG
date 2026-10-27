@@ -173,9 +173,12 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             if workflow.name == "ci.yml":
                 continue
             if workflow.name == PUBLIC_FORK_WORKFLOW:
-                self.assertIn('"group":"public-fork-jit"', source)
+                self.assertIn("group: public-fork-jit", source)
+                self.assertIn("public-pr-torrentng", source)
+                self.assertIn("ng-public-run-${{ github.run_id }}", source)
                 self.assertNotIn("ubuntu-latest", source)
                 self.assertNotIn("ng-shared-main-jit", source)
+                self.assertNotIn("pull_request_target", source)
                 self.assertIn("contents: read", source)
                 self.assertNotIn("secrets:", source)
                 continue
@@ -277,38 +280,43 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
 
     def test_public_fork_validation_uses_the_isolated_no_secret_jit_pool(self) -> None:
         source = (WORKFLOW_DIR / PUBLIC_FORK_WORKFLOW).read_text(encoding="utf-8")
-        runs_on = next(
-            line.strip()
-            for line in source.splitlines()
-            if line.strip().startswith("runs-on:")
+        self.assertIn("group: public-fork-jit", source)
+        self.assertIn(
+            "labels: [self-hosted, linux, x64, public-pr-torrentng, "
+            "ng-public-run-${{ github.run_id }}]",
+            source,
         )
-        self.assertIn('"group":"public-fork-jit"', runs_on)
-        self.assertIn("self-hosted", runs_on)
         self.assertNotIn("ubuntu-latest", source)
         self.assertNotIn("ng-shared-main-jit", source)
+        self.assertNotIn("pull_request_target", source)
         self.assertIn(
             "github.event.pull_request.base.repo.full_name == 'snapetech-org/TorrentNG'",
             source,
         )
         self.assertIn("contents: read", source)
         self.assertNotIn("secrets:", source)
+        self.assertIn("persist-credentials: false", source)
 
         caller = (WORKFLOW_DIR / "public-fork-pr.yml").read_text(encoding="utf-8")
         self.assertRegex(
             caller,
-            r"(?ms)^  pull_request_target:\n    branches:\n      - main\n    types:\n      - labeled\n",
+            r"(?ms)^  pull_request:
+    branches:
+      - main
+    types:
+      - labeled
+",
         )
         self.assertIn("action:fork-validation", caller)
-        self.assertIn("runner_pool: public", caller)
-        self.assertIn("action:fork-validation", caller)
         self.assertIn("pool:public", caller)
-        self.assertIn("uses: ./.github/workflows/fork-safe-validation.yml", caller)
-        self.assertNotIn("@7cb3c216a2473fd6db8ec07f70be209ac4fefe46", caller)
+        self.assertIn(
+            "uses: snapetech-org/TorrentNG/.github/workflows/"
+            "fork-safe-validation.yml@5914abe010affa47deb1622e3acf0f143545b851",
+            caller,
+        )
+        self.assertNotIn("pull_request_target", caller)
         self.assertIn("github.event.pull_request.head.repo.fork == true", caller)
         self.assertIn("github.event.pull_request.base.ref == 'main'", caller)
-        self.assertIn("inputs.pr_head_sha", source)
-        self.assertIn("repository: ${{ inputs.pr_head_repo }}", source)
-        self.assertIn("pull_request_target", source + caller)
 
     def test_windows_smoke_uses_the_private_packer_runner(self) -> None:
         source = (WORKFLOW_DIR / "windows-smoke.yml").read_text(encoding="utf-8")

@@ -219,18 +219,20 @@ class WorkflowSecurityTests(unittest.TestCase):
         for workflow_path in WORKFLOWS.glob("*.y*"):
             source = workflow_path.read_text(encoding="utf-8")
             if workflow_path.name == "fork-safe-validation.yml":
-                self.assertIn('"group":"public-fork-jit"', source)
+                self.assertIn("group: public-fork-jit", source)
                 self.assertIn("self-hosted", source)
+                self.assertIn("public-pr-torrentng", source)
+                self.assertIn("ng-public-run-${{ github.run_id }}", source)
                 self.assertNotIn("ubuntu-latest", source)
                 self.assertNotIn("ng-shared-main-jit", source)
+                self.assertNotIn("pull_request_target", source)
                 self.assertIn(
                     "github.event.pull_request.base.repo.full_name == 'snapetech-org/TorrentNG'",
                     source,
                 )
                 self.assertIn("contents: read", source)
                 self.assertNotIn("secrets:", source)
-                self.assertIn("pull_request_target", source)
-                self.assertIn("inputs.runner_pool == 'public'", source)
+                self.assertNotIn("inputs.", source)
                 continue
             if workflow_path.name == TRANSFER_HARDWARE_WORKFLOW:
                 self.assertIn('"group":"ng-shared-main-jit"', source)
