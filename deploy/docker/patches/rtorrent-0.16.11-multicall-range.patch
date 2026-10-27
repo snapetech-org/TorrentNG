@@ -10,7 +10,7 @@ index 23e262c..ebb3674 100644
  #include <cstdio>
  #include <torrent/rate.h>
  #include <torrent/hash_string.h>
-@@ -285,6 +286,180 @@ d_multicall_filtered(const torrent::Object::list_type& args) {
+@@ -285,6 +286,181 @@ d_multicall_filtered(const torrent::Object::list_type& args) {
    return resultRaw;
  }
  
