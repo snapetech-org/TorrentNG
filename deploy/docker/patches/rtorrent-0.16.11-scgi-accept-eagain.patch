@@ -1,6 +1,10 @@
 --- a/src/rpc/scgi.cc
 +++ b/src/rpc/scgi.cc
-@@ -157,7 +157,7 @@
+@@ -154,20 +154,27 @@
+     // TODO: Optimize this by keeping track of count.
+     auto prev = m_current;
+-
++
 -    m_current = std::find_if(m_current + 1, m_tasks.end(), [](const auto& task) { return !task->is_open(); });
 -
 -    if (m_current == m_tasks.end())
@@ -15,11 +19,10 @@
 +    if (next == m_tasks.end()) {
 +      // No task is available. Drain and close queued connections, but return
 +      // when the nonblocking listener has no more connections to accept.
-@@ -165,4 +165,8 @@
+       int fd = torrent::fd_accept(file_descriptor());
 -
 -      if (fd != -1)
 -        torrent::fd_close(fd);
--
 +      if (fd == -1) {
 +        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR || errno == ECONNABORTED)
 +          return;
@@ -28,6 +31,13 @@
 +      }
 +
 +      torrent::fd_close(fd);
-@@ -170,0 +175,2 @@
+-
++
+       continue;
+     }
 +
 +    m_current = next;
+-
++
+     auto open_func = [this, task = m_current->get()]() {
+         int fd = torrent::fd_accept(file_descriptor());
