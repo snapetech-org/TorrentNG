@@ -292,6 +292,10 @@ The Docker image declares the packaged rTorrent patches in
 `TNG_RTORRENT_PATCHES`. Production-like deployments should verify
 `d.multicall.range` and `tng.live_summary` through `/api/v1/engine/commands`
 or startup logs before relying on large-list compatible-client synchronization.
+The compatible-client image also carries
+`rtorrent-0.16.11-scgi-accept-eagain`, which returns from rTorrent's full-task
+SCGI accept loop when a nonblocking `accept()` has no queued connection and
+checks the current task slot when wrapping the 100-slot task ring.
 The service must keep rTorrent's leading XMLRPC target argument on patched
 calls; for global calls that argument is the empty string, followed by the
 view/range parameters.
