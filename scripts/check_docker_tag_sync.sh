@@ -2,7 +2,6 @@
 set -eu
 
 repo_root="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-ci_file="$repo_root/.gitlab-ci.yml"
 release_workflow="$repo_root/.github/workflows/release.yml"
 publisher="$repo_root/scripts/promote_dockerhub_tags.sh"
 
@@ -14,11 +13,6 @@ require_text() {
     exit 1
   fi
 }
-
-require_text "$ci_file" 'dockerhub:tag-policy:'
-require_text "$ci_file" 'sh scripts/check_docker_tag_sync.sh'
-require_text "$ci_file" 'sh scripts/promote_dockerhub_tags.sh'
-require_text "$ci_file" 'resource_group: dockerhub-stable-aliases'
 
 require_text "$publisher" 'latest main master stable'
 require_text "$publisher" 'skopeo list-tags docker://docker.io/snapetech/torrentng-native'
