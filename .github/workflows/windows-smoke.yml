@@ -1,9 +1,23 @@
 # ng-runner-policy: private-jit-only-v1
 # packer-windows-jit-v1
 name: Windows Smoke
+run-name: action:${{ inputs.action }} pool:${{ inputs.runner_pool }}
 
 on:
   workflow_dispatch:
+    inputs:
+      action:
+        description: Requested operation
+        required: true
+        type: choice
+        options:
+          - windows-smoke
+      runner_pool:
+        description: Runner pool for this operation
+        required: true
+        type: choice
+        options:
+          - private
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: false
@@ -13,6 +27,7 @@ permissions:
 
 jobs:
   smoke:
+    if: github.ref == 'refs/heads/main' && inputs.action == 'windows-smoke' && inputs.runner_pool == 'private'
     timeout-minutes: 45
     runs-on: ${{ fromJSON(format('{{"group":"packer-windows","labels":["self-hosted","Windows","X64","on-demand","packer-windows","TorrentNG","gha-{0}-smoke"]}}', github.run_id)) }}
     # The certification evidence contains paths longer than Win32's default

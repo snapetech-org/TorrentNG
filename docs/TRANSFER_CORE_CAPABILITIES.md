@@ -23,7 +23,7 @@ registered. The source audit found all 63 repository-owned implementation
 slices present and no missing architecture boundary. The ledger remains
 12/63 `done`, 51/63 `wip`, and 0 `todo`: WIP denotes uncollected runtime,
 platform, hardware, crash-cut, broader matched-client, soak/canary,
-independent-review, or release evidence. No release capability or broad
+or release evidence. No release capability or broad
 efficiency claim follows from repository tests or this scoped comparison.
 
 | Capability | Current native path | Shared-core path | Current state | Qualification gate |

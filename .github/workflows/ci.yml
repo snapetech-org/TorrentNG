@@ -1,28 +1,35 @@
 # ng-runner-policy: private-jit-only-v1
 name: CI
 run-name: >-
-  ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha != '' &&
-      format('candidate-build:{0}', inputs.candidate_sha) ||
-      (github.event_name == 'workflow_dispatch' && inputs.pr_number != '' &&
-       format('owner-pr:{0}:{1}:{2}', inputs.pr_number, inputs.pr_sha, inputs.target_run_id)) ||
+  ${{ github.event_name == 'pull_request_target' &&
+      format('action:ci:pool:private') ||
+      (github.event_name == 'workflow_dispatch' && inputs.action != '' && inputs.runner_pool != '' &&
+      format('action:{0}:pool:{1}', inputs.action, inputs.runner_pool)) ||
       github.workflow }}
 
 on:
-  push:
-    tags:
-      - '**'
   pull_request_target:
     branches:
       - main
     types:
-      - opened
-      - synchronize
-      - reopened
-      - ready_for_review
+      - labeled
   workflow_dispatch:
     inputs:
 
-# Preserve every tag or manual validation result for the source it checked.
+      action:
+        description: Requested operation
+        required: true
+        type: choice
+        options:
+          - ci
+          - build
+      runner_pool:
+        description: Runner pool for this operation
+        required: true
+        type: choice
+        options:
+          - private
+
       candidate_sha:
         description: Exact main SHA for a private Linux x64 build artifact (no release)
         required: false
@@ -49,19 +56,15 @@ permissions:
 jobs:
   native-quality:
     if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.action == 'ci' &&
+      inputs.runner_pool == 'private' &&
       inputs.candidate_sha == '' &&
       (
-      ((github.event_name == 'workflow_dispatch' &&
-      (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') &&
-      inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' &&
-      github.ref == 'refs/heads/main')) || ((github.event_name != 'pull_request_target' &&
-      (github.event_name != 'pull_request' || github.actor != 'snapetech' ||
-       github.event.pull_request.user.login != 'snapetech' ||
-       github.event.pull_request.head.repo.full_name != github.repository ||
-       github.event.pull_request.head.repo.id != github.repository_id ||
-       github.event.pull_request.base.ref != 'main') &&
-      (github.event_name != 'workflow_dispatch' ||
-       (inputs.pr_number == '' && inputs.pr_sha == '' && inputs.target_run_id == ''))))
+        (inputs.pr_number == '' && inputs.pr_sha == '' && inputs.target_run_id == '') ||
+        ((github.actor == 'snapetech' || github.actor == 'github-actions[bot]') &&
+         inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '')
       )
     name: TorrentNG client quality
     timeout-minutes: 60
@@ -152,19 +155,15 @@ jobs:
 
   backend-fault-matrix:
     if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.action == 'ci' &&
+      inputs.runner_pool == 'private' &&
       inputs.candidate_sha == '' &&
       (
-      ((github.event_name == 'workflow_dispatch' &&
-      (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') &&
-      inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' &&
-      github.ref == 'refs/heads/main')) || ((github.event_name != 'pull_request_target' &&
-      (github.event_name != 'pull_request' || github.actor != 'snapetech' ||
-       github.event.pull_request.user.login != 'snapetech' ||
-       github.event.pull_request.head.repo.full_name != github.repository ||
-       github.event.pull_request.head.repo.id != github.repository_id ||
-       github.event.pull_request.base.ref != 'main') &&
-      (github.event_name != 'workflow_dispatch' ||
-       (inputs.pr_number == '' && inputs.pr_sha == '' && inputs.target_run_id == ''))))
+        (inputs.pr_number == '' && inputs.pr_sha == '' && inputs.target_run_id == '') ||
+        ((github.actor == 'snapetech' || github.actor == 'github-actions[bot]') &&
+         inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '')
       )
     name: Backend fault-containment matrix
     needs: native-quality
@@ -198,19 +197,15 @@ jobs:
 
   backend-api-load:
     if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.action == 'ci' &&
+      inputs.runner_pool == 'private' &&
       inputs.candidate_sha == '' &&
       (
-      ((github.event_name == 'workflow_dispatch' &&
-      (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') &&
-      inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' &&
-      github.ref == 'refs/heads/main')) || ((github.event_name != 'pull_request_target' &&
-      (github.event_name != 'pull_request' || github.actor != 'snapetech' ||
-       github.event.pull_request.user.login != 'snapetech' ||
-       github.event.pull_request.head.repo.full_name != github.repository ||
-       github.event.pull_request.head.repo.id != github.repository_id ||
-       github.event.pull_request.base.ref != 'main') &&
-      (github.event_name != 'workflow_dispatch' ||
-       (inputs.pr_number == '' && inputs.pr_sha == '' && inputs.target_run_id == ''))))
+        (inputs.pr_number == '' && inputs.pr_sha == '' && inputs.target_run_id == '') ||
+        ((github.actor == 'snapetech' || github.actor == 'github-actions[bot]') &&
+         inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '')
       )
     name: Isolated TorrentNG API/SSE load harness
     needs: native-quality
@@ -287,19 +282,15 @@ jobs:
   # tests the locked workspace at the declared Rust 1.88 MSRV.
   msrv-check:
     if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.action == 'ci' &&
+      inputs.runner_pool == 'private' &&
       inputs.candidate_sha == '' &&
       (
-      ((github.event_name == 'workflow_dispatch' &&
-      (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') &&
-      inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' &&
-      github.ref == 'refs/heads/main')) || ((github.event_name != 'pull_request_target' &&
-      (github.event_name != 'pull_request' || github.actor != 'snapetech' ||
-       github.event.pull_request.user.login != 'snapetech' ||
-       github.event.pull_request.head.repo.full_name != github.repository ||
-       github.event.pull_request.head.repo.id != github.repository_id ||
-       github.event.pull_request.base.ref != 'main') &&
-      (github.event_name != 'workflow_dispatch' ||
-       (inputs.pr_number == '' && inputs.pr_sha == '' && inputs.target_run_id == ''))))
+        (inputs.pr_number == '' && inputs.pr_sha == '' && inputs.target_run_id == '') ||
+        ((github.actor == 'snapetech' || github.actor == 'github-actions[bot]') &&
+         inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '')
       )
     timeout-minutes: 60
     runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-msrv-check"]}}', github.run_id)) }}
@@ -349,19 +340,15 @@ jobs:
 
   msrv-check-sidecar:
     if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.action == 'ci' &&
+      inputs.runner_pool == 'private' &&
       inputs.candidate_sha == '' &&
       (
-      ((github.event_name == 'workflow_dispatch' &&
-      (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') &&
-      inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' &&
-      github.ref == 'refs/heads/main')) || ((github.event_name != 'pull_request_target' &&
-      (github.event_name != 'pull_request' || github.actor != 'snapetech' ||
-       github.event.pull_request.user.login != 'snapetech' ||
-       github.event.pull_request.head.repo.full_name != github.repository ||
-       github.event.pull_request.head.repo.id != github.repository_id ||
-       github.event.pull_request.base.ref != 'main') &&
-      (github.event_name != 'workflow_dispatch' ||
-       (inputs.pr_number == '' && inputs.pr_sha == '' && inputs.target_run_id == ''))))
+        (inputs.pr_number == '' && inputs.pr_sha == '' && inputs.target_run_id == '') ||
+        ((github.actor == 'snapetech' || github.actor == 'github-actions[bot]') &&
+         inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '')
       )
     name: Compatible-client service MSRV gate
     timeout-minutes: 30
@@ -409,19 +396,15 @@ jobs:
 
   fuzz-smoke:
     if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.action == 'ci' &&
+      inputs.runner_pool == 'private' &&
       inputs.candidate_sha == '' &&
       (
-      ((github.event_name == 'workflow_dispatch' &&
-      (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') &&
-      inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' &&
-      github.ref == 'refs/heads/main')) || ((github.event_name != 'pull_request_target' &&
-      (github.event_name != 'pull_request' || github.actor != 'snapetech' ||
-       github.event.pull_request.user.login != 'snapetech' ||
-       github.event.pull_request.head.repo.full_name != github.repository ||
-       github.event.pull_request.head.repo.id != github.repository_id ||
-       github.event.pull_request.base.ref != 'main') &&
-      (github.event_name != 'workflow_dispatch' ||
-       (inputs.pr_number == '' && inputs.pr_sha == '' && inputs.target_run_id == ''))))
+        (inputs.pr_number == '' && inputs.pr_sha == '' && inputs.target_run_id == '') ||
+        ((github.actor == 'snapetech' || github.actor == 'github-actions[bot]') &&
+         inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '')
       )
     timeout-minutes: 30
     runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-fuzz-smoke"]}}', github.run_id)) }}
@@ -529,19 +512,15 @@ jobs:
 
   sidecar:
     if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.action == 'ci' &&
+      inputs.runner_pool == 'private' &&
       inputs.candidate_sha == '' &&
       (
-      ((github.event_name == 'workflow_dispatch' &&
-      (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') &&
-      inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' &&
-      github.ref == 'refs/heads/main')) || ((github.event_name != 'pull_request_target' &&
-      (github.event_name != 'pull_request' || github.actor != 'snapetech' ||
-       github.event.pull_request.user.login != 'snapetech' ||
-       github.event.pull_request.head.repo.full_name != github.repository ||
-       github.event.pull_request.head.repo.id != github.repository_id ||
-       github.event.pull_request.base.ref != 'main') &&
-      (github.event_name != 'workflow_dispatch' ||
-       (inputs.pr_number == '' && inputs.pr_sha == '' && inputs.target_run_id == ''))))
+        (inputs.pr_number == '' && inputs.pr_sha == '' && inputs.target_run_id == '') ||
+        ((github.actor == 'snapetech' || github.actor == 'github-actions[bot]') &&
+         inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '')
       )
     name: Compatible-client service quality
     timeout-minutes: 30
@@ -589,19 +568,15 @@ jobs:
 
   desktop:
     if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.action == 'ci' &&
+      inputs.runner_pool == 'private' &&
       inputs.candidate_sha == '' &&
       (
-      ((github.event_name == 'workflow_dispatch' &&
-      (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') &&
-      inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' &&
-      github.ref == 'refs/heads/main')) || ((github.event_name != 'pull_request_target' &&
-      (github.event_name != 'pull_request' || github.actor != 'snapetech' ||
-       github.event.pull_request.user.login != 'snapetech' ||
-       github.event.pull_request.head.repo.full_name != github.repository ||
-       github.event.pull_request.head.repo.id != github.repository_id ||
-       github.event.pull_request.base.ref != 'main') &&
-      (github.event_name != 'workflow_dispatch' ||
-       (inputs.pr_number == '' && inputs.pr_sha == '' && inputs.target_run_id == ''))))
+        (inputs.pr_number == '' && inputs.pr_sha == '' && inputs.target_run_id == '') ||
+        ((github.actor == 'snapetech' || github.actor == 'github-actions[bot]') &&
+         inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '')
       )
     name: Desktop client quality
     timeout-minutes: 40
@@ -655,20 +630,15 @@ jobs:
 
   webui:
     if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.action == 'ci' &&
+      inputs.runner_pool == 'private' &&
       inputs.candidate_sha == '' &&
-      (github.event_name != 'push' || github.ref_type != 'tag') &&
       (
-        ((github.event_name == 'workflow_dispatch' &&
-        (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') &&
-        inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' &&
-        github.ref == 'refs/heads/main')) || ((github.event_name != 'pull_request_target' &&
-        (github.event_name != 'pull_request' || github.actor != 'snapetech' ||
-         github.event.pull_request.user.login != 'snapetech' ||
-         github.event.pull_request.head.repo.full_name != github.repository ||
-         github.event.pull_request.head.repo.id != github.repository_id ||
-         github.event.pull_request.base.ref != 'main') &&
-        (github.event_name != 'workflow_dispatch' ||
-         (inputs.pr_number == '' && inputs.pr_sha == '' && inputs.target_run_id == ''))))
+        (inputs.pr_number == '' && inputs.pr_sha == '' && inputs.target_run_id == '') ||
+        ((github.actor == 'snapetech' || github.actor == 'github-actions[bot]') &&
+         inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '')
       )
     timeout-minutes: 45
     # Release.yml builds the WebUI from the tag, so skip this duplicate on tag pushes.
@@ -737,19 +707,15 @@ jobs:
 
   backup-restore:
     if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.action == 'ci' &&
+      inputs.runner_pool == 'private' &&
       inputs.candidate_sha == '' &&
       (
-      ((github.event_name == 'workflow_dispatch' &&
-      (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') &&
-      inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' &&
-      github.ref == 'refs/heads/main')) || ((github.event_name != 'pull_request_target' &&
-      (github.event_name != 'pull_request' || github.actor != 'snapetech' ||
-       github.event.pull_request.user.login != 'snapetech' ||
-       github.event.pull_request.head.repo.full_name != github.repository ||
-       github.event.pull_request.head.repo.id != github.repository_id ||
-       github.event.pull_request.base.ref != 'main') &&
-      (github.event_name != 'workflow_dispatch' ||
-       (inputs.pr_number == '' && inputs.pr_sha == '' && inputs.target_run_id == ''))))
+        (inputs.pr_number == '' && inputs.pr_sha == '' && inputs.target_run_id == '') ||
+        ((github.actor == 'snapetech' || github.actor == 'github-actions[bot]') &&
+         inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '')
       )
     name: Backup and restore drill
     needs: native-quality
@@ -794,19 +760,15 @@ jobs:
 
   security-audit:
     if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.action == 'ci' &&
+      inputs.runner_pool == 'private' &&
       inputs.candidate_sha == '' &&
       (
-      ((github.event_name == 'workflow_dispatch' &&
-      (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') &&
-      inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' &&
-      github.ref == 'refs/heads/main')) || ((github.event_name != 'pull_request_target' &&
-      (github.event_name != 'pull_request' || github.actor != 'snapetech' ||
-       github.event.pull_request.user.login != 'snapetech' ||
-       github.event.pull_request.head.repo.full_name != github.repository ||
-       github.event.pull_request.head.repo.id != github.repository_id ||
-       github.event.pull_request.base.ref != 'main') &&
-      (github.event_name != 'workflow_dispatch' ||
-       (inputs.pr_number == '' && inputs.pr_sha == '' && inputs.target_run_id == ''))))
+        (inputs.pr_number == '' && inputs.pr_sha == '' && inputs.target_run_id == '') ||
+        ((github.actor == 'snapetech' || github.actor == 'github-actions[bot]') &&
+         inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '')
       )
     name: Dependency security audit
     timeout-minutes: 30
@@ -865,8 +827,9 @@ jobs:
     name: Private Linux x64 candidate build and smoke
     if: >-
       github.event_name == 'workflow_dispatch' &&
-      github.actor == 'snapetech' &&
       github.ref == 'refs/heads/main' &&
+      inputs.action == 'build' &&
+      inputs.runner_pool == 'private' &&
       inputs.candidate_sha != '' &&
       inputs.candidate_sha == github.sha &&
       inputs.pr_number == '' &&
@@ -1053,8 +1016,11 @@ jobs:
       github.event.pull_request.user.login == 'snapetech' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.head.repo.id == github.repository_id &&
-      github.event.pull_request.base.ref == 'main'
-    runs-on: ${{ (github.event_name == 'pull_request_target' && github.actor == 'snapetech' && github.event.pull_request.user.login == 'snapetech' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.repo.id == github.repository_id && github.event.pull_request.base.ref == 'main') && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-owner-pr-dispatcher"]}}', github.run_id)) }}
+      github.event.pull_request.base.ref == 'main' &&
+      (github.event.label.name == 'action:ci' || github.event.label.name == 'pool:private') &&
+      contains(github.event.pull_request.labels.*.name, 'action:ci') &&
+      contains(github.event.pull_request.labels.*.name, 'pool:private')
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-owner-pr-dispatcher"]}}', github.run_id)) }}
     permissions:
       actions: write
       contents: none
@@ -1073,7 +1039,7 @@ jobs:
           expected='snapetech-org/TorrentNG'
           repository=os.environ['GITHUB_REPOSITORY'];number=os.environ['PR_NUMBER'];sha=os.environ['PR_SHA'].lower();target=os.environ['TARGET_RUN_ID'];token=os.environ['GH_TOKEN']
           if repository.lower()!=expected.lower() or not re.fullmatch(r'[1-9][0-9]*',number) or not re.fullmatch(r'[0-9a-f]{40}',sha) or not re.fullmatch(r'[1-9][0-9]*',target):raise SystemExit('invalid PR claim')
-          payload=json.dumps({"ref": "main", "inputs": {"pr_number": number, "pr_sha": sha, "target_run_id": target}}).encode()
+          payload=json.dumps({"ref": "main", "inputs": {"action": "ci", "runner_pool": "private", "pr_number": number, "pr_sha": sha, "target_run_id": target}}).encode()
           request=Request(
             'https://api.github.com/repos/snapetech-org/TorrentNG/actions/workflows/ci.yml/dispatches',
             data=payload,headers={'Accept':'application/vnd.github+json','Authorization':f'Bearer {token}','Content-Type':'application/json','X-GitHub-Api-Version':'2022-11-28'},method='POST')
@@ -1088,10 +1054,12 @@ jobs:
       always() &&
       inputs.candidate_sha == '' &&
       github.event_name == 'workflow_dispatch' &&
+      inputs.action == 'ci' &&
+      inputs.runner_pool == 'private' &&
       (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') &&
       inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' &&
       github.ref == 'refs/heads/main'
-    runs-on: ${{ (github.event_name == 'workflow_dispatch' && (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-owner-pr-reporter"]}}', github.run_id)) }}
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.action == 'ci' && inputs.runner_pool == 'private' && (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-owner-pr-reporter"]}}', github.run_id)) }}
     permissions:
       checks: write
       contents: none

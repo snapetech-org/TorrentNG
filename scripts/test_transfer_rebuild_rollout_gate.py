@@ -56,7 +56,11 @@ def trial(
 class RolloutGateTests(unittest.TestCase):
     def test_each_final_stage_has_explicit_evidence_kinds(self) -> None:
         self.assertEqual(set(REQUIRED_KINDS), {"IO-016", "NET-116", "PERF-116", "SYS-015"})
-        self.assertIn("transfer-independent-review-v1", REQUIRED_KINDS["SYS-015"])
+        self.assertNotIn("transfer-independent-review-v1", REQUIRED_KINDS["SYS-015"])
+        self.assertEqual(
+            REQUIRED_CHECKS["transfer-gate-policy-v1"],
+            {"performance-thresholds-explicitly-unapplied"},
+        )
         self.assertIn("transfer-catalog-load-v1", REQUIRED_KINDS["SYS-015"])
         self.assertIn(
             "mixed-native-api-latencies-retained",

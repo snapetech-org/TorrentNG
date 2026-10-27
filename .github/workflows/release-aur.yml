@@ -1,9 +1,22 @@
 # ng-runner-policy: private-jit-only-v1
 name: Publish AUR
+run-name: action:${{ inputs.action }} pool:${{ inputs.runner_pool }} tag:${{ inputs.tag }}
 
 on:
   workflow_dispatch:
     inputs:
+      action:
+        description: Requested operation
+        required: true
+        type: choice
+        options:
+          - publish-aur
+      runner_pool:
+        description: Runner pool for this operation
+        required: true
+        type: choice
+        options:
+          - private
       tag:
         description: Release tag to publish, for example v0.1.0
         required: true
@@ -13,7 +26,7 @@ permissions:
 
 jobs:
   publish-aur:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.action == 'publish-aur' && inputs.runner_pool == 'private'
     runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-publish-aur"]}}', github.run_id)) }}
     steps:
       - name: Checkout trusted release policy

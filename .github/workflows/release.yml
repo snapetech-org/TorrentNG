@@ -1,11 +1,27 @@
 # ng-runner-policy: private-jit-only-v1
 # packer-windows-jit-v1
 name: Release
+run-name: action:${{ inputs.action }} pool:${{ inputs.runner_pool }} tag:${{ inputs.release_tag }}
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Requested operation
+        required: true
+        type: choice
+        options:
+          - release
+      runner_pool:
+        description: Runner pool for this operation
+        required: true
+        type: choice
+        options:
+          - private
+      release_tag:
+        description: Existing version tag to publish
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -13,6 +29,12 @@ permissions:
 jobs:
   validate-release-tag:
     name: Validate release tag
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.action == 'release' &&
+      inputs.runner_pool == 'private' &&
+      inputs.release_tag != ''
     runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-validate-release-tag"]}}', github.run_id)) }}
     permissions:
       contents: read
@@ -32,7 +54,7 @@ jobs:
       - name: Validate tag and provenance
         id: tag
         env:
-          REQUESTED_TAG: ${{ github.ref_name }}
+          REQUESTED_TAG: ${{ inputs.release_tag }}
         shell: bash
         run: |
           set -euo pipefail

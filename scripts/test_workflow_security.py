@@ -197,6 +197,8 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertRegex(
             source,
             r"(?m)^\s*if: github\.ref == 'refs/heads/main' && "
+            r"inputs\.action == 'transfer-rebuild' && "
+            r"inputs\.runner_pool == 'private' && "
             r"inputs\.run_dedicated_hardware == true\s*$",
         )
         self.assertRegex(
@@ -227,7 +229,8 @@ class WorkflowSecurityTests(unittest.TestCase):
                 )
                 self.assertIn("contents: read", source)
                 self.assertNotIn("secrets:", source)
-                self.assertNotIn("pull_request_target", source)
+                self.assertIn("pull_request_target", source)
+                self.assertIn("inputs.runner_pool == 'public'", source)
                 continue
             if workflow_path.name == TRANSFER_HARDWARE_WORKFLOW:
                 self.assertIn('"group":"ng-shared-main-jit"', source)
@@ -245,7 +248,6 @@ class WorkflowSecurityTests(unittest.TestCase):
                 self.assertIn("scripts/enable-msvc-environment.ps1", source)
                 continue
             if workflow_path.name in {
-                "codeql.yml",
                 "release-notes.yml",
                 "semgrep-community.yml",
                 "trivy-filesystem.yml",
@@ -290,8 +292,6 @@ class WorkflowSecurityTests(unittest.TestCase):
                     else:
                         self.assertNotIn("ubuntu-latest", expression)
                         self.assertNotIn("||", expression)
-                if workflow_path.name in {"codeql.yml", "semgrep-community.yml"}:
-                    self.assertIn("schedule:", source)
                 if workflow_path.name == "semgrep-community.yml":
                     self.assertIn("docker info", source)
                     self.assertIn("docker run", source)
@@ -382,11 +382,12 @@ class WorkflowSecurityTests(unittest.TestCase):
 
     def test_release_tags_are_validated_before_release_jobs(self) -> None:
         release = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
-        self.assertIn('      - "v*"', release)
+        self.assertNotIn('      - "v*"', release)
         self.assertIn("validate-release-tag:", release)
-        self.assertIn('      - "v*"', release)
-        self.assertNotIn("workflow_dispatch:", release.split("permissions:", 1)[0])
-        self.assertIn("REQUESTED_TAG: ${{ github.ref_name }}", release)
+        self.assertIn("workflow_dispatch:", release.split("permissions:", 1)[0])
+        self.assertIn("inputs.release_tag", release)
+        self.assertNotIn("push:", release.split("permissions:", 1)[0])
+        self.assertIn("REQUESTED_TAG: ${{ inputs.release_tag }}", release)
         self.assertIn("git merge-base --is-ancestor", release)
         self.assertIn("needs: validate-release-tag", release)
 
@@ -435,14 +436,18 @@ class WorkflowSecurityTests(unittest.TestCase):
 
     def test_release_security_scans_do_not_run_on_tags(self) -> None:
         for workflow_name in (
-            "codeql.yml",
             "semgrep-community.yml",
             "trivy-filesystem.yml",
         ):
             source = (WORKFLOWS / workflow_name).read_text(encoding="utf-8")
-            self.assertIn("branches: [main]", source, workflow_name)
-            self.assertNotIn("tags:", source, workflow_name)
-            self.assertIn("if: github.ref == 'refs/heads/main'", source, workflow_name)
+            self.assertIn("workflow_dispatch:", source, workflow_name)
+            self.assertNotIn("push:", source, workflow_name)
+            self.assertNotRegex(
+                source,
+                r"(?m)^  pull_request(?:_target)?:",
+            )
+            self.assertIn("inputs.runner_pool == 'private'", source, workflow_name)
+            self.assertIn("github.ref == 'refs/heads/main'", source, workflow_name)
 
         windows_smoke = (WORKFLOWS / "windows-smoke.yml").read_text(encoding="utf-8")
         self.assertNotIn("tags:", windows_smoke)

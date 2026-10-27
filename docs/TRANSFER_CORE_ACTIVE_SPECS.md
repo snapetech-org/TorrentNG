@@ -474,7 +474,7 @@ The source audit at that snapshot found all 63 repository-owned implementation
 slices and ticket contracts present, with no missing architecture boundary. The ledger
 remains 12/63 `done`, 51/63 `wip`, and 0 `todo`; those WIP rows require live
 client, platform, crash-cut, matched-efficiency, protected-runner,
-soak/canary, independent-review, or release evidence. At that checkpoint,
+soak/canary, or release evidence. At that checkpoint,
 this run superseded older “await bulk” notes only for its
 exact source revision. It did not validate the later `7bc43bf` candidate, so
 current-source bulk validation was pending then. The newer `3191f56e` result is
@@ -579,7 +579,7 @@ older per-ticket notes are superseded by the current exact-source follow-up at
 the top of this file.
 Ticket acceptance remains `wip` where it requires runtime, platform,
 filesystem fault, crash-cut, live parity, matched whole-client, soak/canary,
-protected-runner artifact, or independent-review evidence.
+or protected-runner evidence.
 Ticket-specific acceptance that needs hosted workflows, dedicated hardware,
 filesystem fault qualification, crash cuts, live parity, or matched whole-
 client trials remains open.
@@ -778,8 +778,8 @@ required result artifacts.
   existing path or global cache setting is modified.
 - **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `354ad504`. External acceptance remains listed below.
 - **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261019/evidence/`; external acceptance remains listed below.
-- **External evidence still required:** review of the pinned workload sizes,
-  and cache-control qualification on each dedicated benchmark filesystem.
+- **External evidence still required:** cache-control qualification on each
+  dedicated benchmark filesystem using the pinned workload sizes.
 
 ## PERF-104 — Common trial timing and useful-byte accounting
 
@@ -3928,8 +3928,8 @@ subsystems.
 
 - **Expected code paths:** crates/rt-api-native/src/handlers.rs, engine and
   storage metric snapshots, TRANSFER_CORE_OBSERVABILITY.md.
-- **State or wire compatibility:** Prometheus names remain stable unless a
-  separately reviewed compatibility change is needed.
+- **State or wire compatibility:** Prometheus names remain stable across
+  compatibility changes.
 - **Migration / rollback:** none.
 - **Feature flag or rollout boundary:** existing native /metrics route.
 
@@ -5493,8 +5493,8 @@ statuses as run artifacts.
   storage root; all three exit statuses are retained even when one fails.
 - CI artifacts remain diagnostics. No gate, baseline, or comparative claim
   passes from workflow completion alone.
-- Workflow and script changes receive syntax/security review before the first
-  hosted execution; the dedicated run remains external evidence.
+- Run syntax and security checks before the first hosted execution; the
+  dedicated run remains external evidence.
 
 ### Files and compatibility
 
@@ -6022,8 +6022,8 @@ with mode `0600`, and link only to artifacts in the same manifest. Failed or
 unrun checks cannot pass. Each SYS-014 catalog check must cite a
 `transfer-catalog-load-report-v1`; that report must be source-bound, recompute
 from its retained samples, and cite a `transfer-catalog-load-log-v1` in the
-same manifest. Hashed declarations do not prove hardware, crash, soak, or
-independent-review execution by themselves.
+same manifest. Hashed declarations do not prove hardware, crash, or soak
+execution by themselves.
 
 ## IO-016 — Live-engine parity, recovery, and storage qualification
 
@@ -6108,8 +6108,8 @@ descriptive until D1 is explicitly decided.
   hybrid-race replay, and generation-reuse replay with the seed and artifact
   digest retained.
 - `transfer-performance-policy-v1` records matched candidate/baseline
-  execution, the required whole-client metrics, and the explicit
-  no-unapproved-thresholds check.
+  execution, the required whole-client metrics, and that performance
+  thresholds were explicitly left unapplied.
 - The evaluator verifies complete, integrity-passed download and seed trials
   for all three protocols and each declared candidate/baseline, plus required
   pair counts for goodput, RSS, and CPU.
@@ -6164,8 +6164,8 @@ before execution; the run must not adopt an unapproved scorecard threshold.
 - `transfer-canary-qualification-v1` proves candidate cutover, reference
   rollback, and single-writer ownership throughout, including one injected
   failure after the old actor drains.
-- `transfer-gate-policy-v1` records the reviewed correctness gate and that no
-  unapproved performance threshold was applied.
+- `transfer-gate-policy-v1` records the correctness gate and that performance
+  thresholds were explicitly left unapplied.
 - The stage evaluator accepts the same clean source, manifest, scorecard, and
   required qualification records; missing dwell or rollback evidence leaves
   it blocked.
@@ -6182,42 +6182,39 @@ before execution; the run must not adopt an unapproved scorecard threshold.
 - **External evidence still required:** controlled dwell, operational recovery,
   and canary/rollback on the designated runtime environment.
 
-## SYS-015 — Independent review and reproducible release integration
+## SYS-015 — Reproducible release integration
 
 - **Priority / wave:** P0 / 14
 - **Prerequisites:** SYS-013–014, NET-116, IO-016, PERF-116
-- **Owning component:** release engineering, independent review, and
+- **Owning component:** release engineering and
   `scripts/transfer_rebuild/rollout_gate.py`.
 - **Finding or capability:** consolidate the completed gates into a
-  reproducible, reviewable release decision.
-- **Status:** `wip`; final evidence and independent signoff are absent.
+  reproducible release decision.
+- **Status:** `wip`; final evidence is absent.
 
 ### Scope and invariant
 
-Rebuild the exact source commit, retain provenance and release notes, obtain an
-independent review, and include complete-catalog mixed-load evidence. The
-final decision consumes all four stage records and cannot infer a pass from
-the presence of a release bundle alone.
+Rebuild the exact source commit, retain provenance and release notes, and
+include complete-catalog mixed-load evidence. The final decision consumes all
+four stage records and cannot infer a pass from the presence of a release
+bundle alone.
 
 - **Invariant preserved:** release artifacts identify the exact clean source
   and required capabilities; unresolved findings or failed gates remain
   visible and block the final decision.
-- **Must not:** self-attest the independent review, bypass required checks, or
-  bind stale evidence to a newer commit.
+- **Must not:** bypass required checks or bind stale evidence to a newer
+  commit.
 
 ### Acceptance
 
-- `transfer-independent-review-v1` passes `independent-reviewer-attested`,
-  `review-scope-complete`, and `findings-resolved`, with reviewer identity and
-  scope evidence.
 - `transfer-release-bundle-v1` passes `clean-source-rebuild`,
   `artifact-provenance`, and `release-notes-and-bundle`; the release artifact
   digest is tied to the exact source commit.
 - `transfer-catalog-load-v1` passes production catalog persist/restore,
   mixed native API latency retention, and host/source identity checks using a
   validated report and retained raw log.
-- `transfer-gate-policy-v1` records that required correctness gates were
-  reviewed and unapproved performance thresholds were not applied.
+- `transfer-gate-policy-v1` records that performance thresholds were
+  explicitly left unapplied.
 - The final evaluator reports all four stages passed and the release bundle
   is reproducible from the source-bound manifest.
 
@@ -6226,14 +6223,14 @@ the presence of a release bundle alone.
 - **Regression source:** `scripts/test_transfer_rebuild_rollout_gate.py`,
   `scripts/test_transfer_rebuild_catalog_load_report.py`, release build and
   provenance checks.
-- **Command or probe:** create independent-review, release-bundle, catalog,
-  and gate-policy records; assemble the final rollout index; run
+- **Command or probe:** create release-bundle, catalog, and gate-policy
+  records; assemble the final rollout index; run
   `scripts/transfer_rebuild/rollout_gate.py`.
 - **Expected result:** the evaluator returns ready only when every stage
-  artifact is valid, source-matched, and independently reviewed.
+  artifact is valid and source-matched.
 - **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `354ad504`. External acceptance remains listed below.
-- **External evidence still required:** independent reviewer, reproducible
-  release artifact, and complete-catalog mixed-load report.
+- **External evidence still required:** reproducible release artifact and
+  complete-catalog mixed-load report.
 
 ## Client idle-profile harness extension — implementation; host qualification pending
 

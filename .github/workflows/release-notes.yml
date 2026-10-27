@@ -1,67 +1,63 @@
 # ng-runner-policy: private-jit-only-v1
 name: Release-note validation
+run-name: action:${{ inputs.action }} pool:${{ inputs.runner_pool }}
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Requested operation
+        required: true
+        type: choice
+        options:
+          - release-note
+      runner_pool:
+        description: Runner pool for this operation
+        required: true
+        type: choice
+        options:
+          - private
+      base_sha:
+        description: Commit to compare against; blank checks the parent of the current main commit
+        required: false
+        type: string
 concurrency:
   group: ng-release-notes-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}-${{ github.event.action == 'edited' && 'metadata' || 'code' }}
   cancel-in-progress: false
 
 permissions:
   contents: read
-  pull-requests: read
 
 jobs:
   release-note:
-    if: github.event_name == 'pull_request'
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.action == 'release-note' &&
+      inputs.runner_pool == 'private'
     name: Validate release-note choice
     runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-release-note"]}}', github.run_id)) }}
     steps:
-      - name: Checkout pull request
+      - name: Checkout main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Test release-note validation
         run: python3 -m unittest scripts.test_release_notes
 
-      - name: Fetch base branch
-        if: github.event_name == 'pull_request'
-        env:
-          BASE_REF: ${{ github.base_ref }}
-        run: git fetch --no-tags origin "$BASE_REF"
-
       - name: Validate and preview release notes
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_BODY: ${{ github.event_name == 'pull_request' && github.event.pull_request.body || github.event.head_commit.message || '' }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          REQUESTED_BASE_SHA: ${{ inputs.base_sha }}
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
-            # A queued PR job may start after merge. The moving branch then
-            # already contains head and hides the fragment from the diff.
-            base="$PR_BASE_SHA"
-            head="$PR_HEAD_SHA"
-          else
-            head="$GITHUB_SHA"
-            base="$PUSH_BEFORE_SHA"
-            if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
-              base="$(git rev-parse --verify "${head}^" 2>/dev/null || true)"
-            fi
-            if [[ "$PR_BODY" != *"release-note: none"* ]]; then
-              associated_pr_bodies="$(gh api \
-                "repos/$GITHUB_REPOSITORY/commits/$head/pulls" \
-                --jq '[.[] | .body // ""] | join("\n")' 2>/dev/null || true)"
-              if [[ -n "$associated_pr_bodies" ]]; then
-                PR_BODY+=$'\n'"$associated_pr_bodies"
-                export PR_BODY
-              fi
-            fi
+          head="$GITHUB_SHA"
+          base="$REQUESTED_BASE_SHA"
+          if [[ -z "$base" ]]; then
+            base="$(git rev-parse --verify "${head}^")"
           fi
           python3 scripts/release_notes.py check \
             --base "$base" \

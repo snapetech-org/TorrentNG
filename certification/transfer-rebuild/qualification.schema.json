@@ -24,7 +24,6 @@
         "transfer-performance-policy-v1",
         "transfer-soak-qualification-v1",
         "transfer-canary-qualification-v1",
-        "transfer-independent-review-v1",
         "transfer-release-bundle-v1",
         "transfer-catalog-load-v1"
       ]

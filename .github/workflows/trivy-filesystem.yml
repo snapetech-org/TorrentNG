@@ -1,10 +1,23 @@
 # ng-runner-policy: private-jit-only-v1
 name: Trivy filesystem scan
 
+run-name: action:${{ inputs.action }} pool:${{ inputs.runner_pool }}
+
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      action:
+        description: Requested operation
+        required: true
+        type: choice
+        options:
+          - trivy
+      runner_pool:
+        description: Runner pool for this operation
+        required: true
+        type: choice
+        options:
+          - private
 
 permissions:
   contents: read
@@ -15,7 +28,10 @@ concurrency:
 
 jobs:
   trivy:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      inputs.action == 'trivy' &&
+      inputs.runner_pool == 'private'
     name: Trivy source, dependency, and configuration scan
     env:
       TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2

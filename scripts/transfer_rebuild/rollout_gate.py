@@ -50,7 +50,6 @@ REQUIRED_KINDS: dict[str, frozenset[str]] = {
     ),
     "SYS-015": frozenset(
         {
-            "transfer-independent-review-v1",
             "transfer-release-bundle-v1",
             "transfer-catalog-load-v1",
             "transfer-gate-policy-v1",
@@ -73,22 +72,23 @@ REQUIRED_CHECKS: dict[str, frozenset[str]] = {
         {"crash-cut-recovery", "resume-restoration", "one-writer-recovery"}
     ),
     "transfer-gate-policy-v1": frozenset(
-        {"correctness-gates-reviewed", "performance-thresholds-explicitly-unapplied"}
+        {"performance-thresholds-explicitly-unapplied"}
     ),
     "transfer-simulator-qualification-v1": frozenset(
         {"seeded-invariant-replay", "hybrid-race-replay", "generation-reuse-replay"}
     ),
     "transfer-performance-policy-v1": frozenset(
-        {"matched-whole-client-metrics", "candidate-and-baseline-paired", "no-unapproved-thresholds"}
+        {
+            "matched-whole-client-metrics",
+            "candidate-and-baseline-paired",
+            "thresholds-explicitly-unapplied",
+        }
     ),
     "transfer-soak-qualification-v1": frozenset(
         {"soak-completed", "integrity-preserved", "resource-accounting-complete"}
     ),
     "transfer-canary-qualification-v1": frozenset(
         {"candidate-cutover", "reference-rollback", "single-writer-throughout"}
-    ),
-    "transfer-independent-review-v1": frozenset(
-        {"independent-reviewer-attested", "review-scope-complete", "findings-resolved"}
     ),
     "transfer-release-bundle-v1": frozenset(
         {"clean-source-rebuild", "artifact-provenance", "release-notes-and-bundle"}

@@ -137,7 +137,7 @@ current read-only `kspls0` check confirmed the ext4 LVM path and 25 T free,
 but load averages were 89.93/89.71/94.70 with 17 users, so no new hardware
 benchmark was run. Prior dedicated ext4 evidence remains bound to `eb5f3158`.
 Additional pinned-client trials, active-transfer/process resource qualification,
-protected-runner hardware evidence, crash-cut, soak/canary, independent review,
+protected-runner hardware evidence, crash-cut, soak/canary,
 and release evidence remain open; no whole-client efficiency or superiority
 claim is made.
 

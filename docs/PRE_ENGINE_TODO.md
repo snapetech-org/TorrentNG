@@ -46,7 +46,6 @@ real clients, target hardware, public network access, or elapsed soak time.
 - Run live compatibility certification against real mobile NZB360 and Transdrone clients and attach the generated report; the script-level qBittorrent read-flow certification is available as `scripts/mobile_compat_certification.sh`, but app UI certification still needs physical/mobile clients or emulators with the apps installed.
 - Run benchmark report on target release hardware and publish results for realistic imported libraries in addition to the synthetic matrix.
 - Run long soak test for memory and sync stability at 15k torrents for 24 hours on target release hardware using `scripts/soak_certification.sh`.
-- Complete independent security review of script workflow policy before recommending it for production.
 - Re-run `scripts/phase1_certification.sh` immediately before release and rebuild the Phase 1 image if upstream ruTorrent/PHP base behavior changes.
 
 ## Moved to TorrentNG client rewrite

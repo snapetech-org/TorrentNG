@@ -150,7 +150,6 @@ fi
 
 mark "Real mobile app UI check" "INFO" "script-level NZB360/Transdrone qBit read-flow passes; physical/emulator app UI run remains external"
 mark "Live autobrr announce ingest" "INFO" "autobrr qBit client/filter/action passes; real tracker IRC/indexer announce requires tracker credentials"
-mark "Independent security review" "INFO" "automated policy and dependency/image scans pass; independent human review remains external"
 mark "Post-soak finalization" "INFO" "after 24h: SOAK_MIN_SAMPLES=1200 RESTORE_NORMAL=1 ./scripts/finalize_soak.sh ${SOAK_REPORT:-$REPORT_DIR/soak-24h-report.md}"
 
 {

@@ -10,44 +10,30 @@ PROTECTED_TRANSFER_WORKFLOW = "transfer-rebuild.yml"
 
 
 class WorkflowRunnerPolicyTests(unittest.TestCase):
-    def test_release_build_starts_only_from_version_tag_pushes(self) -> None:
+    def test_release_requires_explicit_action_and_private_pool(self) -> None:
         source = (WORKFLOW_DIR / "release.yml").read_text(encoding="utf-8")
-        self.assertRegex(source, r"(?m)^  push:$")
-        self.assertIn('      - "v*"', source)
-        self.assertNotRegex(source, r"(?m)^  workflow_dispatch:")
-        self.assertNotIn("inputs.tag", source)
+        self.assertRegex(source, r"(?m)^  workflow_dispatch:$")
+        self.assertNotRegex(source, r"(?m)^  push:")
+        self.assertIn("inputs.action == 'release'", source)
+        self.assertIn("inputs.runner_pool == 'private'", source)
+        self.assertIn("inputs.release_tag", source)
 
-    def test_codeql_installs_node_before_javascript_typescript_analysis(self) -> None:
-        source = (WORKFLOW_DIR / "codeql.yml").read_text(encoding="utf-8")
-        setup_match = re.search(
-            r"(?ms)^      - name: Set up Node\.js for CodeQL\n"
-            r"(?P<step>.*?)(?=^      - name: |\Z)",
-            source,
-        )
-        self.assertIsNotNone(setup_match)
-        setup_step = setup_match.group("step")
-        self.assertRegex(
-            setup_step,
-            r"(?m)^        if: matrix\.language == 'javascript-typescript'$",
-        )
-        self.assertRegex(
-            setup_step,
-            r"(?m)^        uses: actions/setup-node@[a-f0-9]{40} # v7$",
-        )
-        self.assertIn('node-version: "22.23.4"', setup_step)
-        self.assertIn("package-manager-cache: false", setup_step)
-        self.assertLess(setup_match.start(), source.index("- name: Initialize CodeQL"))
+    def test_codeql_workflow_is_disabled(self) -> None:
+        self.assertFalse((WORKFLOW_DIR / "codeql.yml").exists())
 
     def test_main_ci_routes_release_jobs_only_to_private_jit(self) -> None:
         source = (WORKFLOW_DIR / "ci.yml").read_text(encoding="utf-8")
         self.assertIn("# ng-runner-policy: private-jit-only-v1", source)
+        self.assertNotRegex(source, r"(?m)^  push:")
         self.assertRegex(
             source,
             r"(?ms)^  pull_request_target:\n"
             r"    branches:\n      - main\n"
-            r"    types:\n      - opened\n      - synchronize\n"
-            r"      - reopened\n      - ready_for_review\n",
+            r"    types:\n      - labeled\n",
         )
+        self.assertNotRegex(source, r"(?m)^      - (?:opened|synchronize|reopened|ready_for_review)$")
+        self.assertIn("inputs.action == 'ci'", source)
+        self.assertIn("inputs.runner_pool == 'private'", source)
         dispatcher = re.search(
             r"(?ms)^  dispatch-owner-pr:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
             source,
@@ -55,6 +41,8 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         self.assertIsNotNone(dispatcher)
         self.assertIn("github.event.pull_request.user.login == 'snapetech'", dispatcher.group("body"))
         self.assertIn("github.event.pull_request.head.repo.id == github.repository_id", dispatcher.group("body"))
+        self.assertIn("github.event.label.name == 'action:ci'", dispatcher.group("body"))
+        self.assertIn("contains(github.event.pull_request.labels.*.name, 'pool:private')", dispatcher.group("body"))
         self.assertIn("contents: none", dispatcher.group("body"))
         self.assertNotIn("actions/checkout", dispatcher.group("body"))
         self.assertNotIn("secrets.", dispatcher.group("body"))
@@ -201,7 +189,6 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                 self.assertRegex(source, r"scripts[\\/]+enable-msvc-environment\.ps1")
                 continue
             if workflow.name in {
-                "codeql.yml",
                 "release-notes.yml",
                 "semgrep-community.yml",
                 "trivy-filesystem.yml",
@@ -250,8 +237,6 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                         self.assertNotIn("||", expression)
                 if workflow.name in {"release-aur.yml", "release-copr.yml", "release-ppa.yml"}:
                     self.assertIn("github.ref == 'refs/heads/main'", source)
-                if workflow.name in {"codeql.yml", "semgrep-community.yml"}:
-                    self.assertIn("schedule:", source)
                 if workflow.name == "semgrep-community.yml":
                     self.assertIn("docker info", source)
                     self.assertIn("docker run", source)
@@ -309,13 +294,21 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         self.assertNotIn("secrets:", source)
 
         caller = (WORKFLOW_DIR / "public-fork-pr.yml").read_text(encoding="utf-8")
-        self.assertRegex(caller, r"(?m)^  workflow_dispatch:\s*\{\}\s*$")
-        self.assertNotRegex(caller, r"(?m)^  pull_request(?:_target)?:")
+        self.assertRegex(
+            caller,
+            r"(?ms)^  pull_request_target:\n    branches:\n      - main\n    types:\n      - labeled\n",
+        )
+        self.assertIn("action:fork-validation", caller)
+        self.assertIn("runner_pool: public", caller)
+        self.assertIn("action:fork-validation", caller)
+        self.assertIn("pool:public", caller)
         self.assertIn("uses: ./.github/workflows/fork-safe-validation.yml", caller)
         self.assertNotIn("@7cb3c216a2473fd6db8ec07f70be209ac4fefe46", caller)
         self.assertIn("github.event.pull_request.head.repo.fork == true", caller)
         self.assertIn("github.event.pull_request.base.ref == 'main'", caller)
-        self.assertNotIn("pull_request_target", source + caller)
+        self.assertIn("inputs.pr_head_sha", source)
+        self.assertIn("repository: ${{ inputs.pr_head_repo }}", source)
+        self.assertIn("pull_request_target", source + caller)
 
     def test_windows_smoke_uses_the_private_packer_runner(self) -> None:
         source = (WORKFLOW_DIR / "windows-smoke.yml").read_text(encoding="utf-8")

@@ -1,13 +1,27 @@
 name: gVisor runner smoke
+run-name: action:${{ inputs.action }} pool:${{ inputs.runner_pool }}
 
 on:
   workflow_dispatch:
+    inputs:
+      action:
+        description: Requested operation
+        required: true
+        type: choice
+        options:
+          - gvisor-smoke
+      runner_pool:
+        description: Runner pool for this operation
+        required: true
+        type: choice
+        options:
+          - private
 
 permissions: {}
 
 jobs:
   smoke:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && inputs.action == 'gvisor-smoke' && inputs.runner_pool == 'private'
     timeout-minutes: 5
     runs-on:
       group: gvisor-sandbox

@@ -1,9 +1,22 @@
 # ng-runner-policy: private-jit-only-v1
 name: Backend Evidence
+run-name: action:${{ inputs.action }} pool:${{ inputs.runner_pool }}
 
 on:
   workflow_dispatch:
     inputs:
+      action:
+        description: Requested operation
+        required: true
+        type: choice
+        options:
+          - backend-evidence
+      runner_pool:
+        description: Runner pool for this operation
+        required: true
+        type: choice
+        options:
+          - private
       run_live_fault:
         description: "Run release-daemon crash, SQLite-failure, and storage-failure matrix"
         required: true
@@ -46,7 +59,7 @@ permissions:
 jobs:
   deterministic-fault:
     name: Deterministic fault matrix
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && inputs.action == 'backend-evidence' && inputs.runner_pool == 'private'
     runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-backend-evidence-deterministic-fault"]}}', github.run_id)) }}
     steps:
       - name: Checkout
@@ -75,7 +88,7 @@ jobs:
 
   live-fault:
     name: Live release-daemon fault matrix
-    if: github.ref == 'refs/heads/main' && inputs.run_live_fault == true
+    if: github.ref == 'refs/heads/main' && inputs.action == 'backend-evidence' && inputs.runner_pool == 'private' && inputs.run_live_fault == true
     runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-backend-evidence-live-fault"]}}', github.run_id)) }}
     timeout-minutes: 20
     steps:
@@ -127,7 +140,7 @@ jobs:
 
   api-load:
     name: Live many-client and slow-SSE load
-    if: github.ref == 'refs/heads/main' && inputs.run_api_load == true
+    if: github.ref == 'refs/heads/main' && inputs.action == 'backend-evidence' && inputs.runner_pool == 'private' && inputs.run_api_load == true
     runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-backend-evidence-api-load"]}}', github.run_id)) }}
     timeout-minutes: 30
     steps:
@@ -177,7 +190,7 @@ jobs:
 
   public-compatibility:
     name: API and storage compatibility contracts
-    if: github.ref == 'refs/heads/main' && inputs.run_public_compat == true
+    if: github.ref == 'refs/heads/main' && inputs.action == 'backend-evidence' && inputs.runner_pool == 'private' && inputs.run_public_compat == true
     runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-backend-evidence-public-compatibility"]}}', github.run_id)) }}
     timeout-minutes: 90
     steps:
@@ -213,7 +226,7 @@ jobs:
 
   local-client-interop:
     name: Local/client interop (${{ matrix.suite }})
-    if: github.ref == 'refs/heads/main' && inputs.run_public_compat == true
+    if: github.ref == 'refs/heads/main' && inputs.action == 'backend-evidence' && inputs.runner_pool == 'private' && inputs.run_public_compat == true
     runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-{1}-backend-evidence-local-client-interop"]}}', github.run_id, strategy.job-index)) }}
     timeout-minutes: 300
     strategy:
@@ -255,7 +268,7 @@ jobs:
 
   public-torrent-interop:
     name: Public torrent client interop (${{ matrix.torrent }})
-    if: github.ref == 'refs/heads/main' && inputs.run_public_compat == true
+    if: github.ref == 'refs/heads/main' && inputs.action == 'backend-evidence' && inputs.runner_pool == 'private' && inputs.run_public_compat == true
     runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-{1}-backend-evidence-public-torrent-interop"]}}', github.run_id, strategy.job-index)) }}
     timeout-minutes: 240
     strategy:

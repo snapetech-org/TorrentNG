@@ -1,9 +1,22 @@
 # ng-runner-policy: private-jit-only-v1
 name: Publish Launchpad PPA
+run-name: action:${{ inputs.action }} pool:${{ inputs.runner_pool }} tag:${{ inputs.tag }}
 
 on:
   workflow_dispatch:
     inputs:
+      action:
+        description: Requested operation
+        required: true
+        type: choice
+        options:
+          - publish-ppa
+      runner_pool:
+        description: Runner pool for this operation
+        required: true
+        type: choice
+        options:
+          - private
       tag:
         description: Existing published release tag to upload, for example v20260930-4
         required: true
@@ -30,7 +43,7 @@ permissions:
 jobs:
   publish-ppa:
     name: Upload signed source packages to Launchpad
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.action == 'publish-ppa' && inputs.runner_pool == 'private'
     runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-publish-ppa"]}}', github.run_id)) }}
     permissions:
       contents: read

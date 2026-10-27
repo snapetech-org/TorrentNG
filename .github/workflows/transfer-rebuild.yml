@@ -1,9 +1,22 @@
 # ng-runner-policy: private-jit-only-v1
 name: Transfer Rebuild Qualification
+run-name: action:${{ inputs.action }} pool:${{ inputs.runner_pool }}
 
 on:
   workflow_dispatch:
     inputs:
+      action:
+        description: Requested operation
+        required: true
+        type: choice
+        options:
+          - transfer-rebuild
+      runner_pool:
+        description: Runner pool for this operation
+        required: true
+        type: choice
+        options:
+          - private
       run_dedicated_hardware:
         description: "Use the protected TorrentNG transfer performance runner"
         required: true
@@ -25,7 +38,7 @@ concurrency:
 jobs:
   private-jit-correctness:
     name: Private JIT transfer-core correctness
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && inputs.action == 'transfer-rebuild' && inputs.runner_pool == 'private'
     runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-transfer-rebuild-correctness"]}}', github.run_id)) }}
     timeout-minutes: 75
     steps:
@@ -98,7 +111,7 @@ jobs:
 
   dedicated-hardware:
     name: Dedicated storage and performance qualification
-    if: github.ref == 'refs/heads/main' && inputs.run_dedicated_hardware == true
+    if: github.ref == 'refs/heads/main' && inputs.action == 'transfer-rebuild' && inputs.runner_pool == 'private' && inputs.run_dedicated_hardware == true
     needs: private-jit-correctness
     runs-on: [self-hosted, linux, x64, torrentng-transfer-perf]
     environment: transfer-rebuild-hardware

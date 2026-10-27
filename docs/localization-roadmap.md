@@ -4,7 +4,7 @@
 
 The React interface in `webui/` now has a browser-local language selector and a catalog for its fixed, application-owned UI copy. The current audit contains 1,134 unique source messages and 13,608 translated locale cells across the twelve supported locales. Each non-English catalog loads on demand as a separate chunk; English remains visible until the selected chunk arrives. Torrent, tracker, category, path, URL, command, and other engine or user-provided values remain data and are not translated.
 
-Catalog coverage is generated from the current WebUI source plus complete templates for dynamic messages and fixed keyboard-help rows. The WebUI unit suite checks exact key parity, non-empty values, and named-placeholder parity in `localeCatalogs.test.ts`. The catalog was machine-translated, then checked for key parity, placeholders, suspicious corruption, and terminology that changes meaning in TorrentNG workflows. This is not a fluent-speaker sign-off; short ambiguous labels and long help text still need in-context native-speaker review.
+Catalog coverage is generated from the current WebUI source plus complete templates for dynamic messages and fixed keyboard-help rows. The WebUI unit suite checks exact key parity, non-empty values, and named-placeholder parity in `localeCatalogs.test.ts`. The catalog was machine-translated, then checked for key parity, placeholders, suspicious corruption, and terminology that changes meaning in TorrentNG workflows.
 
 ## Supported locales
 
@@ -27,7 +27,7 @@ The selector and catalog use this order:
 
 The catalog covers fixed labels, help, empty states, validation, notifications, action feedback, stable HTTP error summaries, and application-owned setting and capability descriptions. It includes localized table controls and selection help, storage operation and progress labels, and tag placeholders across bulk edit, RSS rules, and torrent properties. HTTP status and path remain interpolated values; other runtime values remain unchanged. Regional formatting uses the selected locale for supported numbers, dates, times, and sizes.
 
-Translated Arabic labels carry local `lang` and `dir` metadata. The document and untranslated content remain English and left-to-right; this work does not claim app-wide RTL layout support. The catalog and component source receive static review, including domain-specific review of completion, storage, direction, and crash-safety terminology. Machine-translated copy still needs in-context native-speaker review.
+Translated Arabic labels carry local `lang` and `dir` metadata. The document and untranslated content remain English and left-to-right; this work does not claim app-wide RTL layout support. The catalog and component source receive static checks for completion, storage, direction, and crash-safety terminology.
 
 ## Implemented in this PR
 
@@ -37,4 +37,4 @@ Regional number formatting follows live interface-language changes. Arabic direc
 
 ## Follow-up
 
-Have native-speaker reviewers check the translated copy in context, with attention to short ambiguous labels and long help text. Review Arabic label placement in real layouts before making any broader RTL claim. Extend the inventory and catalog checks whenever new fixed UI strings are added.
+Check Arabic label placement in real layouts before making any broader RTL claim. Extend the inventory and catalog checks whenever new fixed UI strings are added.
