@@ -31,10 +31,11 @@ chore(ci): update validation
 release-note: none
 ```
 
-The tag
-workflow assembles fragments since the previous published release and uses the
-same text for the GitHub release and Discord announcement. If a release range
-contains no user-facing changes, its release page says so explicitly.
+The private release workflow is manually dispatched from `main` with an
+existing version tag. It assembles fragments since the previous published
+release and uses the same text for the GitHub release and Discord announcement.
+Tag pushes do not publish a release. If a release range contains no
+user-facing changes, its release page says so explicitly.
 
 Preview a release range with:
 

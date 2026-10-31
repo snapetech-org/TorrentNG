@@ -6,6 +6,15 @@ Exercise TorrentNG's repository-owned behavior with repeatable headless checks, 
 
 "Bug free" cannot be proven by a finite test run. The release standard is therefore: no known open release-blocking defect; every required source and runtime gate has fresh, reviewable evidence tied to the exact release commit and artifact; and the strict release-readiness gate reports `PASS`. Missing, stale, skipped, warning, or failed required evidence blocks a public release. Local unit tests alone are not a release qualification.
 
+## Security scanning policy
+
+Per the owner directive dated 2026-10-30, CodeQL analysis is disabled for
+snapetech-org repositories. TorrentNG intentionally has no
+`.github/workflows/codeql.yml`, and the runner-policy test keeps it absent.
+Historical CodeQL results remain archival; they are not current release
+evidence. Continue the private-JIT Semgrep, Trivy, dependency-audit, and secret
+scanning gates.
+
 ## Risk areas to cover
 
 1. Torrent identity and metainfo parsing: v1, v2, hybrid, magnets, piece layers, malformed and oversized inputs, exact hash verification.
@@ -61,7 +70,7 @@ Run these stages against a clean checkout of the intended release commit. During
 ### 5. Security and supply-chain gates
 
 - Audit every lockfile (root, sidecar, fuzz, desktop) with RustSec and WebUI dependencies with `npm audit --audit-level=high`.
-- Run CodeQL, Semgrep, Trivy/container scans, secret scanning, license/package checks, and workflow permission/runner policy validation on the exact candidate commit. Review all exceptions and suppressions.
+- Run Semgrep, Trivy/container scans, dependency audits, secret scanning, license/package checks, and workflow permission/runner policy validation on the exact candidate commit. Review all exceptions and suppressions.
 - Exercise authorization boundaries, API key/OIDC login, secret redaction, URL/config redaction, path traversal/symlink defenses, request limits, hostile metainfo/protocol frames, and token/session revocation.
 - Record scanner/tool versions and database freshness; missing tools or stale vulnerability databases are not passes.
 
