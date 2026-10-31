@@ -239,7 +239,7 @@ export const UI_LABELS: Record<string, string> = {
   "Delete safely": "حذف بأمان",
   "Delete saved view": "حذف طريقة العرض المحفوظة",
   "Delete saved view {name}": "حذف العرض المحفوظ {name}",
-  "Delete the selected torrent (with confirmation)": "حذف السيل المحدد (مع التأكيد)",
+  "Delete the selected torrent (with confirmation)": "حذف التورنت المحدد (مع التأكيد)",
   "Delete torrent": "حذف التورنت",
   "Delete {name}": "حذف {name}",
   "Delete “{name}”?": "هل تريد حذف «{name}»؟",

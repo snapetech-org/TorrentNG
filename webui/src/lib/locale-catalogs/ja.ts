@@ -239,7 +239,7 @@ export const UI_LABELS: Record<string, string> = {
   "Delete safely": "安全に削除",
   "Delete saved view": "保存されたビューを削除",
   "Delete saved view {name}": "保存されたビュー {name} を削除します",
-  "Delete the selected torrent (with confirmation)": "選択した torrent を削除します (確認付き)",
+  "Delete the selected torrent (with confirmation)": "選択したトレントを削除します（確認が必要です）",
   "Delete torrent": "トレントを削除",
   "Delete {name}": "{name}を削除",
   "Delete “{name}”?": "「{name}」を削除しますか？",

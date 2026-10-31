@@ -245,7 +245,7 @@ export const UI_LABELS: Record<string, string> = {
   "Delete “{name}”?": "Supprimer « {name} » ?",
   "Delete...": "Supprimer...",
   "Deleting…": "Suppression en cours…",
-  "Descending": "Descendant",
+  "Descending": "Décroissant",
   "Deselect all": "Tout désélectionner",
   "Deselect selected torrents": "Désélectionner les torrents",
   "Deselect {name}": "Désélectionner {name}",

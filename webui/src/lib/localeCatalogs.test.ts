@@ -75,6 +75,9 @@ const customTorrentLinesEditedMessage = 'Custom rTorrent lines edited'
 const dhtPeerDiscoveryControlsMessage = 'DHT, PEX, and UDP tracker discovery controls.'
 const defaultActionMessage = 'Default'
 const defaultsActionMessage = 'Defaults'
+const deleteSelectedTorrentConfirmationMessage = 'Delete the selected torrent (with confirmation)'
+const descendingMessage = 'Descending'
+const detailsPanelPositionMessage = 'Details panel position'
 
 function placeholders(value: string) {
   return [...value.matchAll(/\{([a-zA-Z][a-zA-Z0-9_]*)\}/g)]
@@ -209,6 +212,11 @@ describe('interface locale catalogs', () => {
     expect(id[defaultActionMessage]).toBe('Bawaan')
     expect(hi[defaultsActionMessage]).toBe('डिफ़ॉल्ट लागू करें')
     expect(id[defaultsActionMessage]).toBe('Terapkan nilai bawaan')
+    expect(ar[deleteSelectedTorrentConfirmationMessage]).toContain('التورنت المحدد')
+    expect(zhHans[deleteSelectedTorrentConfirmationMessage]).not.toContain('torrent')
+    expect(ja[deleteSelectedTorrentConfirmationMessage]).not.toContain('torrent')
+    expect(fr[descendingMessage]).toBe('Décroissant')
+    expect(zhHans[detailsPanelPositionMessage]).toBe('详情面板位置')
     expect(de['Add a torrent to populate the table.']).toContain('die Tabelle')
     expect(ar['Add folder policy']).toBe('إضافة سياسة للمجلد')
     expect(ar['Add or remove a torrent from the selection']).toContain('إضافة تورنت')
