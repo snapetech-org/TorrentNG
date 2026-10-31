@@ -1,4 +1,4 @@
-import { LocalizedText } from '../lib/LocalizedText'
+import { LocalizedServerEventKind, LocalizedServerMessage, LocalizedText } from '../lib/LocalizedText'
 import { interfaceTextProps, translateInterface } from '../lib/interfaceLocale'
 import { getRegionalLocale } from '../lib/localeFormat'
 import { useMemo, useState } from 'react'
@@ -90,12 +90,13 @@ export function LogsPanel() {
 
 function LogRow({ event }: { event: AppLogEvent }) {
   const level = normalizeLevel(event.level)
+  const levelLabel = level === 'warn' ? 'Warnings' : level === 'error' ? 'Error' : 'Info'
   const color = level === 'error' ? 'var(--danger)' : level === 'warn' ? 'var(--warning)' : 'var(--accent)'
   const payload = parsePayload(event.payload)
   return (
     <article style={{
       display: 'grid',
-      gridTemplateColumns: '86px minmax(120px, 180px) 1fr',
+      gridTemplateColumns: '86px minmax(120px, 250px) 1fr',
       gap: 10,
       alignItems: 'start',
       border: `1px solid color-mix(in srgb, ${color} 40%, var(--border))`,
@@ -115,19 +116,23 @@ function LogRow({ event }: { event: AppLogEvent }) {
           fontWeight: 800,
           textTransform: 'uppercase',
         }}>
-          {level}
+          <LocalizedText source={levelLabel} />
         </span>
         <span style={{ color: 'var(--faint)', fontSize: 11 }}>{event.event_id ?? '-'}</span>
       </div>
       <div style={{ minWidth: 0 }}>
         <div style={{ color: 'var(--text)', fontWeight: 800, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={event.kind}>
-          {event.kind}
+          <LocalizedServerEventKind kind={event.kind} />
         </div>
-        <div style={{ color: 'var(--faint)', fontSize: 11 }}>{formatTime(event.occurred_at)}</div>
+        <div style={{ color: 'var(--faint)', fontSize: 11 }}>
+          {event.occurred_at ? formatTime(event.occurred_at) : <LocalizedText source="Unknown" />}
+        </div>
       </div>
       <div style={{ minWidth: 0 }}>
         <div style={{ color: 'var(--text)', fontSize: 12, lineHeight: 1.4, overflowWrap: 'anywhere' }}>
-          {event.message || event.kind}
+          {event.message
+            ? <LocalizedServerMessage message={event.message} kind={event.kind} />
+            : <LocalizedServerEventKind kind={event.kind} />}
         </div>
         {payload && (
           <div style={{
@@ -155,7 +160,6 @@ function normalizeLevel(level: string): 'info' | 'warn' | 'error' {
 }
 
 function formatTime(timestamp: number): string {
-  if (!timestamp) return 'unknown'
   return new Date(timestamp * 1000).toLocaleString(getRegionalLocale())
 }
 

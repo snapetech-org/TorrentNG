@@ -1,5 +1,10 @@
 import { Fragment, type ReactNode } from 'react'
 import { useInterfaceLanguage } from './interfaceLocale'
+import serverMessages from './server-messages.json'
+import { compileServerMessageMatchers, matchServerMessage } from './serverMessageMatch'
+import { SERVER_EVENT_KIND_LABELS } from './serverEventKinds'
+
+const serverMessageMatchers = compileServerMessageMatchers(serverMessages)
 
 type Props = {
   source: string
@@ -33,8 +38,26 @@ export function LocalizedRichText({ source, parameters }: { source: string; para
   )
 }
 
+export function LocalizedServerMessage({ message, kind }: { message: string; kind: string }) {
+  if (kind === 'rtorrent_log' || !Object.hasOwn(SERVER_EVENT_KIND_LABELS, kind)) return <>{message}</>
+  const match = matchServerMessage(message, serverMessageMatchers)
+  if (!match) return <>{message}</>
+  return <LocalizedRichText source={match.source} parameters={match.tokens} />
+}
+
+export function LocalizedServerEventKind({ kind }: { kind: string }) {
+  const source = Object.hasOwn(SERVER_EVENT_KIND_LABELS, kind)
+    ? SERVER_EVENT_KIND_LABELS[kind as keyof typeof SERVER_EVENT_KIND_LABELS]
+    : undefined
+  return source ? <LocalizedText source={source} /> : <>{kind}</>
+}
+
 export function LocalizedErrorText({ message }: { message: string }) {
   const { t, textProps } = useInterfaceLanguage()
+  const serverMatch = matchServerMessage(message, serverMessageMatchers)
+  if (serverMatch) {
+    return <LocalizedRichText source={serverMatch.source} parameters={serverMatch.tokens} />
+  }
   let source = message
   let parameters: Record<string, string | number> = {}
   let path: string | null = null
@@ -57,6 +80,12 @@ export function LocalizedErrorText({ message }: { message: string }) {
         parameters = { retryAfter: retryError[1] }
       } else if (/^(?:TypeError: )?Failed to fetch$/.test(message) || message === 'Load failed') {
         source = 'Network request failed. Check your connection.'
+      } else if (message === 'Invalid username/password or API token' ||
+                 message === 'Too many login attempts. Please try again later.') {
+        // These exact AuthError messages are authored by api/client.ts login().
+        source = message
+      } else {
+        return <>{message}</>
       }
     }
   }
