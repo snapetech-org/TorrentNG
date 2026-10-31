@@ -131,7 +131,7 @@ export const UI_LABELS: Record<string, string> = {
   "Check…": "Đang kiểm tra…",
   "Choose a WebUI username and password. Public binds require a password of at least 16 characters. API tokens stay enabled for automation and can also be entered in either login field.": "Chọn tên người dùng và mật khẩu WebUI. Khi dịch vụ được liên kết với địa chỉ công khai, mật khẩu phải có ít nhất 16 ký tự. Mã thông báo API vẫn được bật cho tự động hóa và có thể nhập ở một trong hai trường đăng nhập.",
   "Choose how dates, times, and numbers are displayed. This setting is separate from interface language.": "Chọn cách hiển thị ngày, giờ và số. Tùy chọn này độc lập với ngôn ngữ giao diện.",
-  "Choose or drop torrent files": "Chọn hoặc thả tệp torrent",
+  "Choose or drop torrent files": "Chọn hoặc kéo thả tệp torrent",
   "Choose table columns": "Chọn cột của bảng",
   "Choose visible table columns": "Chọn các cột bảng hiển thị",
   "Choose where the details panel is docked": "Chọn vị trí gắn bảng chi tiết.",

@@ -35,6 +35,10 @@ const filesystemHoleCheckMessage = [
   'Ask the filesystem which parts of each file were never written (holes, or preallocated space with no data) and re-verify any piece that claims to be there.',
   'Reads metadata only, so it is fast. It only triggers re-hashing; it never declares a piece corrupt by itself.',
 ].join(' ')
+const immediateTorrentChangesMessage = 'Changes take effect immediately, for torrents that start or finish from now on.'
+const weakUnknownStorageMessage = 'Check harder on weak or unknown storage'
+const publicWebUiSetupMessage = 'Choose a WebUI username and password. Public binds require a password of at least 16 characters. API tokens stay enabled for automation and can also be entered in either login field.'
+const chooseOrDropTorrentFilesMessage = 'Choose or drop torrent files'
 
 function placeholders(value: string) {
   return [...value.matchAll(/\{([a-zA-Z][a-zA-Z0-9_]*)\}/g)]
@@ -70,6 +74,21 @@ describe('interface locale catalogs', () => {
     expect(zhHans['Check']).toBe('检查')
     expect(vi.Command).toBe('Lệnh')
     expect(hi.Command).toBe('कमांड')
+    expect(hi[immediateTorrentChangesMessage]).toContain('अब से शुरू या पूरे होने वाले टोरेंट')
+    expect(ar[immediateTorrentChangesMessage]).toContain('التورنتات التي تبدأ أو تكتمل')
+    expect(ar[weakUnknownStorageMessage]).toContain('شدّد الفحص')
+    expect(id[weakUnknownStorageMessage]).toContain('pemeriksaan lebih ketat')
+    expect(zhHans[publicWebUiSetupMessage]).toContain('绑定到公网地址时')
+    expect(de[publicWebUiSetupMessage]).toContain('in eines der beiden Anmeldefelder')
+    expect(ja[publicWebUiSetupMessage]).toContain('自動化用に引き続き有効')
+    expect(fr[publicWebUiSetupMessage]).toContain('Une écoute sur une adresse publique')
+    expect(ko[publicWebUiSetupMessage]).not.toContain('Public binds')
+    expect(ptBR[publicWebUiSetupMessage]).toContain('qualquer um dos dois campos')
+    expect(es[chooseOrDropTorrentFilesMessage]).toContain('arrastra y suelta')
+    expect(hi[chooseOrDropTorrentFilesMessage]).toContain('खींचकर छोड़ें')
+    expect(ja[chooseOrDropTorrentFilesMessage]).toContain('ドラッグ＆ドロップ')
+    expect(ko[chooseOrDropTorrentFilesMessage]).toContain('끌어다 놓으세요')
+    expect(id[chooseOrDropTorrentFilesMessage]).toContain('seret dan lepas')
     expect(de['Add a torrent to populate the table.']).toContain('die Tabelle')
     expect(ar['Add folder policy']).toBe('إضافة سياسة للمجلد')
     expect(ar['Add or remove a torrent from the selection']).toContain('إضافة تورنت')

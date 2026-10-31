@@ -131,7 +131,7 @@ export const UI_LABELS: Record<string, string> = {
   "Check…": "Comprobando…",
   "Choose a WebUI username and password. Public binds require a password of at least 16 characters. API tokens stay enabled for automation and can also be entered in either login field.": "Elija un nombre de usuario y una contraseña para la WebUI. Si el servicio se enlaza a una dirección pública, la contraseña debe tener al menos 16 caracteres. Los tokens de API siguen habilitados para la automatización y también se pueden introducir en cualquiera de los dos campos de inicio de sesión.",
   "Choose how dates, times, and numbers are displayed. This setting is separate from interface language.": "Elige cómo se muestran las fechas, horas y números. Este ajuste es independiente del idioma de la interfaz.",
-  "Choose or drop torrent files": "Elige o suelta archivos torrent",
+  "Choose or drop torrent files": "Elige o arrastra y suelta archivos torrent",
   "Choose table columns": "Elegir columnas de la tabla",
   "Choose visible table columns": "Elegir las columnas visibles de la tabla",
   "Choose where the details panel is docked": "Elige dónde está el panel de detalles",

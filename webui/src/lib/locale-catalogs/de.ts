@@ -129,7 +129,7 @@ export const UI_LABELS: Record<string, string> = {
   "Checking…": "Wird geprüft…",
   "Checkpoint": "Prüfpunkt",
   "Check…": "Prüfung läuft…",
-  "Choose a WebUI username and password. Public binds require a password of at least 16 characters. API tokens stay enabled for automation and can also be entered in either login field.": "Wählen Sie einen WebUI-Benutzernamen und ein Passwort. Öffentliche Bindungen erfordern ein Passwort von mindestens 16 Zeichen. API-Token bleiben für die Automatisierung aktiviert und können auch in beide Anmeldefelder eingegeben werden.",
+  "Choose a WebUI username and password. Public binds require a password of at least 16 characters. API tokens stay enabled for automation and can also be entered in either login field.": "Wählen Sie einen WebUI-Benutzernamen und ein Passwort. Wenn der Dienst an eine öffentliche Adresse gebunden ist, ist ein Passwort mit mindestens 16 Zeichen erforderlich. API-Token bleiben für die Automatisierung aktiviert und können auch in eines der beiden Anmeldefelder eingegeben werden.",
   "Choose how dates, times, and numbers are displayed. This setting is separate from interface language.": "Legen Sie fest, wie Datum, Uhrzeit und Zahlen angezeigt werden. Diese Einstellung ist unabhängig von der Oberflächensprache.",
   "Choose or drop torrent files": "Torrent-Dateien auswählen oder ablegen",
   "Choose table columns": "Tabellenspalten auswählen",
