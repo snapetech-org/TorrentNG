@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { LocalizedErrorText, LocalizedServerEventKind, LocalizedServerMessage, LocalizedText } from './LocalizedText'
 import { applyInitialInterfaceLanguage } from './interfaceLocale'
@@ -44,6 +44,15 @@ describe('server-originated localized text', () => {
     expect(screen.getByText('info hash must not be empty')).toBeTruthy()
   })
 
+  it('routes exact Swarm Switch client errors through source localization and keeps unknown errors raw', () => {
+    const { container } = render(<>
+      <LocalizedErrorText message="Could not read the public torrent file." />
+      <LocalizedErrorText message="unregistered provider diagnostic" />
+    </>)
+    expect(container.querySelector('span[lang="en"]')?.textContent).toBe('Could not read the public torrent file.')
+    expect(screen.getByText('unregistered provider diagnostic')).toBeTruthy()
+  })
+
   it('keeps dynamic server error values intact and isolated for bidirectional text', () => {
     const dynamicValue = '0012 / عربى / <piece>'
     render(<LocalizedErrorText message={`info hash contains ${dynamicValue} bytes; maximum is 256`} />)
@@ -51,6 +60,23 @@ describe('server-originated localized text', () => {
     const value = screen.getByText(dynamicValue)
     expect(value.tagName).toBe('BDI')
     expect(value.getAttribute('dir')).toBe('ltr')
+  })
+
+  it('keeps translated dynamic values reactive and isolates them inside Arabic text', async () => {
+    const dynamicValue = 'Episode 001 / عربى'
+    const { container } = render(<LocalizedText source="Files ({count})" parameters={{ count: dynamicValue }} />)
+
+    act(() => {
+      localStorage.setItem('torrentng.interface-language', 'ar')
+      applyInitialInterfaceLanguage()
+    })
+
+    await waitFor(() => expect(container.querySelector('span[lang="ar"]')?.textContent).toBe('الملفات (Episode 001 / عربى)'))
+    const text = container.querySelector('span[lang="ar"]')
+    const value = screen.getByText(dynamicValue)
+    expect(text?.getAttribute('dir')).toBe('rtl')
+    expect(value.tagName).toBe('BDI')
+    expect(value.getAttribute('dir')).toBe('auto')
   })
 
   it('leaves unknown messages and event kinds unchanged', () => {

@@ -943,7 +943,7 @@ export const UI_LABELS: Record<string, string> = {
   "Tracker TLS verification controls": "ट्रैकर TLS सत्यापन नियंत्रण",
   "Tracker URL": "ट्रैकर URL",
   "Tracker added": "ट्रैकर जोड़ा गया",
-  "Tracker contains": "ट्रैकर में शामिल हो",
+  "Tracker contains": "ट्रैकर में मौजूद",
   "Tracker details unavailable.": "ट्रैकर विवरण अनुपलब्ध।",
   "Tracker edit": "ट्रैकर संपादित करें",
   "Tracker edited": "ट्रैकर संपादित किया गया",

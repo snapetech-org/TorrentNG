@@ -1605,6 +1605,7 @@ function LoginScreen({ message, onLogin }: {
   message: string
   onLogin: (username: string, password: string) => Promise<void>
 }) {
+  const oidcFailureSource = 'Single sign-on failed. Check account access and try again.'
   const installHint = typeof window === 'undefined'
     ? null
     : new URLSearchParams(window.location.search).get('tng-install')
@@ -1618,7 +1619,7 @@ function LoginScreen({ message, onLogin }: {
   const [oidcProvider, setOidcProvider] = useState('generic')
   const [error, setError] = useState(() =>
     message || (new URLSearchParams(window.location.search).has('oidc-error')
-      ? translateInterface('Single sign-on failed. Check account access and try again.')
+      ? oidcFailureSource
       : ''),
   )
   const [busy, setBusy] = useState(false)
@@ -1626,7 +1627,7 @@ function LoginScreen({ message, onLogin }: {
 
   useEffect(() => {
     setError(message || (new URLSearchParams(window.location.search).has('oidc-error')
-      ? translateInterface('Single sign-on failed. Check account access and try again.')
+      ? oidcFailureSource
       : ''))
   }, [message])
 
@@ -1768,7 +1769,7 @@ function LoginScreen({ message, onLogin }: {
           background: 'color-mix(in srgb, var(--danger) 9%, var(--surface))',
           border: '1px solid color-mix(in srgb, var(--danger) 45%, var(--border))',
           borderRadius: 6, padding: '8px 9px',
-        }}><LocalizedErrorText message={error} /></div>}
+        }}>{error === oidcFailureSource ? <LocalizedText source={oidcFailureSource} /> : <LocalizedErrorText message={error} />}</div>}
         <button type="submit" disabled={busy} style={{
           marginTop: 4, background: busy ? 'var(--surface-2)' : 'var(--accent-soft)',
           border: '1px solid var(--accent)', borderRadius: 5, color: 'var(--accent-text)',

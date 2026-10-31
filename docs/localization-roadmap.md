@@ -50,3 +50,9 @@ The contextual pass then covered sorted catalog keys 765–824, 825–884, 885�
 The source-bound registry contains 193 fixed messages/templates, including the Swarm Switch/native-engine sources and 25 fixed compatible-client log messages. It binds 265 source fragments and maps 43 known event kinds. Four registered sources reuse existing catalog keys; 189 new keys still need translations in all twelve locales (2,268 target cells). Those pending values are separate from the 13,704 existing UI catalog cells, whose independent whole-catalog semantic review remains pending.
 
 External rTorrent log payloads and messages with unrecognized event kinds remain unchanged. Known app-owned log messages use only the reviewed registry; captured paths, identifiers and error details stay unchanged and isolated. Unmatched runtime errors also remain raw, even when they equal a UI catalog key.
+
+## Pending source coverage
+
+The Swarm Switch panel and sign-in flow now send 79 application-owned source strings through the reactive locale lookup (77 Swarm Switch strings and two App strings). Their 948 target cells across twelve locales are explicitly pending translation and are listed with their source callers in `webui/src/lib/pendingLocaleCoverage.ts`. Catalogs remain free of blank or English filler values for these new sources.
+
+The server-message ledger in the same file records producer paths and the two render callers for all 193 registry records. Four records reuse existing catalog keys; 189 new sources, or 2,268 target cells, remain pending. Focused coverage tests enforce both pending counts and the absence of filler translations. Once the queued translation pass fills these cells, update the ledger/tests to mark the sources covered.

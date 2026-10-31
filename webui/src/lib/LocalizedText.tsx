@@ -5,6 +5,10 @@ import { compileServerMessageMatchers, matchServerMessage } from './serverMessag
 import { SERVER_EVENT_KIND_LABELS } from './serverEventKinds'
 
 const serverMessageMatchers = compileServerMessageMatchers(serverMessages)
+const applicationErrorSources = new Set([
+  'Could not read the public torrent file.',
+  'Public metainfo exceeds 8 MiB.',
+])
 
 type Props = {
   source: string
@@ -15,9 +19,22 @@ type Props = {
 
 export function LocalizedText({ source, parameters = {}, spaceBefore = false, spaceAfter = false }: Props) {
   const { t, textProps } = useInterfaceLanguage()
+  const parameterValues = new Map<string, string | number>()
+  const markerParameters = Object.fromEntries(Object.entries(parameters).map(([name, value], index) => {
+    const marker = `\uE000TNG_LOCALIZED_PARAMETER_${index}\uE001`
+    parameterValues.set(marker, value)
+    return [name, marker]
+  }))
+  const translated = t(source, markerParameters)
+  const markerPattern = parameterValues.size
+    ? new RegExp(`(${[...parameterValues.keys()].join('|')})`, 'g')
+    : null
+  const parts = markerPattern ? translated.split(markerPattern) : [translated]
   return (
     <span {...textProps(source)}>
-      {spaceBefore ? ' ' : null}{t(source, parameters)}{spaceAfter ? ' ' : null}
+      {spaceBefore ? ' ' : null}{parts.map((part, index) => parameterValues.has(part)
+        ? <bdi key={`parameter-${index}`} dir="auto">{parameterValues.get(part)}</bdi>
+        : <Fragment key={`text-${index}`}>{part}</Fragment>)}{spaceAfter ? ' ' : null}
     </span>
   )
 }
@@ -58,6 +75,7 @@ export function LocalizedErrorText({ message }: { message: string }) {
   if (serverMatch) {
     return <LocalizedRichText source={serverMatch.source} parameters={serverMatch.tokens} />
   }
+  if (applicationErrorSources.has(message)) return <LocalizedText source={message} />
   let source = message
   let parameters: Record<string, string | number> = {}
   let path: string | null = null
