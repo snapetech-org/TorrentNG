@@ -665,7 +665,7 @@ export const UI_LABELS: Record<string, string> = {
   "Rename": "重新命名",
   "Rendered": "已呈現",
   "Reorder columns": "重新排列欄位",
-  "Replace the selection with one torrent": "改為選取一個種子",
+  "Replace the selection with one torrent": "以一個種子取代目前的選取項目",
   "Reset": "重設",
   "Reset all managed settings to defaults": "將所有受管理的設定重設為預設值",
   "Reset columns": "重設欄位",
