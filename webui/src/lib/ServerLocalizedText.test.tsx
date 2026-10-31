@@ -30,10 +30,14 @@ describe('server-originated localized text', () => {
     render(<>
       <span><LocalizedServerMessage message={message} /></span>
       <span><LocalizedServerEventKind kind="provider_event_v42" /></span>
+      <span><LocalizedServerEventKind kind="toString" /></span>
+      <span><LocalizedServerEventKind kind="__proto__" /></span>
     </>)
 
     expect(screen.getByText(message)).toBeTruthy()
     expect(screen.getByText('provider_event_v42')).toBeTruthy()
+    expect(screen.getByText('toString')).toBeTruthy()
+    expect(screen.getByText('__proto__')).toBeTruthy()
   })
 
   it('uses the reviewed source label for known persisted event kinds', () => {

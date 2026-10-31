@@ -45,7 +45,9 @@ export function LocalizedServerMessage({ message }: { message: string }) {
 }
 
 export function LocalizedServerEventKind({ kind }: { kind: string }) {
-  const source = SERVER_EVENT_KIND_LABELS[kind as keyof typeof SERVER_EVENT_KIND_LABELS]
+  const source = Object.hasOwn(SERVER_EVENT_KIND_LABELS, kind)
+    ? SERVER_EVENT_KIND_LABELS[kind as keyof typeof SERVER_EVENT_KIND_LABELS]
+    : undefined
   return source ? <LocalizedText source={source} /> : <>{kind}</>
 }
 
