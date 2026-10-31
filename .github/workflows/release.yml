@@ -1,7 +1,7 @@
 # ng-runner-policy: private-jit-only-v1
 # packer-windows-jit-v1
 name: Release
-run-name: action:${{ inputs.action }} pool:${{ inputs.runner_pool }} tag:${{ inputs.release_tag }}
+run-name: action:${{ inputs.action }}:pool:${{ inputs.runner_pool }}:tag:${{ inputs.release_tag }}
 
 on:
   workflow_dispatch:
