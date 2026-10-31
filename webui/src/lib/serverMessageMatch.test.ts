@@ -138,7 +138,7 @@ describe('server message matching', () => {
       ...serverMessages.map(sourceRecord => sourceRecord.source),
     ])
 
-    expect(Object.keys(SERVER_EVENT_KIND_LABELS)).toHaveLength(23)
+    expect(Object.keys(SERVER_EVENT_KIND_LABELS)).toHaveLength(42)
     for (const source of Object.values(SERVER_EVENT_KIND_LABELS)) {
       expect(sources.has(source), source).toBe(true)
     }
