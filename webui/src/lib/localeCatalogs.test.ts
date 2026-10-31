@@ -14,6 +14,15 @@ import { UI_LABELS as zhHant } from './locale-catalogs/zh-Hant'
 
 const catalogs = { es, zhHans, hi, de, ja, fr, ptBR, ar, ko, zhHant, vi, id }
 const referenceKeys = Object.keys(es).sort()
+const restoreApiTokensMessage = [
+  "API tokens are configured in {tokenConfig} or {tokenFileConfig}. On Unraid, find the token in the container's {unraidSetting} setting.",
+  'The existing-client profile also accepts {tngApiTokens} or {rtngApiTokens}. Runtime credential changes are saved in the service state directory.',
+  'Select Restore to load values from {configFile} again.',
+].join(' ')
+const crashSafetyPathMessage = [
+  'A torrent shown as Finalizing has downloaded every piece but is being held until its data is confirmed on disk, so a power cut cannot leave a half-written file marked complete for Sonarr, Radarr or a tracker.',
+  'It normally clears within a second. If it stays, storage cannot be synced; see Settings, Backend, Crash safety.',
+].join(' ')
 
 function placeholders(value: string) {
   return [...value.matchAll(/\{([a-zA-Z][a-zA-Z0-9_]*)\}/g)]
@@ -49,6 +58,21 @@ describe('interface locale catalogs', () => {
     expect(zhHans['Check']).toBe('检查')
     expect(vi.Command).toBe('Lệnh')
     expect(hi.Command).toBe('कमांड')
+    expect(de['Add a torrent to populate the table.']).toContain('die Tabelle')
+    expect(ar['Add folder policy']).toBe('إضافة سياسة للمجلد')
+    expect(ar['Add or remove a torrent from the selection']).toContain('إضافة تورنت')
+    expect(ja['Add more torrent files']).toBe('トレントファイルをさらに追加')
+    expect(fr['API-token login:']).toBe('Connexion avec un jeton API :')
+    expect(hi[restoreApiTokensMessage]).toContain('“पुनर्स्थापित करें”')
+    expect(id['. Live-safe controls are applied immediately; controls marked restart are saved for the next daemon start.']).toContain('saat layanan berjalan')
+    expect(id.Backend).toBe('Backend')
+    expect(ko['Crash safety']).toBe('시스템 충돌 보호')
+
+    for (const [locale, catalog] of Object.entries(catalogs)) {
+      expect(catalog[crashSafetyPathMessage], `${locale}: settings label`).toContain(catalog.Settings)
+      expect(catalog[crashSafetyPathMessage], `${locale}: backend label`).toContain(catalog.Backend)
+      expect(catalog[crashSafetyPathMessage], `${locale}: crash safety label`).toContain(catalog['Crash safety'])
+    }
 
     const keyboardHelp = 'Click a row to select it. Hold Control or Command to add or remove rows. Hold Shift to select a range. Use Arrow keys to move and Space to select.'
     for (const catalog of Object.values(catalogs)) {

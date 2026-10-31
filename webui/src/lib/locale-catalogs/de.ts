@@ -24,7 +24,7 @@ export const UI_LABELS: Record<string, string> = {
   "Actual: {value}": "Aktuell: {value}",
   "Add": "Hinzufügen",
   "Add a contiguous range to the selection": "Fügen Sie der Auswahl einen zusammenhängenden Bereich hinzu",
-  "Add a torrent to populate the table.": "Fügen Sie einen Torrent hinzu, um den Tisch zu füllen.",
+  "Add a torrent to populate the table.": "Fügen Sie einen Torrent hinzu, um die Tabelle zu füllen.",
   "Add category": "Kategorie hinzufügen",
   "Add folder policy": "Ordnerrichtlinie hinzufügen",
   "Add more torrent files": "Weitere Torrent-Dateien hinzufügen",
