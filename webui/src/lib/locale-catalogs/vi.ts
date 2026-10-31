@@ -110,7 +110,7 @@ export const UI_LABELS: Record<string, string> = {
   "Capabilities": "Khả năng",
   "Categories": "Thể loại",
   "Categories / Labels": "Danh mục / nhãn",
-  "Categories, storage roots, and tracker summaries": "Danh mục, đường dẫn lưu trữ và tóm tắt tracker",
+  "Categories, storage roots, and tracker summaries": "Danh mục, thư mục gốc lưu trữ và tóm tắt trình theo dõi",
   "Category": "Danh mục",
   "Category applied": "Đã áp dụng danh mục",
   "Category changed": "Danh mục đã thay đổi",

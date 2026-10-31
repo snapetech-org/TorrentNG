@@ -110,7 +110,7 @@ export const UI_LABELS: Record<string, string> = {
   "Capabilities": "能力",
   "Categories": "カテゴリー",
   "Categories / Labels": "カテゴリー / ラベル",
-  "Categories, storage roots, and tracker summaries": "カテゴリ、ストレージの保存先、トラッカーの概要",
+  "Categories, storage roots, and tracker summaries": "カテゴリ、ストレージのルートディレクトリ、トラッカーの概要",
   "Category": "カテゴリ",
   "Category applied": "カテゴリを適用しました",
   "Category changed": "カテゴリが変更されました",

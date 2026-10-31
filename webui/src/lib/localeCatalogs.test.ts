@@ -30,6 +30,7 @@ const applyDefaultsCountMessage = 'Apply defaults to {count} settings in this gr
 const applyOneErrorMessage = 'Apply: {matched} matched, {applied} applied, {count} error'
 const locationPoliciesLimitMessage = 'At most {count} location policies are allowed.'
 const cacheLimitsMessage = 'Cache, file/socket ceilings, hashing, and session persistence.'
+const categoriesStorageTrackerSummaryMessage = 'Categories, storage roots, and tracker summaries'
 const filesystemHoleCheckMessage = [
   'Ask the filesystem which parts of each file were never written (holes, or preallocated space with no data) and re-verify any piece that claims to be there.',
   'Reads metadata only, so it is fast. It only triggers re-hashing; it never declares a piece corrupt by itself.',
@@ -114,6 +115,13 @@ describe('interface locale catalogs', () => {
     expect(id['CA path']).toBe('Jalur CA')
     expect(ptBR[cacheLimitsMessage]).toContain('cálculo de hashes')
     expect(id[cacheLimitsMessage]).toContain('penghitungan hash')
+    expect(zhHans[categoriesStorageTrackerSummaryMessage]).toContain('追踪器摘要')
+    expect(zhHans[categoriesStorageTrackerSummaryMessage]).not.toContain('tracker')
+    expect(fr[categoriesStorageTrackerSummaryMessage]).toContain('répertoires racines')
+    expect(ja[categoriesStorageTrackerSummaryMessage]).toContain('ルートディレクトリ')
+    expect(id[categoriesStorageTrackerSummaryMessage]).toContain('direktori akar')
+    expect(hi['Category for selected torrents']).toBe('चयनित टोरेंट के लिए श्रेणी')
+    expect(de['Category path:']).toBe('Kategoriepfad:')
 
     for (const [locale, catalog] of Object.entries(catalogs)) {
       expect(catalog[crashSafetyPathMessage], `${locale}: settings label`).toContain(catalog.Settings)

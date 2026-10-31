@@ -110,7 +110,7 @@ export const UI_LABELS: Record<string, string> = {
   "Capabilities": "Kemampuan",
   "Categories": "Kategori",
   "Categories / Labels": "Kategori / Label",
-  "Categories, storage roots, and tracker summaries": "Kategori, lokasi penyimpanan, dan ringkasan pelacak",
+  "Categories, storage roots, and tracker summaries": "Kategori, direktori akar penyimpanan, dan ringkasan pelacak",
   "Category": "Kategori",
   "Category applied": "Kategori diterapkan",
   "Category changed": "Kategori berubah",

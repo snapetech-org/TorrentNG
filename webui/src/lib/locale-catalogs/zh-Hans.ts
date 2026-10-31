@@ -110,7 +110,7 @@ export const UI_LABELS: Record<string, string> = {
   "Capabilities": "能力",
   "Categories": "类别",
   "Categories / Labels": "类别/标签",
-  "Categories, storage roots, and tracker summaries": "分类、存储路径和 tracker 摘要",
+  "Categories, storage roots, and tracker summaries": "分类、存储根目录和追踪器摘要",
   "Category": "分类",
   "Category applied": "类别已应用",
   "Category changed": "类别已更改",

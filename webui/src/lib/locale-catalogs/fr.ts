@@ -110,7 +110,7 @@ export const UI_LABELS: Record<string, string> = {
   "Capabilities": "Capacités",
   "Categories": "Catégories",
   "Categories / Labels": "Catégories / Étiquettes",
-  "Categories, storage roots, and tracker summaries": "Catégories, emplacements de stockage et résumés des trackers",
+  "Categories, storage roots, and tracker summaries": "Catégories, répertoires racines de stockage et résumés des trackers",
   "Category": "Catégorie",
   "Category applied": "Catégorie appliquée",
   "Category changed": "Catégorie modifiée",

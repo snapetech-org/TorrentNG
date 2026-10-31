@@ -110,7 +110,7 @@ export const UI_LABELS: Record<string, string> = {
   "Capabilities": "功能",
   "Categories": "類別",
   "Categories / Labels": "分類／標籤",
-  "Categories, storage roots, and tracker summaries": "類別、儲存路徑與追蹤器摘要",
+  "Categories, storage roots, and tracker summaries": "類別、儲存根目錄與追蹤器摘要",
   "Category": "類別",
   "Category applied": "已套用類別",
   "Category changed": "類別已更改",

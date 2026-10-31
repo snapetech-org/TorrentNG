@@ -110,7 +110,7 @@ export const UI_LABELS: Record<string, string> = {
   "Capabilities": "القدرات",
   "Categories": "فئات",
   "Categories / Labels": "الفئات / التسميات",
-  "Categories, storage roots, and tracker summaries": "الفئات ومسارات التخزين وملخصات المتعقبات",
+  "Categories, storage roots, and tracker summaries": "الفئات ومجلدات التخزين الجذرية وملخصات أجهزة التتبع",
   "Category": "الفئة",
   "Category applied": "تم تطبيق الفئة",
   "Category changed": "تم تغيير الفئة",

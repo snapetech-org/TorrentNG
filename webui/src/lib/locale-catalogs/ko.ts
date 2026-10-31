@@ -110,7 +110,7 @@ export const UI_LABELS: Record<string, string> = {
   "Capabilities": "기능",
   "Categories": "카테고리",
   "Categories / Labels": "카테고리 / 라벨",
-  "Categories, storage roots, and tracker summaries": "카테고리, 저장소 경로 및 트래커 요약",
+  "Categories, storage roots, and tracker summaries": "카테고리, 저장소 루트 디렉터리 및 트래커 요약",
   "Category": "카테고리",
   "Category applied": "카테고리가 적용되었습니다",
   "Category changed": "카테고리가 변경되었습니다.",
