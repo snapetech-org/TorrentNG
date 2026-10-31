@@ -1060,6 +1060,7 @@ jobs:
     name: Dispatch trusted owner PR validation
     if: >-
       github.event_name == 'pull_request_target' &&
+      github.event.action == 'labeled' &&
       github.actor == 'snapetech' &&
       github.event.pull_request.user.login == 'snapetech' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
@@ -1068,7 +1069,7 @@ jobs:
       (github.event.label.name == 'action:ci' || github.event.label.name == 'pool:private') &&
       contains(github.event.pull_request.labels.*.name, 'action:ci') &&
       contains(github.event.pull_request.labels.*.name, 'pool:private')
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-owner-pr-dispatcher"]}}', github.run_id)) }}
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-packer","ng-main-run-{0}","gha-{0}-owner-pr-dispatcher"]}}', github.run_id)) }}
     permissions:
       actions: write
       contents: none
@@ -1104,10 +1105,10 @@ jobs:
       github.event_name == 'workflow_dispatch' &&
       inputs.action == 'ci' &&
       inputs.runner_pool == 'private' &&
-      (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') &&
+      github.actor == 'github-actions[bot]' &&
       inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' &&
       github.ref == 'refs/heads/main'
-    runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.action == 'ci' && inputs.runner_pool == 'private' && (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-owner-pr-reporter"]}}', github.run_id)) }}
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.action == 'ci' && inputs.runner_pool == 'private' && github.actor == 'github-actions[bot]' && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-owner-pr-reporter"]}}', github.run_id)) }}
     permissions:
       checks: write
       pull-requests: read
