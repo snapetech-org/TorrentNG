@@ -101,7 +101,7 @@ export const UI_LABELS: Record<string, string> = {
   "Bytes": "Bytes",
   "CA cert": "Certificado da CA",
   "CA path": "Caminho da CA",
-  "Cache, file/socket ceilings, hashing, and session persistence.": "Cache, tetos de arquivos e soquetes, hashing e persistência de sessão.",
+  "Cache, file/socket ceilings, hashing, and session persistence.": "Cache, limites de arquivos e soquetes, cálculo de hashes e persistência da sessão.",
   "Cached": "Em cache",
   "Calculating…": "Calculando…",
   "Can apply": "Pode ser aplicado",

@@ -97,7 +97,7 @@ export const UI_LABELS: Record<string, string> = {
   "Bulk actions": "バルクアクション",
   "Bulk edit selected torrents": "選択したトレントを一括編集",
   "Bulk save path": "複数のトレントの保存先",
-  "Bulk torrent actions": "バルクトレントアクション",
+  "Bulk torrent actions": "トレントの一括操作",
   "Bytes": "バイト",
   "CA cert": "CA証明書",
   "CA path": "CAパス",

@@ -29,6 +29,7 @@ const appliesToTorrentsMessage = 'Applies to torrents saved in this folder or an
 const applyDefaultsCountMessage = 'Apply defaults to {count} settings in this group? Autosave will apply shortly.'
 const applyOneErrorMessage = 'Apply: {matched} matched, {applied} applied, {count} error'
 const locationPoliciesLimitMessage = 'At most {count} location policies are allowed.'
+const cacheLimitsMessage = 'Cache, file/socket ceilings, hashing, and session persistence.'
 const filesystemHoleCheckMessage = [
   'Ask the filesystem which parts of each file were never written (holes, or preallocated space with no data) and re-verify any piece that claims to be there.',
   'Reads metadata only, so it is fast. It only triggers re-hashing; it never declares a piece corrupt by itself.',
@@ -108,6 +109,11 @@ describe('interface locale catalogs', () => {
     expect(ko[filesystemHoleCheckMessage]).toContain('손상된 것으로')
     expect(id[filesystemHoleCheckMessage]).toContain('suatu bagian rusak')
     expect(ar[filesystemHoleCheckMessage]).toContain('لا يحكم بمفرده')
+    expect(ja['Bulk torrent actions']).toBe('トレントの一括操作')
+    expect(vi['CA path']).toBe('Đường dẫn CA')
+    expect(id['CA path']).toBe('Jalur CA')
+    expect(ptBR[cacheLimitsMessage]).toContain('cálculo de hashes')
+    expect(id[cacheLimitsMessage]).toContain('penghitungan hash')
 
     for (const [locale, catalog] of Object.entries(catalogs)) {
       expect(catalog[crashSafetyPathMessage], `${locale}: settings label`).toContain(catalog.Settings)
