@@ -18180,7 +18180,11 @@ mod tests {
         };
         let block = BlockExtent::new(accepted.piece, accepted.begin, accepted.length);
         let accepted_conn = task.active_peers.get(&accepted_peer).unwrap().transfer_conn;
-        let duplicate_conn = task.active_peers.get(&duplicate_peer).unwrap().transfer_conn;
+        let duplicate_conn = task
+            .active_peers
+            .get(&duplicate_peer)
+            .unwrap()
+            .transfer_conn;
         task.transfer_ledger
             .reserve(accepted_conn, block, &ReserveMode::Exclusive)
             .unwrap();
