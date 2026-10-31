@@ -16,9 +16,7 @@ on:
         description: Runner pool for this operation
         required: true
         type: choice
-        options:
-          - private
-
+        options: [private]
 permissions:
   contents: read
 
@@ -29,9 +27,7 @@ concurrency:
 jobs:
   trivy:
     if: >-
-      github.ref == 'refs/heads/main' &&
-      inputs.action == 'trivy' &&
-      inputs.runner_pool == 'private'
+      github.event_name == 'workflow_dispatch' && inputs.action == 'scan' && inputs.runner_pool == 'private' && github.ref == 'refs/heads/main'
     name: Trivy source, dependency, and configuration scan
     env:
       TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2

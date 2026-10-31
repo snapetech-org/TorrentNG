@@ -16,8 +16,7 @@ on:
         description: Runner pool for this operation
         required: true
         type: choice
-        options:
-          - private
+        options: [private]
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: false

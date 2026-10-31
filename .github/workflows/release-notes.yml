@@ -15,8 +15,7 @@ on:
         description: Runner pool for this operation
         required: true
         type: choice
-        options:
-          - private
+        options: [private]
       base_sha:
         description: Commit to compare against; blank checks the parent of the current main commit
         required: false

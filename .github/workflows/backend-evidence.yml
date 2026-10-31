@@ -15,8 +15,7 @@ on:
         description: Runner pool for this operation
         required: true
         type: choice
-        options:
-          - private
+        options: [private]
       run_live_fault:
         description: "Run release-daemon crash, SQLite-failure, and storage-failure matrix"
         required: true

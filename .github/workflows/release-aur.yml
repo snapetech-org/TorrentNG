@@ -15,8 +15,7 @@ on:
         description: Runner pool for this operation
         required: true
         type: choice
-        options:
-          - private
+        options: [private]
       tag:
         description: Release tag to publish, for example v0.1.0
         required: true

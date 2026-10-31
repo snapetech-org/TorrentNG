@@ -15,8 +15,7 @@ on:
         description: Runner pool for this operation
         required: true
         type: choice
-        options:
-          - private
+        options: [private]
       tag:
         description: Existing published release tag to upload, for example v20260930-4
         required: true

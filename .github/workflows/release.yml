@@ -16,8 +16,7 @@ on:
         description: Runner pool for this operation
         required: true
         type: choice
-        options:
-          - private
+        options: [private]
       release_tag:
         description: Existing version tag to publish
         required: true
@@ -75,6 +74,18 @@ jobs:
   release-notes:
     name: Assemble release notes
     needs: validate-release-tag
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'release' &&
+          inputs.runner_pool == 'private'
+        )
+      ) &&
+      (
+        true
+      )
     runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-release-notes"]}}', github.run_id)) }}
     permissions:
       contents: read
@@ -129,6 +140,18 @@ jobs:
   native-quality:
     name: TorrentNG client and compatible-client service quality gate
     needs: validate-release-tag
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'release' &&
+          inputs.runner_pool == 'private'
+        )
+      ) &&
+      (
+        true
+      )
     runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-native-quality"]}}', github.run_id)) }}
     steps:
       - name: Checkout
@@ -180,6 +203,18 @@ jobs:
   msrv-check:
     name: Main workspace MSRV gate
     needs: [validate-release-tag, native-quality]
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'release' &&
+          inputs.runner_pool == 'private'
+        )
+      ) &&
+      (
+        true
+      )
     runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-msrv-check"]}}', github.run_id)) }}
     steps:
       - name: Checkout
@@ -210,6 +245,18 @@ jobs:
   msrv-check-sidecar:
     name: Compatible-client service MSRV gate
     needs: [validate-release-tag, native-quality]
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'release' &&
+          inputs.runner_pool == 'private'
+        )
+      ) &&
+      (
+        true
+      )
     runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-msrv-check-sidecar"]}}', github.run_id)) }}
     steps:
       - name: Checkout
@@ -242,6 +289,18 @@ jobs:
     needs: [validate-release-tag, native-quality]
     env:
       TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'release' &&
+          inputs.runner_pool == 'private'
+        )
+      ) &&
+      (
+        true
+      )
     runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-security-audit"]}}', github.run_id)) }}
     timeout-minutes: 30
     steps:
@@ -303,6 +362,18 @@ jobs:
   native-release-smoke:
     name: Native release-binary smoke
     needs: [validate-release-tag, native-quality, msrv-check, msrv-check-sidecar, security-audit]
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'release' &&
+          inputs.runner_pool == 'private'
+        )
+      ) &&
+      (
+        true
+      )
     runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-native-release-smoke"]}}', github.run_id)) }}
     steps:
       - name: Checkout
@@ -361,27 +432,39 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: linux-x64
             suffix: linux-x86_64
             target: x86_64-unknown-linux-gnu
             binary: torrentngd
             archive: tar.gz
-          - os: ubuntu-latest
+          - os: linux-arm64
             suffix: linux-aarch64
             target: aarch64-unknown-linux-gnu
             binary: torrentngd
             archive: tar.gz
-          - os: macos-14
+          - os: macos-arm64
             suffix: macos-aarch64
             target: aarch64-apple-darwin
             binary: torrentngd
             archive: tar.gz
-          - os: windows
+          - os: windows-x64
             suffix: windows-x86_64
             target: x86_64-pc-windows-msvc
             binary: torrentngd.exe
             archive: zip
-    runs-on: ${{ matrix.os == 'windows' && fromJSON(format('{{"group":"packer-windows","labels":["self-hosted","Windows","X64","on-demand","packer-windows","TorrentNG","gha-{0}-{1}-native-binaries"]}}', github.run_id, strategy.job-index)) || matrix.os == 'macos-14' && fromJSON(format('{{"group":"private-apple-builds","labels":["self-hosted","macOS","ARM64","on-demand","private-apple","TorrentNG","gha-{0}-{1}-native-binaries"]}}', github.run_id, strategy.job-index)) || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-{1}-native-binaries"]}}', github.run_id, strategy.job-index)) }}
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'release' &&
+          inputs.runner_pool == 'private'
+        )
+      ) &&
+      (
+        true
+      )
+    runs-on: ${{ matrix.os == 'windows-x64' && fromJSON(format('{{"group":"packer-windows","labels":["self-hosted","Windows","X64","on-demand","packer-windows","TorrentNG","gha-{0}-{1}-native-binaries"]}}', github.run_id, strategy.job-index)) || matrix.os == 'macos-arm64' && fromJSON(format('{{"group":"private-apple-builds","labels":["self-hosted","macOS","ARM64","on-demand","private-apple","TorrentNG","gha-{0}-{1}-native-binaries"]}}', github.run_id, strategy.job-index)) || matrix.os == 'linux-arm64' && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","arm64","ng-shared-main-torrentng","TorrentNG","ng-main-run-{0}","gha-{0}-{1}-native-binaries"]}}', github.run_id, strategy.job-index)) || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-{1}-native-binaries"]}}', github.run_id, strategy.job-index)) }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -404,12 +487,6 @@ jobs:
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           targets: ${{ matrix.target }}
-
-      - name: Install Linux ARM64 cross compiler
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross
 
       - name: Enable Visual Studio compiler environment
         if: matrix.target == 'x86_64-pc-windows-msvc'
@@ -434,9 +511,6 @@ jobs:
       - name: Build TorrentNG client daemon
         env:
           RELEASE_TARGET: ${{ matrix.target }}
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
-          AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
         shell: bash
         run: cargo build --target "$RELEASE_TARGET" --release --locked -p torrentngd
 
@@ -512,31 +586,43 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: linux-x64
             suffix: linux-x86_64
             target: x86_64-unknown-linux-gnu
             kind: linux
             desktop_bin: torrentng-desktop
             engine_bin: torrentngd-linux-x86_64
-          - os: ubuntu-latest
+          - os: linux-arm64
             suffix: linux-aarch64
             target: aarch64-unknown-linux-gnu
             kind: linux
             desktop_bin: torrentng-desktop
             engine_bin: torrentngd-linux-aarch64
-          - os: macos-14
+          - os: macos-arm64
             suffix: macos-aarch64
             target: aarch64-apple-darwin
             kind: macos
             desktop_bin: torrentng-desktop
             engine_bin: torrentngd-macos-aarch64
-          - os: windows
+          - os: windows-x64
             suffix: windows-x86_64
             target: x86_64-pc-windows-msvc
             kind: windows
             desktop_bin: torrentng-desktop.exe
             engine_bin: torrentngd-windows-x86_64.exe
-    runs-on: ${{ matrix.os == 'windows' && fromJSON(format('{{"group":"packer-windows","labels":["self-hosted","Windows","X64","on-demand","packer-windows","TorrentNG","gha-{0}-{1}-desktop-bundles"]}}', github.run_id, strategy.job-index)) || matrix.os == 'macos-14' && fromJSON(format('{{"group":"private-apple-builds","labels":["self-hosted","macOS","ARM64","on-demand","private-apple","TorrentNG","gha-{0}-{1}-desktop-bundles"]}}', github.run_id, strategy.job-index)) || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-{1}-desktop-bundles"]}}', github.run_id, strategy.job-index)) }}
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'release' &&
+          inputs.runner_pool == 'private'
+        )
+      ) &&
+      (
+        true
+      )
+    runs-on: ${{ matrix.os == 'windows-x64' && fromJSON(format('{{"group":"packer-windows","labels":["self-hosted","Windows","X64","on-demand","packer-windows","TorrentNG","gha-{0}-{1}-desktop-bundles"]}}', github.run_id, strategy.job-index)) || matrix.os == 'macos-arm64' && fromJSON(format('{{"group":"private-apple-builds","labels":["self-hosted","macOS","ARM64","on-demand","private-apple","TorrentNG","gha-{0}-{1}-desktop-bundles"]}}', github.run_id, strategy.job-index)) || matrix.os == 'linux-arm64' && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","arm64","ng-shared-main-torrentng","TorrentNG","ng-main-run-{0}","gha-{0}-{1}-desktop-bundles"]}}', github.run_id, strategy.job-index)) || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-{1}-desktop-bundles"]}}', github.run_id, strategy.job-index)) }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -559,12 +645,6 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install Linux ARM64 cross compiler
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross
-
       - name: Enable Visual Studio compiler environment
         if: matrix.target == 'x86_64-pc-windows-msvc'
         run: .\scripts\enable-msvc-environment.ps1
@@ -573,9 +653,6 @@ jobs:
       - name: Build desktop client
         env:
           BUNDLE_TARGET: ${{ matrix.target }}
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
-          AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
         shell: bash
         run: cargo build --target "$BUNDLE_TARGET" --release --locked --manifest-path crates/torrentng-desktop/Cargo.toml
 
@@ -619,6 +696,18 @@ jobs:
     permissions:
       contents: read
       packages: write
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'release' &&
+          inputs.runner_pool == 'private'
+        )
+      ) &&
+      (
+        true
+      )
     runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-linux-release-assets"]}}', github.run_id)) }}
     steps:
       - name: Route temporary files to runner temp
@@ -892,6 +981,18 @@ jobs:
 
   publish:
     name: Publish release
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'release' &&
+          inputs.runner_pool == 'private'
+        )
+      ) &&
+      (
+        true
+      )
     runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-publish"]}}', github.run_id)) }}
     needs:
       - validate-release-tag

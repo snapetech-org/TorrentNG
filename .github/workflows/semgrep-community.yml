@@ -16,9 +16,7 @@ on:
         description: Runner pool for this operation
         required: true
         type: choice
-        options:
-          - private
-
+        options: [private]
 permissions:
   contents: read
   security-events: write
@@ -30,9 +28,7 @@ concurrency:
 jobs:
   semgrep:
     if: >-
-      github.ref == 'refs/heads/main' &&
-      inputs.action == 'semgrep' &&
-      inputs.runner_pool == 'private'
+      github.event_name == 'workflow_dispatch' && inputs.action == 'scan' && inputs.runner_pool == 'private' && github.ref == 'refs/heads/main'
     name: Semgrep CE (community rules)
     runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-semgrep"]}}', github.run_id)) }}
     timeout-minutes: 90

@@ -27,9 +27,7 @@ on:
         description: Runner pool for this operation
         required: true
         type: choice
-        options:
-          - private
-
+        options: [private]
       candidate_sha:
         description: Exact main SHA for a private Linux x64 build artifact (no release)
         required: false
@@ -1058,15 +1056,17 @@ jobs:
   dispatch-owner-pr:
     name: Dispatch trusted owner PR validation
     if: >-
-      github.event_name == 'pull_request_target' &&
-      github.actor == 'snapetech' &&
-      github.event.pull_request.user.login == 'snapetech' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.head.repo.id == github.repository_id &&
-      github.event.pull_request.base.ref == 'main' &&
-      (github.event.label.name == 'action:ci' || github.event.label.name == 'pool:private') &&
-      contains(github.event.pull_request.labels.*.name, 'action:ci') &&
-      contains(github.event.pull_request.labels.*.name, 'pool:private')
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action != '' &&
+          inputs.runner_pool == 'private'
+        )
+      ) &&
+      (
+        github.event_name == 'pull_request_target' && github.actor == 'snapetech' && github.event.pull_request.user.login == 'snapetech' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.repo.id == github.repository_id && github.event.pull_request.base.ref == 'main' && (github.event.label.name == 'action:ci' || github.event.label.name == 'pool:private') && contains(github.event.pull_request.labels.*.name, 'action:ci') && contains(github.event.pull_request.labels.*.name, 'pool:private')
+      )
     runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-owner-pr-dispatcher"]}}', github.run_id)) }}
     permissions:
       actions: write
