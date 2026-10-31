@@ -224,7 +224,7 @@ export const UI_LABELS: Record<string, string> = {
   "DHT override port": "DHT-Überschreibungsport",
   "DHT port": "DHT-Port",
   "DHT statistics": "DHT-Statistiken",
-  "DHT, PEX, and UDP tracker discovery controls.": "DHT, PEX und UDP Tracker Discovery Controls.",
+  "DHT, PEX, and UDP tracker discovery controls.": "Steuerung der Peer-Erkennung per DHT/PEX und der UDP-Tracker.",
   "DL": "Herunterladen",
   "DNS cache timeout": "DNS-Cache-Zeitlimit",
   "Daemon, library, and browser controls": "Steuerung für Daemon, Bibliothek und Browser",

@@ -72,6 +72,9 @@ const customLinesCountMessage = 'Custom lines ({count})'
 const customTorrentConfigLinesMessage = 'Custom rTorrent configuration lines'
 const customTorrentLinesMessage = 'Custom rTorrent lines'
 const customTorrentLinesEditedMessage = 'Custom rTorrent lines edited'
+const dhtPeerDiscoveryControlsMessage = 'DHT, PEX, and UDP tracker discovery controls.'
+const defaultActionMessage = 'Default'
+const defaultsActionMessage = 'Defaults'
 
 function placeholders(value: string) {
   return [...value.matchAll(/\{([a-zA-Z][a-zA-Z0-9_]*)\}/g)]
@@ -196,6 +199,16 @@ describe('interface locale catalogs', () => {
     expect(ptBR[customTorrentConfigLinesMessage]).toContain('do rTorrent')
     expect(ja[customTorrentLinesMessage]).toBe('カスタム rTorrent 設定行')
     expect(ko[customTorrentLinesEditedMessage]).toContain('구성 줄을 편집했습니다')
+    expect(de[dhtPeerDiscoveryControlsMessage]).toContain('Peer-Erkennung')
+    expect(fr[dhtPeerDiscoveryControlsMessage]).toContain('découverte des pairs')
+    expect(ptBR[dhtPeerDiscoveryControlsMessage]).toContain('descoberta de peers')
+    expect(ar[dhtPeerDiscoveryControlsMessage]).toContain('اكتشاف النظراء')
+    expect(zhHans[dhtPeerDiscoveryControlsMessage]).toContain('对等端发现')
+    expect(ar[defaultActionMessage]).toBe('افتراضي')
+    expect(fr[defaultActionMessage]).toBe('Par défaut')
+    expect(id[defaultActionMessage]).toBe('Bawaan')
+    expect(hi[defaultsActionMessage]).toBe('डिफ़ॉल्ट लागू करें')
+    expect(id[defaultsActionMessage]).toBe('Terapkan nilai bawaan')
     expect(de['Add a torrent to populate the table.']).toContain('die Tabelle')
     expect(ar['Add folder policy']).toBe('إضافة سياسة للمجلد')
     expect(ar['Add or remove a torrent from the selection']).toContain('إضافة تورنت')

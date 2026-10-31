@@ -224,7 +224,7 @@ export const UI_LABELS: Record<string, string> = {
   "DHT override port": "DHT上書きポート",
   "DHT port": "DHTポート",
   "DHT statistics": "DHT統計",
-  "DHT, PEX, and UDP tracker discovery controls.": "DHT、PEX、UDPトラッカーの検出制御",
+  "DHT, PEX, and UDP tracker discovery controls.": "DHT/PEX によるピア探索と UDP トラッカーの設定。",
   "DL": "ダウンロード",
   "DNS cache timeout": "DNSキャッシュのタイムアウト",
   "Daemon, library, and browser controls": "デーモン、ライブラリ、ブラウザーの設定",

@@ -224,7 +224,7 @@ export const UI_LABELS: Record<string, string> = {
   "DHT override port": "DHT 재정의 포트",
   "DHT port": "DHT 포트",
   "DHT statistics": "DHT 통계",
-  "DHT, PEX, and UDP tracker discovery controls.": "DHT, PEX 및 UDP 추적기 발견 제어.",
+  "DHT, PEX, and UDP tracker discovery controls.": "DHT/PEX 피어 검색 및 UDP 추적기 제어.",
   "DL": "다운로드",
   "DNS cache timeout": "DNS 캐시 시간 제한",
   "Daemon, library, and browser controls": "데몬, 라이브러리 및 브라우저 제어",
