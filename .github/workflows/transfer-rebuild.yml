@@ -1,6 +1,6 @@
 # ng-runner-policy: private-jit-only-v1
 name: Transfer Rebuild Qualification
-run-name: action:${{ inputs.action }} pool:${{ inputs.runner_pool }}
+run-name: action:${{ inputs.action }}:pool:${{ inputs.runner_pool }}
 
 on:
   workflow_dispatch:
@@ -23,7 +23,7 @@ on:
         default: false
         type: boolean
       storage_root:
-        description: "Pre-provisioned disposable directory on the dedicated storage target"
+        description: "Pre-provisioned disposable storage directory visible to the private JIT runner"
         required: false
         default: ""
         type: string
@@ -113,7 +113,7 @@ jobs:
     name: Dedicated storage and performance qualification
     if: github.ref == 'refs/heads/main' && inputs.action == 'transfer-rebuild' && inputs.runner_pool == 'private' && inputs.run_dedicated_hardware == true
     needs: private-jit-correctness
-    runs-on: [self-hosted, linux, x64, torrentng-transfer-perf]
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-transfer-rebuild-hardware"]}}', github.run_id)) }}
     environment: transfer-rebuild-hardware
     timeout-minutes: 180
     steps:
