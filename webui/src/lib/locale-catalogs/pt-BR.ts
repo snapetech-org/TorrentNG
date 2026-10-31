@@ -1074,7 +1074,7 @@ export const UI_LABELS: Record<string, string> = {
   "saved": "salvo",
   "this location is rated Unknown": "este local está classificado como Desconhecido",
   "this location is rated Weak": "este local foi classificado como Fraco",
-  "torrents selected": "torrentes selecionadas",
+  "torrents selected": "torrents selecionados",
   "uTP status: {status}": "Status uTP: {status}",
   "unavailable": "indisponível",
   "unknown": "desconhecido",

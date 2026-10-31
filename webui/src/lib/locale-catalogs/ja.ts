@@ -1045,7 +1045,7 @@ export const UI_LABELS: Record<string, string> = {
   "enabled": "有効",
   "exclude pattern matched": "除外パターンが一致しました",
   "include pattern did not match": "含めるパターンが一致しません",
-  "is not supported. Completions there are released without a data sync, and the mount is treated as weak.": "はサポートされていません。そこではデータを同期せずに完了したトレントが解放され、マウントは弱い信頼性として扱われます。",
+  "is not supported. Completions there are released without a data sync, and the mount is treated as weak.": "はサポートされていません。そこではデータを同期せずに完了したトレントが解放され、マウントの信頼性は低いとみなされます。",
   "just now": "ちょうど今",
   "live": "ライブ",
   "match": "マッチ",
