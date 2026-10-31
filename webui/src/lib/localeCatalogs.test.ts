@@ -50,6 +50,14 @@ const communityReleaseDiscussionMessage = 'Community support and release discuss
 const configOverlayMessage = 'Config overlay'
 const copiedMessage = 'Copied'
 const copyMessage = 'Copy'
+const copySettingCurrentValueMessage = 'Copy {setting} current value'
+const copyChangeSummaryMessage = 'Copy change summary'
+const copyCommandMessage = 'Copy command'
+const copyNameMessage = 'Copy name'
+const copyVisibleCommandsMessage = 'Copy visible commands'
+const fullRecheckCostMessage = 'Cost: Full recheck reads the whole library and is slow at scale.'
+const sampleFullIoCostMessage = 'Cost: Sample re-reads a few percent; Full doubles the read I/O of a download.'
+const sessionFileWriteCostMessage = 'Cost: a tiny file in the session folder, rewritten once a minute.'
 
 function placeholders(value: string) {
   return [...value.matchAll(/\{([a-zA-Z][a-zA-Z0-9_]*)\}/g)]
@@ -124,6 +132,27 @@ describe('interface locale catalogs', () => {
     expect(de[copyMessage]).toBe('Kopieren')
     expect(ptBR[copyMessage]).toBe('Copiar')
     expect(id[copyMessage]).toBe('Salin')
+    expect(ar[copyChangeSummaryMessage]).toBe('نسخ ملخص التغييرات')
+    expect(hi[copyChangeSummaryMessage]).toBe('बदलावों का सारांश कॉपी करें')
+    expect(ptBR[copyChangeSummaryMessage]).toBe('Copiar resumo das alterações')
+    expect(de[copyCommandMessage]).toBe('Befehl kopieren')
+    expect(ja[copyCommandMessage]).toBe('コマンドをコピー')
+    expect(hi[copyCommandMessage]).toBe('कमांड कॉपी करें')
+    expect(ko[copyCommandMessage]).toBe('명령 복사')
+    expect(hi[copyNameMessage]).toBe('नाम कॉपी करें')
+    expect(ja[copyNameMessage]).toBe('名前をコピー')
+    expect(ko[copyNameMessage]).toBe('이름 복사')
+    expect(ar[copyVisibleCommandsMessage]).toBe('نسخ الأوامر الظاهرة')
+    expect(ja[copyVisibleCommandsMessage]).toBe('表示されているコマンドをコピー')
+    expect(de[copyVisibleCommandsMessage]).toBe('Sichtbare Befehle kopieren')
+    expect(ar[copySettingCurrentValueMessage]).toContain('الحالية لـ {setting}')
+    expect(hi[copySettingCurrentValueMessage]).toContain('{setting} का वर्तमान मान')
+    expect(es[fullRecheckCostMessage]).toContain('bibliotecas grandes')
+    expect(hi[fullRecheckCostMessage]).toContain('पूर्ण पुनःजाँच')
+    expect(ptBR[fullRecheckCostMessage]).toContain('bibliotecas grandes')
+    expect(zhHans[sampleFullIoCostMessage]).not.toContain('Full')
+    expect(id[sampleFullIoCostMessage]).toContain('pemeriksaan penuh')
+    expect(ar[sessionFileWriteCostMessage]).toContain('يُعاد كتابته')
     expect(de['Add a torrent to populate the table.']).toContain('die Tabelle')
     expect(ar['Add folder policy']).toBe('إضافة سياسة للمجلد')
     expect(ar['Add or remove a torrent from the selection']).toContain('إضافة تورنت')

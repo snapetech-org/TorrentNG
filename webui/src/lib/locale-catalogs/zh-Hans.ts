@@ -189,7 +189,7 @@ export const UI_LABELS: Record<string, string> = {
   "Copy {setting} configuration commands": "复制 {setting} 的配置命令",
   "Copy {setting} current value": "复制 {setting} 当前值",
   "Cost: Full recheck reads the whole library and is slow at scale.": "成本：全面重新检查会读取整个库，并且速度很慢。",
-  "Cost: Sample re-reads a few percent; Full doubles the read I/O of a download.": "成本：样本重读要花费百分之几； Full 使下载的读取 I/O 翻倍。",
+  "Cost: Sample re-reads a few percent; Full doubles the read I/O of a download.": "成本：抽样模式会重新读取百分之几的数据；完整模式会使一次下载的读取 I/O 翻倍。",
   "Cost: a tiny file in the session folder, rewritten once a minute.": "开销：会话文件夹中的一个小文件，每分钟重写一次。",
   "Cost: one allocation query per file at start.": "开销：启动时每个文件查询一次分配信息。",
   "Cost: one disk sync per completed torrent, usually well under a second.": "成本：每个完成的 torrent 进行一次磁盘同步，通常远低于一秒。",

@@ -189,7 +189,7 @@ export const UI_LABELS: Record<string, string> = {
   "Copy {setting} configuration commands": "Salin perintah konfigurasi {setting}",
   "Copy {setting} current value": "Salin nilai {setting} saat ini",
   "Cost: Full recheck reads the whole library and is slow at scale.": "Biaya: Pemeriksaan ulang penuh membaca seluruh pustaka dan akan lambat pada pustaka berukuran besar.",
-  "Cost: Sample re-reads a few percent; Full doubles the read I/O of a download.": "Biaya: Sampel membaca ulang beberapa persen; Penuh menggandakan pembacaan I/O unduhan.",
+  "Cost: Sample re-reads a few percent; Full doubles the read I/O of a download.": "Biaya: Pemeriksaan sampel membaca ulang beberapa persen data; pemeriksaan penuh menggandakan I/O pembacaan selama unduhan.",
   "Cost: a tiny file in the session folder, rewritten once a minute.": "Biaya: sebuah file kecil di folder sesi, ditulis ulang sekali per menit.",
   "Cost: one allocation query per file at start.": "Biaya: satu kueri alokasi per file saat mulai.",
   "Cost: one disk sync per completed torrent, usually well under a second.": "Biaya: satu sinkronisasi disk untuk setiap torrent yang diselesaikan, biasanya kurang dari satu detik.",

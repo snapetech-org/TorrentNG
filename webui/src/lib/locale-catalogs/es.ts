@@ -188,7 +188,7 @@ export const UI_LABELS: Record<string, string> = {
   "Copy visible commands": "Copiar comandos visibles",
   "Copy {setting} configuration commands": "Copiar los comandos de configuración de {setting}",
   "Copy {setting} current value": "Copiar el valor actual de {setting}",
-  "Cost: Full recheck reads the whole library and is slow at scale.": "Costo: la nueva verificación completa lee toda la biblioteca y es lenta a escala.",
+  "Cost: Full recheck reads the whole library and is slow at scale.": "Costo: la verificación completa lee toda la biblioteca y puede ser lenta en bibliotecas grandes.",
   "Cost: Sample re-reads a few percent; Full doubles the read I/O of a download.": "Costo: el muestreo vuelve a leer un pequeño porcentaje; la verificación completa duplica las operaciones de lectura de una descarga.",
   "Cost: a tiny file in the session folder, rewritten once a minute.": "Costo: un archivo pequeño en la carpeta de sesión, reescrito una vez por minuto.",
   "Cost: one allocation query per file at start.": "Costo: una consulta de asignación por archivo al iniciar.",
