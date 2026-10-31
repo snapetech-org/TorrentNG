@@ -176,7 +176,7 @@ export const UI_LABELS: Record<string, string> = {
   "Connections": "Koneksi",
   "Controls the icon and type filters only.": "Hanya mengontrol ikon dan filter jenis.",
   "Copied": "Disalin",
-  "Copy": "Menyalin",
+  "Copy": "Salin",
   "Copy and verify": "Salin dan verifikasi",
   "Copy change summary": "Salin ringkasan perubahan",
   "Copy command": "Salin perintah",

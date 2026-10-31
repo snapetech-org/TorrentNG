@@ -165,7 +165,7 @@ export const UI_LABELS: Record<string, string> = {
   "Community support and release discussion": "Hỗ trợ cộng đồng và thảo luận phát hành",
   "Complete": "Hoàn thành",
   "Completed": "Đã hoàn tất",
-  "Config overlay": "Lớp cấu hình phủ",
+  "Config overlay": "Lớp phủ cấu hình",
   "Configure presentation-only behavior for this browser.": "Cấu hình cách hiển thị riêng cho trình duyệt này.",
   "Configured groups: {count}": "Nhóm được định cấu hình: {count}",
   "Connected": "Đã kết nối",

@@ -47,6 +47,9 @@ const closeEscapeActionsMessage = 'Close dialog, details, or clear selection'
 const liveDownloadRateMessage = 'Collecting a live download rate'
 const commandIndexUnavailableMessage = 'Command index unavailable'
 const communityReleaseDiscussionMessage = 'Community support and release discussion'
+const configOverlayMessage = 'Config overlay'
+const copiedMessage = 'Copied'
+const copyMessage = 'Copy'
 
 function placeholders(value: string) {
   return [...value.matchAll(/\{([a-zA-Z][a-zA-Z0-9_]*)\}/g)]
@@ -114,6 +117,13 @@ describe('interface locale catalogs', () => {
     expect(hi[commandIndexUnavailableMessage]).toBe('कमांड इंडेक्स उपलब्ध नहीं है')
     expect(ko[commandIndexUnavailableMessage]).not.toContain('unavailable')
     expect(hi[communityReleaseDiscussionMessage]).toContain('रिलीज़ पर चर्चा')
+    expect(vi[configOverlayMessage]).toBe('Lớp phủ cấu hình')
+    expect(ar[copiedMessage]).toBe('تم النسخ')
+    expect(ar[copyMessage]).toBe('انسخ')
+    expect(hi[copyMessage]).toBe('कॉपी करें')
+    expect(de[copyMessage]).toBe('Kopieren')
+    expect(ptBR[copyMessage]).toBe('Copiar')
+    expect(id[copyMessage]).toBe('Salin')
     expect(de['Add a torrent to populate the table.']).toContain('die Tabelle')
     expect(ar['Add folder policy']).toBe('إضافة سياسة للمجلد')
     expect(ar['Add or remove a torrent from the selection']).toContain('إضافة تورنت')

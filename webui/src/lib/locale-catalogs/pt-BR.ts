@@ -176,7 +176,7 @@ export const UI_LABELS: Record<string, string> = {
   "Connections": "Conexões",
   "Controls the icon and type filters only.": "Controla apenas o ícone e os filtros de tipo.",
   "Copied": "Copiado",
-  "Copy": "Cópia",
+  "Copy": "Copiar",
   "Copy and verify": "Copie e verifique",
   "Copy change summary": "Copiar resumo de mudança",
   "Copy command": "Copiar comando",
