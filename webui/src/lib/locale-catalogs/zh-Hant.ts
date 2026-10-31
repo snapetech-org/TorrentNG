@@ -322,7 +322,7 @@ export const UI_LABELS: Record<string, string> = {
   "Failed to select all matching torrents": "無法選取所有符合條件的種子",
   "Failed to toggle sequential download": "無法切換循序下載模式",
   "Failed to toggle {feature}": "無法切換 {feature}",
-  "Failed to {action} torrent": "無法{action}種子",
+  "Failed to {action} torrent": "無法對種子執行「{action}」操作",
   "Feed URL": "RSS 訂閱網址",
   "File details unavailable.": "無法取得檔案詳細資訊。",
   "File name": "檔案名稱",

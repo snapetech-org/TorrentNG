@@ -78,6 +78,7 @@ const defaultsActionMessage = 'Defaults'
 const deleteSelectedTorrentConfirmationMessage = 'Delete the selected torrent (with confirmation)'
 const descendingMessage = 'Descending'
 const detailsPanelPositionMessage = 'Details panel position'
+const failedTorrentActionMessage = 'Failed to {action} torrent'
 
 function placeholders(value: string) {
   return [...value.matchAll(/\{([a-zA-Z][a-zA-Z0-9_]*)\}/g)]
@@ -292,5 +293,21 @@ describe('interface locale catalogs', () => {
       expect(translation).not.toContain('Grab Shift')
       expect(translation).not.toContain('space to select')
     }
+  })
+
+  it('keeps reviewed action, status, and dynamic failure wording in context', () => {
+    expect(ar['Different settings for specific folders']).toBe('إعدادات مختلفة لمجلدات محددة')
+    expect(de['Detect host crashes']).toBe('Host-Abstürze erkennen')
+    expect(de.Disk).toBe('Speicherplatz')
+    expect(id['Discord support']).toBe('Bantuan di Discord')
+    expect(ko['Dry run']).toBe('모의 실행')
+    expect(vi['Dry run']).toBe('Chạy thử')
+    expect(ko.Exclude).toBe('제외')
+    expect(ja.Expand).toBe('展開する')
+    expect(hi.Expand).toBe('खोलें')
+    expect(ko['File details unavailable.']).toBe('파일 정보를 사용할 수 없습니다.')
+    expect(ar[failedTorrentActionMessage]).toBe('تعذّر تنفيذ الإجراء «{action}» على التورنت')
+    expect(zhHans[failedTorrentActionMessage]).toBe('无法对种子执行“{action}”操作')
+    expect(ptBR[failedTorrentActionMessage]).toBe('Não foi possível executar a ação “{action}” no torrent')
   })
 })
