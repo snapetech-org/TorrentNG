@@ -30,18 +30,27 @@ function compilePattern(pattern: string, parameters: string[]): Omit<CompiledPat
   const parts: string[] = []
   const names: string[] = []
   let cursor = 0
-  const tokens = new RegExp(
-    parameters.length ? `\\{(${parameters.join('|')})\\}` : '(?!)',
-    'g',
-  )
+  let textStart = 0
 
-  for (const match of pattern.matchAll(tokens)) {
-    parts.push(pattern.slice(cursor, match.index))
-    names.push(match[1])
-    cursor = match.index + match[0].length
+  while (cursor < pattern.length) {
+    if (pattern[cursor] !== '{') {
+      cursor++
+      continue
+    }
+
+    const close = pattern.indexOf('}', cursor + 1)
+    if (close === -1) break
+
+    const name = pattern.slice(cursor + 1, close)
+    if (parameters.includes(name)) {
+      parts.push(pattern.slice(textStart, cursor))
+      names.push(name)
+      textStart = close + 1
+    }
+    cursor = close + 1
   }
 
-  parts.push(pattern.slice(cursor))
+  parts.push(pattern.slice(textStart))
 
   if (names.length !== parameters.length || new Set(names).size !== names.length) {
     throw new Error('Server-message pattern must contain every parameter once')
