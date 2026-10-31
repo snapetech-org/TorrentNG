@@ -1,8 +1,9 @@
 # ng-runner-policy: private-jit-only-v1
 name: CI
 run-name: >-
-  ${{ github.event_name == 'pull_request_target' &&
-      format('action:ci:pool:private') ||
+  ${{ (github.event_name == 'workflow_dispatch' && inputs.action == 'ci' && inputs.runner_pool == 'private' && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' &&
+      format('owner-pr:{0}:{1}:{2}:action:{3}:pool:{4}', inputs.pr_number, inputs.pr_sha, inputs.target_run_id, inputs.action, inputs.runner_pool)) ||
+      (github.event_name == 'pull_request_target' && 'owner-pr-label-event') ||
       (github.event_name == 'workflow_dispatch' && inputs.action != '' && inputs.runner_pool != '' &&
       format('action:{0}:pool:{1}', inputs.action, inputs.runner_pool)) ||
       github.workflow }}
@@ -1072,7 +1073,7 @@ jobs:
       actions: write
       contents: none
     steps:
-      - name: Dispatch PR-head validation from main
+      - name: Dispatch the requested action from main
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -1109,6 +1110,7 @@ jobs:
     runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.action == 'ci' && inputs.runner_pool == 'private' && (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') && inputs.pr_number != '' && inputs.pr_sha != '' && inputs.target_run_id != '' && github.ref == 'refs/heads/main') && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-owner-pr-reporter"]}}', github.run_id)) }}
     permissions:
       checks: write
+      pull-requests: read
       contents: none
     steps:
       - name: Attach validation result to the PR head
@@ -1116,6 +1118,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ inputs.pr_number }}
           PR_SHA: ${{ inputs.pr_sha }}
+          REPOSITORY: ${{ github.repository }}
+          REPOSITORY_ID: ${{ github.repository_id }}
           VALIDATION_RUN_ID: ${{ github.run_id }}
           VALIDATION_RESULTS: '{"native-quality":"${{ needs.native-quality.result }}","backend-fault-matrix":"${{ needs.backend-fault-matrix.result }}","backend-api-load":"${{ needs.backend-api-load.result }}","msrv-check":"${{ needs.msrv-check.result }}","msrv-check-sidecar":"${{ needs.msrv-check-sidecar.result }}","fuzz-smoke":"${{ needs.fuzz-smoke.result }}","sidecar":"${{ needs.sidecar.result }}","desktop":"${{ needs.desktop.result }}","webui":"${{ needs.webui.result }}","backup-restore":"${{ needs.backup-restore.result }}","security-audit":"${{ needs.security-audit.result }}"}'
         run: |
@@ -1124,6 +1128,12 @@ jobs:
           from urllib.request import Request,urlopen
           number=os.environ['PR_NUMBER'];sha=os.environ['PR_SHA'].lower();results=json.loads(os.environ['VALIDATION_RESULTS'])
           if not re.fullmatch(r'[1-9][0-9]*',number) or not re.fullmatch(r'[0-9a-f]{40}',sha) or not results:raise SystemExit('invalid PR check claim')
+          repository=os.environ['REPOSITORY'];repository_id=int(os.environ['REPOSITORY_ID'])
+          if repository.lower()!='snapetech-org/torrentng':raise SystemExit('unexpected repository')
+          pr_request=Request(f'https://api.github.com/repos/{repository}/pulls/{number}',headers={'Accept':'application/vnd.github+json','Authorization':f"Bearer {os.environ['GH_TOKEN']}",'X-GitHub-Api-Version':'2022-11-28'})
+          with urlopen(pr_request,timeout=20) as response:current_pr=json.load(response)
+          head_repo=current_pr.get('head',{}).get('repo') or {}
+          if current_pr.get('state')!='open' or current_pr.get('user',{}).get('login')!='snapetech' or current_pr.get('base',{}).get('ref')!='main' or current_pr.get('head',{}).get('sha','').lower()!=sha or (head_repo.get('full_name') or '').lower()!=repository.lower() or head_repo.get('id')!=repository_id:raise SystemExit('PR head is no longer the dispatched head')
           conclusion='success' if all(v=='success' for v in results.values()) else 'failure'
           summary='Main-pinned, no-secret owner PR validation:\n'+'\n'.join(f'- {n}: {v}' for n,v in results.items())
           run_id=os.environ['VALIDATION_RUN_ID']
