@@ -23,6 +23,8 @@ const crashSafetyPathMessage = [
   'A torrent shown as Finalizing has downloaded every piece but is being held until its data is confirmed on disk, so a power cut cannot leave a half-written file marked complete for Sonarr, Radarr or a tracker.',
   'It normally clears within a second. If it stays, storage cannot be synced; see Settings, Backend, Crash safety.',
 ].join(' ')
+const advancedOverridesMessage = 'Advanced overrides are imported after managed settings and usually need a restart.'
+const weakMountChecksMessage = 'After a power loss, Weak mounts are fully rechecked and Unknown mounts get at least the recent-writes check. Weak mounts also get a sampled read-back after every download.'
 
 function placeholders(value: string) {
   return [...value.matchAll(/\{([a-zA-Z][a-zA-Z0-9_]*)\}/g)]
@@ -67,6 +69,17 @@ describe('interface locale catalogs', () => {
     expect(id['. Live-safe controls are applied immediately; controls marked restart are saved for the next daemon start.']).toContain('saat layanan berjalan')
     expect(id.Backend).toBe('Backend')
     expect(ko['Crash safety']).toBe('시스템 충돌 보호')
+    expect(ja.Advanced).toBe('高度な設定')
+    expect(de[advancedOverridesMessage]).toContain('Überschreibungen')
+    expect(fr[advancedOverridesMessage]).toContain('paramètres de remplacement avancés')
+    expect(fr['Adding…']).toBe('Ajout en cours…')
+    expect(es[weakMountChecksMessage]).toContain('puntos de montaje débiles')
+    expect(zhHans[weakMountChecksMessage]).toContain('弱挂载上的数据')
+    expect(hi[weakMountChecksMessage]).toContain('हाल की लिखाइयों')
+    expect(ar[weakMountChecksMessage]).toContain('نقاط التحميل')
+    expect(ptBR[weakMountChecksMessage]).toContain('pontos de montagem')
+    expect(ko[weakMountChecksMessage]).toContain('최근 쓰기')
+    expect(id[weakMountChecksMessage]).toContain('titik mount')
 
     for (const [locale, catalog] of Object.entries(catalogs)) {
       expect(catalog[crashSafetyPathMessage], `${locale}: settings label`).toContain(catalog.Settings)

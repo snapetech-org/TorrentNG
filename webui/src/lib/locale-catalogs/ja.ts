@@ -32,7 +32,7 @@ export const UI_LABELS: Record<string, string> = {
   "Add torrent": "トレントを追加",
   "Added": "追加済み",
   "Adding…": "追加中…",
-  "Advanced": "詳細",
+  "Advanced": "高度な設定",
   "Advanced overrides are imported after managed settings and usually need a restart.": "高度なオーバーライドは、管理された設定後にインポートされ、通常は再起動が必要です。",
   "Affected torrents": "影響を受けたトレント",
   "After a power loss or system crash": "電力損失やシステムクラッシュ後",

@@ -36,7 +36,7 @@ export const UI_LABELS: Record<string, string> = {
   "Advanced overrides are imported after managed settings and usually need a restart.": "高级覆盖项会在受管理的设置之后导入，通常需要重启。",
   "Affected torrents": "受影响的种子",
   "After a power loss or system crash": "在断电或系统崩溃后",
-  "After a power loss, Weak mounts are fully rechecked and Unknown mounts get at least the recent-writes check. Weak mounts also get a sampled read-back after every download.": "断电后，弱挂载会被完全重新检查，而未知挂载至少会得到最近写入检查。弱安装还会在每次下载后获得采样回读。",
+  "After a power loss, Weak mounts are fully rechecked and Unknown mounts get at least the recent-writes check. Weak mounts also get a sampled read-back after every download.": "断电后，弱挂载会被完全重新检查，未知挂载至少会进行最近写入检查。每次下载后，弱挂载上的数据也会经过抽样回读。",
   "After an unclean shutdown": "异常关机后",
   "After the sync, drop cached pages where the OS allows it, re-read the files from disk and check their hashes before releasing. Sample checks the first and last piece of every file plus a percentage of the rest; Full checks everything. Catches storage that acknowledges writes it did not perform.": "同步后，在操作系统允许的情况下丢弃缓存页，然后从磁盘重新读取文件并检查哈希值，再释放下载。抽样模式会检查每个文件的首个和最后一个分片，并抽查其余分片中的一定比例；完整模式会检查所有分片。这能检测出确认了实际上并未执行的写入的存储设备。",
   "All": "全部",
