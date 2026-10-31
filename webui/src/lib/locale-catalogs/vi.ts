@@ -207,7 +207,7 @@ export const UI_LABELS: Record<string, string> = {
   "Create a rule above, then use match test to check titles before applying.": "Tạo quy tắc ở trên, sau đó sử dụng thử nghiệm so khớp để kiểm tra tiêu đề trước khi áp dụng.",
   "Create a workflow above, then preview it against the current torrent list before running.": "Tạo quy trình công việc ở trên, sau đó xem trước nó dựa trên danh sách torrent hiện tại trước khi chạy.",
   "Create or update group": "Tạo hay cập nhật nhóm",
-  "Credential hidden — select Show to reveal": "Thông tin xác thực bị ẩn — chọn Hiển thị để hiển thị",
+  "Credential hidden — select Show to reveal": "Thông tin xác thực đang ẩn — chọn Hiển thị để xem",
   "Credentials restored from config.toml.": "Đã khôi phục thông tin đăng nhập từ config.toml.",
   "Current": "Hiện tại",
   "Current username:": "Tên người dùng hiện thời:",

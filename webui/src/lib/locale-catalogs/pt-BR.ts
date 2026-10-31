@@ -197,7 +197,7 @@ export const UI_LABELS: Record<string, string> = {
   "Could not copy {label}": "Não foi possível copiar {label}",
   "Could not load crash-safety settings:": "Não foi possível carregar as configurações de proteção contra falhas:",
   "Could not perform the requested action on the selected torrents.": "Não foi possível executar a ação solicitada nos torrents selecionados.",
-  "Could not reach the API.": "Não consegui alcançar a API.",
+  "Could not reach the API.": "Não foi possível acessar a API.",
   "Could not restore credentials from config.toml.": "Não foi possível restaurar credenciais de config.toml.",
   "Could not save login credentials.": "Não foi possível salvar credenciais de login.",
   "Crash safety": "Proteção contra falhas",

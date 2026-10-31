@@ -58,6 +58,13 @@ const copyVisibleCommandsMessage = 'Copy visible commands'
 const fullRecheckCostMessage = 'Cost: Full recheck reads the whole library and is slow at scale.'
 const sampleFullIoCostMessage = 'Cost: Sample re-reads a few percent; Full doubles the read I/O of a download.'
 const sessionFileWriteCostMessage = 'Cost: a tiny file in the session folder, rewritten once a minute.'
+const couldNotCheckFolderMessage = 'Could not check that folder:'
+const couldNotReachApiMessage = 'Could not reach the API.'
+const couldNotRestoreCredentialsMessage = 'Could not restore credentials from config.toml.'
+const couldNotSaveLoginCredentialsMessage = 'Could not save login credentials.'
+const credentialHiddenMessage = 'Credential hidden — select Show to reveal'
+const createRuleBeforeApplyMessage = 'Create a rule above, then use match test to check titles before applying.'
+const createWorkflowBeforeRunMessage = 'Create a workflow above, then preview it against the current torrent list before running.'
 
 function placeholders(value: string) {
   return [...value.matchAll(/\{([a-zA-Z][a-zA-Z0-9_]*)\}/g)]
@@ -153,6 +160,25 @@ describe('interface locale catalogs', () => {
     expect(zhHans[sampleFullIoCostMessage]).not.toContain('Full')
     expect(id[sampleFullIoCostMessage]).toContain('pemeriksaan penuh')
     expect(ar[sessionFileWriteCostMessage]).toContain('يُعاد كتابته')
+    expect(ar[couldNotCheckFolderMessage]).toContain('المجلد')
+    expect(es[couldNotReachApiMessage]).toBe('No se pudo acceder a la API.')
+    expect(zhHans[couldNotReachApiMessage]).not.toContain(' 。')
+    expect(ptBR[couldNotReachApiMessage]).toContain('Não foi possível acessar')
+    expect(ko[couldNotReachApiMessage]).toContain('연결할 수 없습니다')
+    expect(id[couldNotReachApiMessage]).toContain('terhubung ke API')
+    expect(zhHans[couldNotRestoreCredentialsMessage]).toContain('恢复凭据')
+    expect(ar[couldNotRestoreCredentialsMessage]).toContain('بيانات الاعتماد')
+    expect(ko[couldNotRestoreCredentialsMessage]).toContain('자격 증명')
+    expect(es[couldNotSaveLoginCredentialsMessage]).toContain('No se pudieron guardar')
+    expect(hi[couldNotSaveLoginCredentialsMessage]).toContain('सहेजे नहीं जा सके')
+    expect(ar[createRuleBeforeApplyMessage]).toContain('قبل تطبيقها')
+    expect(hi[createWorkflowBeforeRunMessage]).toContain('सूची से मिलाकर')
+    expect(zhHans[credentialHiddenMessage]).toContain('选择“显示”即可查看')
+    expect(zhHant[credentialHiddenMessage]).toContain('登入資訊已隱藏')
+    expect(fr[credentialHiddenMessage]).toContain('Identifiants masqués')
+    expect(ko[credentialHiddenMessage]).toContain('숨겨져 있습니다')
+    expect(vi[credentialHiddenMessage]).toContain('đang ẩn')
+    expect(id[credentialHiddenMessage]).toContain('untuk melihatnya')
     expect(de['Add a torrent to populate the table.']).toContain('die Tabelle')
     expect(ar['Add folder policy']).toBe('إضافة سياسة للمجلد')
     expect(ar['Add or remove a torrent from the selection']).toContain('إضافة تورنت')

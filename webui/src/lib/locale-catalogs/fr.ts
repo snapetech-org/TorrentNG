@@ -207,7 +207,7 @@ export const UI_LABELS: Record<string, string> = {
   "Create a rule above, then use match test to check titles before applying.": "Créez une règle ci-dessus, puis vérifiez les titres avec le test de correspondance avant d’appliquer la règle.",
   "Create a workflow above, then preview it against the current torrent list before running.": "Créez un flux de travail ci-dessus, puis prévisualisez-le par rapport à la liste torrent actuelle avant de l'exécuter.",
   "Create or update group": "Créer ou mettre à jour un groupe",
-  "Credential hidden — select Show to reveal": "Informations d'identification masquées : sélectionnez Afficher pour révéler",
+  "Credential hidden — select Show to reveal": "Identifiants masqués : sélectionnez Afficher pour les révéler",
   "Credentials restored from config.toml.": "Identifiants restaurés depuis config.toml.",
   "Current": "Actuel",
   "Current username:": "Nom d'utilisateur actuel :",
