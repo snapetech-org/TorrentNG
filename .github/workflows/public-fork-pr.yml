@@ -1,7 +1,7 @@
 name: TorrentNG fork PR validation
 run-name: action:fork-validation pool:public pr-${{ github.event.pull_request.number }}
 on:
-  pull_request_target:
+  pull_request:
     branches:
       - main
     types:
@@ -15,8 +15,9 @@ jobs:
   validate:
     name: Run disposable fork validation
     if: >-
-      github.event_name == 'pull_request_target' &&
+      github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.fork == true &&
+      github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name &&
       github.event.pull_request.base.repo.full_name == 'snapetech-org/TorrentNG' &&
       github.event.pull_request.base.ref == 'main' &&
       (github.event.label.name == 'action:fork-validation' || github.event.label.name == 'pool:public') &&
@@ -24,10 +25,4 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'pool:public')
     permissions:
       contents: read
-    uses: ./.github/workflows/fork-safe-validation.yml
-    with:
-      action: fork-validation
-      runner_pool: public
-      pr_number: ${{ github.event.pull_request.number }}
-      pr_head_repo: ${{ github.event.pull_request.head.repo.full_name }}
-      pr_head_sha: ${{ github.event.pull_request.head.sha }}
+    uses: snapetech-org/TorrentNG/.github/workflows/fork-safe-validation.yml@5914abe010affa47deb1622e3acf0f143545b851
