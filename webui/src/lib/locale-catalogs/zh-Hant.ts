@@ -128,7 +128,7 @@ export const UI_LABELS: Record<string, string> = {
   "Checking torrent data": "正在檢查種子資料",
   "Checking…": "正在檢查…",
   "Checkpoint": "檢查點",
-  "Check…": "檢查…",
+  "Check…": "正在檢查…",
   "Choose a WebUI username and password. Public binds require a password of at least 16 characters. API tokens stay enabled for automation and can also be entered in either login field.": "設定 WebUI 使用者名稱與密碼。若綁定至公開位址，密碼至少須有 16 個字元。API 權杖仍可供自動化使用，也可輸入任一登入欄位。",
   "Choose how dates, times, and numbers are displayed. This setting is separate from interface language.": "選擇日期、時間與數字的顯示格式。此設定與介面語言分開。",
   "Choose or drop torrent files": "選擇或拖放種子檔案",

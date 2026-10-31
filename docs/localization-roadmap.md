@@ -2,9 +2,9 @@
 
 ## Current support and coverage
 
-The React interface in `webui/` now has a browser-local language selector and a catalog for its fixed, application-owned UI copy. The current audit contains 1,134 unique source messages and 13,608 translated locale cells across the twelve supported locales. Each non-English catalog loads on demand as a separate chunk; English remains visible until the selected chunk arrives. Torrent, tracker, category, path, URL, command, and other engine or user-provided values remain data and are not translated.
+The React interface in `webui/` now has a browser-local language selector and a catalog for its fixed, application-owned UI copy. The current source contains 1,142 messages and 13,704 translated locale cells across the twelve supported locales. Each non-English catalog loads on demand as a separate chunk; English remains visible until the selected chunk arrives. Torrent, tracker, category, path, URL, command, and other engine or user-provided values remain data and are not translated.
 
-Catalog coverage is generated from the current WebUI source plus complete templates for dynamic messages and fixed keyboard-help rows. The WebUI unit suite checks exact key parity, non-empty values, and named-placeholder parity in `localeCatalogs.test.ts`. The catalog was machine-translated, then checked for key parity, placeholders, suspicious corruption, and terminology that changes meaning in TorrentNG workflows.
+Catalog coverage is generated from the current WebUI source plus complete templates for dynamic messages and fixed keyboard-help rows. The WebUI unit suite checks exact key parity, non-empty values, and named-placeholder parity in `localeCatalogs.test.ts`. The catalogs were machine-translated and receive automated key, placeholder, non-empty, corruption, and selected terminology checks. These checks do not replace fluent-speaker review.
 
 ## Supported locales
 
@@ -38,3 +38,7 @@ Regional number formatting follows live interface-language changes. Arabic direc
 ## Follow-up
 
 Check Arabic label placement in real layouts before making any broader RTL claim. Extend the inventory and catalog checks whenever new fixed UI strings are added.
+
+## Model-assisted follow-up — 2026-10-30
+
+Automated catalog invariants cover all 13,704 direct translation cells. A contextual pass reviewed 108 cells across nine high-risk state, action, glossary, and keyboard-help messages in all twelve locales, correcting 73 values. The other 13,631 direct cells have not received that contextual pass. No qualified human-review status is claimed; fluent-speaker review remains outstanding.

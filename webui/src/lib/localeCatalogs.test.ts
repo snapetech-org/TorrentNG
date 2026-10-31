@@ -37,4 +37,25 @@ describe('interface locale catalogs', () => {
       }
     }
   })
+
+  it('keeps torrent state, action, glossary, and keyboard-help translations in context', () => {
+    expect(es.Checking).toBe('Comprobando')
+    expect(es['Check…']).toBe('Comprobando…')
+    expect(es.Command).toBe('Comando')
+    expect(es['Affected torrents']).toBe('Torrents afectados')
+    expect(ja['Check…']).toBe('チェック中…')
+    expect(ko['Checking…']).toBe('확인 중…')
+    expect(fr['Affected torrents']).toBe('Torrents concernés')
+    expect(zhHans['Check']).toBe('检查')
+    expect(vi.Command).toBe('Lệnh')
+    expect(hi.Command).toBe('कमांड')
+
+    const keyboardHelp = 'Click a row to select it. Hold Control or Command to add or remove rows. Hold Shift to select a range. Use Arrow keys to move and Space to select.'
+    for (const catalog of Object.values(catalogs)) {
+      const translation = catalog[keyboardHelp]
+      expect(translation).not.toContain('Hold Shift')
+      expect(translation).not.toContain('Grab Shift')
+      expect(translation).not.toContain('space to select')
+    }
+  })
 })
