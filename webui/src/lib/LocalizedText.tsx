@@ -1,5 +1,10 @@
 import { Fragment, type ReactNode } from 'react'
 import { useInterfaceLanguage } from './interfaceLocale'
+import serverMessages from './server-messages.json'
+import { compileServerMessageMatchers, matchServerMessage } from './serverMessageMatch'
+import { SERVER_EVENT_KIND_LABELS } from './serverEventKinds'
+
+const serverMessageMatchers = compileServerMessageMatchers(serverMessages)
 
 type Props = {
   source: string
@@ -33,8 +38,23 @@ export function LocalizedRichText({ source, parameters }: { source: string; para
   )
 }
 
+export function LocalizedServerMessage({ message }: { message: string }) {
+  const match = matchServerMessage(message, serverMessageMatchers)
+  if (!match) return <>{message}</>
+  return <LocalizedRichText source={match.source} parameters={match.tokens} />
+}
+
+export function LocalizedServerEventKind({ kind }: { kind: string }) {
+  const source = SERVER_EVENT_KIND_LABELS[kind as keyof typeof SERVER_EVENT_KIND_LABELS]
+  return source ? <LocalizedText source={source} /> : <>{kind}</>
+}
+
 export function LocalizedErrorText({ message }: { message: string }) {
   const { t, textProps } = useInterfaceLanguage()
+  const serverMatch = matchServerMessage(message, serverMessageMatchers)
+  if (serverMatch) {
+    return <LocalizedRichText source={serverMatch.source} parameters={serverMatch.tokens} />
+  }
   let source = message
   let parameters: Record<string, string | number> = {}
   let path: string | null = null

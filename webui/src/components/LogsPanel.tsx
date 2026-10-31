@@ -1,4 +1,4 @@
-import { LocalizedText } from '../lib/LocalizedText'
+import { LocalizedServerEventKind, LocalizedServerMessage, LocalizedText } from '../lib/LocalizedText'
 import { interfaceTextProps, translateInterface } from '../lib/interfaceLocale'
 import { getRegionalLocale } from '../lib/localeFormat'
 import { useMemo, useState } from 'react'
@@ -121,13 +121,15 @@ function LogRow({ event }: { event: AppLogEvent }) {
       </div>
       <div style={{ minWidth: 0 }}>
         <div style={{ color: 'var(--text)', fontWeight: 800, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={event.kind}>
-          {event.kind}
+          <LocalizedServerEventKind kind={event.kind} />
         </div>
         <div style={{ color: 'var(--faint)', fontSize: 11 }}>{formatTime(event.occurred_at)}</div>
       </div>
       <div style={{ minWidth: 0 }}>
         <div style={{ color: 'var(--text)', fontSize: 12, lineHeight: 1.4, overflowWrap: 'anywhere' }}>
-          {event.message || event.kind}
+          {event.message
+            ? <LocalizedServerMessage message={event.message} />
+            : <LocalizedServerEventKind kind={event.kind} />}
         </div>
         {payload && (
           <div style={{
