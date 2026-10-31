@@ -25,7 +25,7 @@ jobs:
       github.event.pull_request.base.ref == 'main'
     permissions:
       contents: read
-    uses: snapetech-org/TorrentNG/.github/workflows/fork-safe-validation.yml@d7ac4a33d64f5670650ac1955a005a0713656c43
+    uses: snapetech-org/TorrentNG/.github/workflows/fork-safe-validation.yml@e021139bdc186d4c07f1c6747bfa4fd830e7417b
     with:
       action: ci
       runner_pool: ${{ contains(github.event.pull_request.labels.*.name, 'pool:public') && 'public' || 'hybrid' }}
