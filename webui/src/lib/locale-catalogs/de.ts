@@ -140,7 +140,7 @@ export const UI_LABELS: Record<string, string> = {
   "Classify only from visible file extensions.": "Nur anhand sichtbarer Dateiendungen einordnen.",
   "Clean shutdown": "Saubere Abschaltung",
   "Clear": "Leeren",
-  "Clear category": "Kategorie löschen",
+  "Clear category": "Keine Kategorie",
   "Clear filters": "Filter löschen",
   "Clear filters or change the search text.": "Filter löschen oder den Suchtext ändern.",
   "Clear search": "Suche löschen",

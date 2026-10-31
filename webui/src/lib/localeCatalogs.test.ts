@@ -39,6 +39,14 @@ const immediateTorrentChangesMessage = 'Changes take effect immediately, for tor
 const weakUnknownStorageMessage = 'Check harder on weak or unknown storage'
 const publicWebUiSetupMessage = 'Choose a WebUI username and password. Public binds require a password of at least 16 characters. API tokens stay enabled for automation and can also be entered in either login field.'
 const chooseOrDropTorrentFilesMessage = 'Choose or drop torrent files'
+const clearCategoryMessage = 'Clear category'
+const chooseDockedDetailsPanelMessage = 'Choose where the details panel is docked'
+const classifyEachSaveLocationMessage = 'Classify each save location'
+const cleanShutdownMessage = 'Clean shutdown'
+const closeEscapeActionsMessage = 'Close dialog, details, or clear selection'
+const liveDownloadRateMessage = 'Collecting a live download rate'
+const commandIndexUnavailableMessage = 'Command index unavailable'
+const communityReleaseDiscussionMessage = 'Community support and release discussion'
 
 function placeholders(value: string) {
   return [...value.matchAll(/\{([a-zA-Z][a-zA-Z0-9_]*)\}/g)]
@@ -89,6 +97,23 @@ describe('interface locale catalogs', () => {
     expect(ja[chooseOrDropTorrentFilesMessage]).toContain('ドラッグ＆ドロップ')
     expect(ko[chooseOrDropTorrentFilesMessage]).toContain('끌어다 놓으세요')
     expect(id[chooseOrDropTorrentFilesMessage]).toContain('seret dan lepas')
+    expect(hi[chooseDockedDetailsPanelMessage]).toBe('विवरण पैनल कहाँ रखना है, चुनें')
+    expect(id[chooseDockedDetailsPanelMessage]).toBe('Pilih di mana panel detail ditempatkan')
+    expect(hi[classifyEachSaveLocationMessage]).toContain('सहेजने की हर जगह')
+    expect(hi[cleanShutdownMessage]).toBe('सामान्य शटडाउन')
+    expect(ar[cleanShutdownMessage]).toBe('إغلاق سليم')
+    expect(hi[liveDownloadRateMessage]).toBe('वर्तमान डाउनलोड गति मापी जा रही है')
+    expect(id.Clear).toBe('Bersihkan')
+    expect(de[clearCategoryMessage]).toBe('Keine Kategorie')
+    expect(fr[clearCategoryMessage]).toBe('Aucune catégorie')
+    expect(id[clearCategoryMessage]).toBe('Tanpa kategori')
+    expect(vi.Categories).toBe('Danh mục')
+    expect(vi[clearCategoryMessage]).toBe('Bỏ danh mục')
+    expect(zhHans.Columns).toBe('列')
+    expect(ja.Columns).toBe('列')
+    expect(hi[commandIndexUnavailableMessage]).toBe('कमांड इंडेक्स उपलब्ध नहीं है')
+    expect(ko[commandIndexUnavailableMessage]).not.toContain('unavailable')
+    expect(hi[communityReleaseDiscussionMessage]).toContain('रिलीज़ पर चर्चा')
     expect(de['Add a torrent to populate the table.']).toContain('die Tabelle')
     expect(ar['Add folder policy']).toBe('إضافة سياسة للمجلد')
     expect(ar['Add or remove a torrent from the selection']).toContain('إضافة تورنت')
@@ -149,6 +174,15 @@ describe('interface locale catalogs', () => {
     }
 
     const keyboardHelp = 'Click a row to select it. Hold Control or Command to add or remove rows. Hold Shift to select a range. Use Arrow keys to move and Space to select.'
+    expect(es[closeEscapeActionsMessage]).toContain('panel de detalles')
+    expect(hi[closeEscapeActionsMessage]).toContain('विवरण पैनल')
+    expect(ja[closeEscapeActionsMessage]).toContain('詳細パネル')
+    expect(vi[closeEscapeActionsMessage]).toContain('bảng chi tiết')
+    expect(id[closeEscapeActionsMessage]).toContain('batalkan pilihan')
+    expect(hi[keyboardHelp]).not.toContain('Arrow keys')
+    expect(hi[keyboardHelp]).toContain('स्पेसबार')
+    expect(ja[keyboardHelp]).not.toContain('Space キー')
+    expect(ja[keyboardHelp]).toContain('スペースキー')
     for (const catalog of Object.values(catalogs)) {
       const translation = catalog[keyboardHelp]
       expect(translation).not.toContain('Hold Shift')

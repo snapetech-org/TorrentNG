@@ -152,7 +152,7 @@ export const UI_LABELS: Record<string, string> = {
   "Client Identifier": "Identificador do Cliente",
   "Close": "Fechar",
   "Close add torrent dialog": "Fechar a janela de adição de torrent",
-  "Close dialog, details, or clear selection": "Fechar caixa de diálogo, detalhes ou limpar seleção",
+  "Close dialog, details, or clear selection": "Fechar o diálogo ou o painel de detalhes, ou limpar a seleção",
   "Closed": "Fechado",
   "Collapse": "Recolher",
   "Collapse all": "Recolher tudo",
