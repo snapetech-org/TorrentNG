@@ -38,7 +38,8 @@ export function LocalizedRichText({ source, parameters }: { source: string; para
   )
 }
 
-export function LocalizedServerMessage({ message }: { message: string }) {
+export function LocalizedServerMessage({ message, kind }: { message: string; kind: string }) {
+  if (kind === 'rtorrent_log' || !Object.hasOwn(SERVER_EVENT_KIND_LABELS, kind)) return <>{message}</>
   const match = matchServerMessage(message, serverMessageMatchers)
   if (!match) return <>{message}</>
   return <LocalizedRichText source={match.source} parameters={match.tokens} />
@@ -79,6 +80,12 @@ export function LocalizedErrorText({ message }: { message: string }) {
         parameters = { retryAfter: retryError[1] }
       } else if (/^(?:TypeError: )?Failed to fetch$/.test(message) || message === 'Load failed') {
         source = 'Network request failed. Check your connection.'
+      } else if (message === 'Invalid username/password or API token' ||
+                 message === 'Too many login attempts. Please try again later.') {
+        // These exact AuthError messages are authored by api/client.ts login().
+        source = message
+      } else {
+        return <>{message}</>
       }
     }
   }

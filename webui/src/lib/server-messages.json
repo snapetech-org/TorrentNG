@@ -528,6 +528,28 @@
     ]
   },
   {
+    "id": "server.message.0537d77de561",
+    "source": "RSS rules updated",
+    "parameters": [],
+    "patterns": [
+      "RSS rules updated"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "RSS rules updated"
+        ]
+      },
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "RSS rules updated"
+        ]
+      }
+    ]
+  },
+  {
     "id": "server.message.b7cdf46c9ad8",
     "source": "Recheck recovered; torrent paused",
     "parameters": [],
@@ -705,6 +727,28 @@
         "path": "crates/rt-metainfo/src/swarm.rs",
         "fragments": [
           "Swarm metainfo memory budget exhausted"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.20f944884fcf",
+    "source": "Tags updated",
+    "parameters": [],
+    "patterns": [
+      "tags updated"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "tags updated"
+        ]
+      },
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "tags updated"
         ]
       }
     ]
@@ -954,13 +998,26 @@
     "source": "Torrent removed",
     "parameters": [],
     "patterns": [
-      "torrent_removed"
+      "torrent_removed",
+      "torrent removed"
     ],
     "sources": [
       {
         "path": "crates/rt-engine/src/engine.rs",
         "fragments": [
           "torrent_removed"
+        ]
+      },
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "torrent removed"
+        ]
+      },
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "torrent removed"
         ]
       }
     ]
@@ -993,6 +1050,28 @@
         "path": "crates/rt-engine/src/engine.rs",
         "fragments": [
           "torrent_resumed"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.50da155874f5",
+    "source": "Torrent updated",
+    "parameters": [],
+    "patterns": [
+      "torrent updated"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "torrent updated"
+        ]
+      },
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "torrent updated"
         ]
       }
     ]
@@ -1041,6 +1120,38 @@
         "path": "crates/rt-engine/src/engine.rs",
         "fragments": [
           "TorrentNG client stopped"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.e69cc90d9ea5",
+    "source": "TorrentNG compatible-client service started",
+    "parameters": [],
+    "patterns": [
+      "TorrentNG compatible-client service started"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/main.rs",
+        "fragments": [
+          "TorrentNG compatible-client service started"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.b11069d02d83",
+    "source": "TorrentNG restart requested",
+    "parameters": [],
+    "patterns": [
+      "TorrentNG restart requested"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "TorrentNG restart requested"
         ]
       }
     ]
@@ -1105,6 +1216,102 @@
         "path": "crates/rt-metainfo/src/swarm.rs",
         "fragments": [
           "V2 file paths, sizes, padding, or content roots differ"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.f4c586babb38",
+    "source": "backend sync failed",
+    "parameters": [],
+    "patterns": [
+      "backend sync failed"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/sync.rs",
+        "fragments": [
+          "backend sync failed"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.81e2ee9eb2f1",
+    "source": "backend sync recovered",
+    "parameters": [],
+    "patterns": [
+      "backend sync recovered"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/sync.rs",
+        "fragments": [
+          "backend sync recovered"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.ca131e3484df",
+    "source": "backend transfer stats probe failed",
+    "parameters": [],
+    "patterns": [
+      "backend transfer stats probe failed"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/stats.rs",
+        "fragments": [
+          "backend transfer stats probe failed"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.889c14a7a3fc",
+    "source": "backend transfer stats recovered",
+    "parameters": [],
+    "patterns": [
+      "backend transfer stats recovered"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/stats.rs",
+        "fragments": [
+          "backend transfer stats recovered"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.b51dc6e4bd71",
+    "source": "backend user agent update failed",
+    "parameters": [],
+    "patterns": [
+      "backend user agent update failed"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "backend user agent update failed"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.8563e943b382",
+    "source": "backend user agent updated",
+    "parameters": [],
+    "patterns": [
+      "backend user agent updated"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "backend user agent updated"
         ]
       }
     ]
@@ -1404,6 +1611,28 @@
         "path": "crates/rt-metainfo/src/error.rs",
         "fragments": [
           "bencode error: {0}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.e0c52fc3216a",
+    "source": "categories updated",
+    "parameters": [],
+    "patterns": [
+      "categories updated"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "categories updated"
+        ]
+      },
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "categories updated"
         ]
       }
     ]
@@ -2713,6 +2942,157 @@
     ]
   },
   {
+    "id": "server.message.0c119603fab8",
+    "source": "qBittorrent preference update could not apply backend user agent",
+    "parameters": [],
+    "patterns": [
+      "qBittorrent preference update could not apply backend user agent"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "qBittorrent preference update could not apply backend user agent"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.06ddc2329eb4",
+    "source": "qBittorrent preferences updated backend session feature",
+    "parameters": [],
+    "patterns": [
+      "qBittorrent preferences updated backend session feature"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "qBittorrent preferences updated backend session feature"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.0de8314257b6",
+    "source": "qBittorrent preferences updated backend user agent",
+    "parameters": [],
+    "patterns": [
+      "qBittorrent preferences updated backend user agent"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "qBittorrent preferences updated backend user agent"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.3a860c6b0715",
+    "source": "rTorrent log ingest failed for {value0}: {value1}",
+    "parameters": [
+      {
+        "name": "value0"
+      },
+      {
+        "name": "value1"
+      }
+    ],
+    "patterns": [
+      "rTorrent log ingest failed for {value0}: {value1}"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/rtorrent_logs.rs",
+        "fragments": [
+          "rTorrent log ingest failed for {source}: {redacted_error}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.8e4b4311d177",
+    "source": "rTorrent log ingest recovered for {value0}",
+    "parameters": [
+      {
+        "name": "value0"
+      }
+    ],
+    "patterns": [
+      "rTorrent log ingest recovered for {value0}"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/rtorrent_logs.rs",
+        "fragments": [
+          "rTorrent log ingest recovered for {source}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.f6c6bfcb4941",
+    "source": "rTorrent settings saved",
+    "parameters": [],
+    "patterns": [
+      "rTorrent settings saved"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "rTorrent settings saved"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.b82e28a2587f",
+    "source": "ratio groups updated",
+    "parameters": [],
+    "patterns": [
+      "ratio groups updated"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "ratio groups updated"
+        ]
+      },
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "ratio groups updated"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.d25cc140d395",
+    "source": "saved views updated",
+    "parameters": [],
+    "patterns": [
+      "saved views updated"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "saved views updated"
+        ]
+      },
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "saved views updated"
+        ]
+      }
+    ]
+  },
+  {
     "id": "server.message.8813e2f4e175",
     "source": "storage move committed but durable job completion failed",
     "parameters": [],
@@ -2793,6 +3173,28 @@
     ]
   },
   {
+    "id": "server.message.6f23cb150158",
+    "source": "storage updated",
+    "parameters": [],
+    "patterns": [
+      "storage updated"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "storage updated"
+        ]
+      },
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "storage updated"
+        ]
+      }
+    ]
+  },
+  {
     "id": "server.message.c0dc0665064b",
     "source": "swarm preparation panicked",
     "parameters": [],
@@ -2862,6 +3264,18 @@
     "sources": [
       {
         "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "torrent added"
+        ]
+      },
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "torrent added"
+        ]
+      },
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
         "fragments": [
           "torrent added"
         ]
@@ -3348,6 +3762,50 @@
         "path": "crates/rt-metainfo/src/error.rs",
         "fragments": [
           "unsupported metainfo version: {0}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.2311b30b6530",
+    "source": "workflow runs updated",
+    "parameters": [],
+    "patterns": [
+      "workflow runs updated"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "workflow runs updated"
+        ]
+      },
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "workflow runs updated"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.e2ca9d13f5cb",
+    "source": "workflows updated",
+    "parameters": [],
+    "patterns": [
+      "workflows updated"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "workflows updated"
+        ]
+      },
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "workflows updated"
         ]
       }
     ]

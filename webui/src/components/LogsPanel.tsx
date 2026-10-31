@@ -131,7 +131,7 @@ function LogRow({ event }: { event: AppLogEvent }) {
       <div style={{ minWidth: 0 }}>
         <div style={{ color: 'var(--text)', fontSize: 12, lineHeight: 1.4, overflowWrap: 'anywhere' }}>
           {event.message
-            ? <LocalizedServerMessage message={event.message} />
+            ? <LocalizedServerMessage message={event.message} kind={event.kind} />
             : <LocalizedServerEventKind kind={event.kind} />}
         </div>
         {payload && (

@@ -28,6 +28,7 @@ export const SERVER_EVENT_KIND_LABELS = {
   torrent_updated: 'Torrent updated',
   categories_updated: 'Categories',
   tags_updated: 'Tags',
+  storage_updated: 'Storage',
   saved_views_updated: 'Saved views',
   ratio_groups_updated: 'Ratio groups',
   rss_rules_updated: 'RSS rules',
