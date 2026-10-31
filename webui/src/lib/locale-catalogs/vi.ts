@@ -66,7 +66,7 @@ export const UI_LABELS: Record<string, string> = {
   "Apply defaults to all managed settings": "Áp dụng mặc định cho tất cả cài đặt được quản lý",
   "Apply defaults to every managed rTorrent setting? The changes will autosave shortly.": "Áp dụng mặc định cho mọi cài đặt rTorrent được quản lý? Những thay đổi sẽ tự động lưu trong thời gian ngắn.",
   "Apply defaults to this group": "Áp dụng mặc định cho nhóm này",
-  "Apply defaults to {count} settings in this group? Autosave will apply shortly.": "Áp dụng mặc định cho cài đặt {count} trong nhóm này? Tính năng tự động lưu sẽ sớm được áp dụng.",
+  "Apply defaults to {count} settings in this group? Autosave will apply shortly.": "Áp dụng mặc định cho {count} cài đặt trong nhóm này? Thay đổi sẽ sớm được tự động lưu.",
   "Apply path": "Áp dụng đường dẫn",
   "Apply share limits": "Áp dụng giới hạn tỷ lệ và thời gian seeding",
   "Apply: {matched} matched, {applied} applied, {count} error": "Áp dụng: khớp {matched}, đã áp dụng {applied}, có {count} lỗi",

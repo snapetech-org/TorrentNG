@@ -76,7 +76,7 @@ export const UI_LABELS: Record<string, string> = {
   "Approve delete execution": "Setujui pelaksanaan penghapusan",
   "Arrow keys": "Tombol panah",
   "Ascending": "Urut menaik",
-  "Ask the filesystem which parts of each file were never written (holes, or preallocated space with no data) and re-verify any piece that claims to be there. Reads metadata only, so it is fast. It only triggers re-hashing; it never declares a piece corrupt by itself.": "Tanyakan pada sistem file bagian mana dari setiap file yang tidak pernah ditulis (lubang, atau ruang yang telah dialokasikan sebelumnya tanpa data) dan verifikasi ulang bagian mana pun yang mengklaim ada di sana. Hanya membaca metadata, jadi cepat. Itu hanya memicu hashing ulang; ia tidak pernah menyatakan suatu karya rusak dengan sendirinya.",
+  "Ask the filesystem which parts of each file were never written (holes, or preallocated space with no data) and re-verify any piece that claims to be there. Reads metadata only, so it is fast. It only triggers re-hashing; it never declares a piece corrupt by itself.": "Tanyakan kepada sistem file bagian mana dari setiap file yang belum pernah ditulis (ruang berlubang atau ruang yang telah dialokasikan tanpa data), lalu verifikasi ulang setiap bagian yang dinyatakan ada. Pemeriksaan ini hanya membaca metadata, jadi cepat. Pemeriksaan ini hanya memicu penghitungan ulang hash; tidak akan menyatakan suatu bagian rusak dengan sendirinya.",
   "At most {count} location policies are allowed.": "Maksimal {count} kebijakan lokasi diperbolehkan.",
   "Audio": "Audio",
   "Authentication settings are unavailable.": "Pengaturan autentikasi tidak tersedia.",

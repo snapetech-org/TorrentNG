@@ -25,6 +25,14 @@ const crashSafetyPathMessage = [
 ].join(' ')
 const advancedOverridesMessage = 'Advanced overrides are imported after managed settings and usually need a restart.'
 const weakMountChecksMessage = 'After a power loss, Weak mounts are fully rechecked and Unknown mounts get at least the recent-writes check. Weak mounts also get a sampled read-back after every download.'
+const appliesToTorrentsMessage = 'Applies to torrents saved in this folder or anywhere below it.'
+const applyDefaultsCountMessage = 'Apply defaults to {count} settings in this group? Autosave will apply shortly.'
+const applyOneErrorMessage = 'Apply: {matched} matched, {applied} applied, {count} error'
+const locationPoliciesLimitMessage = 'At most {count} location policies are allowed.'
+const filesystemHoleCheckMessage = [
+  'Ask the filesystem which parts of each file were never written (holes, or preallocated space with no data) and re-verify any piece that claims to be there.',
+  'Reads metadata only, so it is fast. It only triggers re-hashing; it never declares a piece corrupt by itself.',
+].join(' ')
 
 function placeholders(value: string) {
   return [...value.matchAll(/\{([a-zA-Z][a-zA-Z0-9_]*)\}/g)]
@@ -80,6 +88,26 @@ describe('interface locale catalogs', () => {
     expect(ptBR[weakMountChecksMessage]).toContain('pontos de montagem')
     expect(ko[weakMountChecksMessage]).toContain('최근 쓰기')
     expect(id[weakMountChecksMessage]).toContain('titik mount')
+    expect(es[appliesToTorrentsMessage]).toContain('torrents guardados')
+    expect(ptBR[appliesToTorrentsMessage]).toContain('torrents salvos')
+    expect(de[appliesToTorrentsMessage]).toContain('diesem Ordner')
+    expect(zhHans[appliesToTorrentsMessage]).not.toContain(' 。')
+    expect(ar[appliesToTorrentsMessage]).not.toContain('。')
+    expect(ar['Apply category']).toBe('تطبيق الفئة')
+    expect(ko['Apply category']).toBe('카테고리 적용')
+    expect(de[applyDefaultsCountMessage]).toContain('{count} Einstellungen')
+    expect(fr[applyDefaultsCountMessage]).toContain('aux {count} paramètres')
+    expect(vi[applyDefaultsCountMessage]).toContain('cho {count} cài đặt')
+    expect(es[applyOneErrorMessage]).toContain('{matched} coincidencias')
+    expect(fr[applyOneErrorMessage]).toContain('{matched} correspondances')
+    expect(ptBR[applyOneErrorMessage]).toContain('{matched} correspondências')
+    expect(de[locationPoliciesLimitMessage]).toContain('höchstens {count} Standortregeln')
+    expect(ar[locationPoliciesLimitMessage]).toContain('بحد أقصى {count}')
+    expect(zhHans['Authentication settings are unavailable.']).not.toContain(' 。')
+    expect(hi['Autosaves now; effective after restart']).not.toContain('Autosaves')
+    expect(ko[filesystemHoleCheckMessage]).toContain('손상된 것으로')
+    expect(id[filesystemHoleCheckMessage]).toContain('suatu bagian rusak')
+    expect(ar[filesystemHoleCheckMessage]).toContain('لا يحكم بمفرده')
 
     for (const [locale, catalog] of Object.entries(catalogs)) {
       expect(catalog[crashSafetyPathMessage], `${locale}: settings label`).toContain(catalog.Settings)

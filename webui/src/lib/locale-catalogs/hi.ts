@@ -87,7 +87,7 @@ export const UI_LABELS: Record<string, string> = {
   "Autosave failed": "स्वतः सहेजना विफल",
   "Autosave state": "स्वतः-सहेजने की स्थिति",
   "Autosaves and applies live": "अपने-आप सहेजा जाता है और तुरंत लागू होता है",
-  "Autosaves now; effective after restart": "अब Autosaves; पुनरारंभ के बाद प्रभावी",
+  "Autosaves now; effective after restart": "अभी अपने-आप सहेजा जाता है; बदलाव पुनरारंभ के बाद प्रभावी होंगे।",
   "Autosaving": "अपने आप सहेजा जा रहा है",
   "Available": "उपलब्ध",
   "Backend": "बैकएंड",
