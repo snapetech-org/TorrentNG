@@ -65,6 +65,13 @@ const couldNotSaveLoginCredentialsMessage = 'Could not save login credentials.'
 const credentialHiddenMessage = 'Credential hidden — select Show to reveal'
 const createRuleBeforeApplyMessage = 'Create a rule above, then use match test to check titles before applying.'
 const createWorkflowBeforeRunMessage = 'Create a workflow above, then preview it against the current torrent list before running.'
+const credentialsRestoredMessage = 'Credentials restored from config.toml.'
+const currentUsernameMessage = 'Current username:'
+const customLinesMessage = 'Custom lines'
+const customLinesCountMessage = 'Custom lines ({count})'
+const customTorrentConfigLinesMessage = 'Custom rTorrent configuration lines'
+const customTorrentLinesMessage = 'Custom rTorrent lines'
+const customTorrentLinesEditedMessage = 'Custom rTorrent lines edited'
 
 function placeholders(value: string) {
   return [...value.matchAll(/\{([a-zA-Z][a-zA-Z0-9_]*)\}/g)]
@@ -179,6 +186,16 @@ describe('interface locale catalogs', () => {
     expect(ko[credentialHiddenMessage]).toContain('숨겨져 있습니다')
     expect(vi[credentialHiddenMessage]).toContain('đang ẩn')
     expect(id[credentialHiddenMessage]).toContain('untuk melihatnya')
+    expect(ko[credentialsRestoredMessage]).not.toContain('Credentials')
+    expect(zhHans[currentUsernameMessage]).not.toContain(' :')
+    expect(zhHans[customLinesMessage]).toContain('配置行')
+    expect(zhHans[customLinesCountMessage]).toContain('配置行')
+    expect(ja[customLinesMessage]).toBe('カスタム設定行')
+    expect(id[customLinesMessage]).toBe('Baris konfigurasi khusus')
+    expect(hi[customTorrentConfigLinesMessage]).toContain('rTorrent की कस्टम कॉन्फ़िगरेशन लाइनें')
+    expect(ptBR[customTorrentConfigLinesMessage]).toContain('do rTorrent')
+    expect(ja[customTorrentLinesMessage]).toBe('カスタム rTorrent 設定行')
+    expect(ko[customTorrentLinesEditedMessage]).toContain('구성 줄을 편집했습니다')
     expect(de['Add a torrent to populate the table.']).toContain('die Tabelle')
     expect(ar['Add folder policy']).toBe('إضافة سياسة للمجلد')
     expect(ar['Add or remove a torrent from the selection']).toContain('إضافة تورنت')
