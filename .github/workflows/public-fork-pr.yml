@@ -1,11 +1,10 @@
 name: TorrentNG fork PR validation
-run-name: action:fork-validation pool:public pr-${{ github.event.pull_request.number }}
+run-name: >-
+  action:ci:pool:${{ contains(github.event.pull_request.labels.*.name, 'pool:public') && 'public' || 'hybrid' }}:pr-${{ github.event.pull_request.number }}
 on:
   pull_request:
-    branches:
-      - main
-    types:
-      - labeled
+    types: [labeled]
+    branches: [main]
 permissions:
   contents: read
 concurrency:
@@ -15,14 +14,21 @@ jobs:
   validate:
     name: Run disposable fork validation
     if: >-
-      github.event_name == 'pull_request' &&
+      github.event.action == 'labeled' &&
+      github.actor == 'snapetech' &&
+      (startsWith(github.event.label.name, 'action:') || startsWith(github.event.label.name, 'pool:')) &&
+      contains(github.event.pull_request.labels.*.name, 'action:ci') &&
+      (contains(github.event.pull_request.labels.*.name, 'pool:public') || contains(github.event.pull_request.labels.*.name, 'pool:hybrid')) &&
       github.event.pull_request.head.repo.fork == true &&
       github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name &&
       github.event.pull_request.base.repo.full_name == 'snapetech-org/TorrentNG' &&
-      github.event.pull_request.base.ref == 'main' &&
-      (github.event.label.name == 'action:fork-validation' || github.event.label.name == 'pool:public') &&
-      contains(github.event.pull_request.labels.*.name, 'action:fork-validation') &&
-      contains(github.event.pull_request.labels.*.name, 'pool:public')
+      github.event.pull_request.base.ref == 'main'
     permissions:
       contents: read
-    uses: snapetech-org/TorrentNG/.github/workflows/fork-safe-validation.yml@5914abe010affa47deb1622e3acf0f143545b851
+    uses: snapetech-org/TorrentNG/.github/workflows/fork-safe-validation.yml@d7ac4a33d64f5670650ac1955a005a0713656c43
+    with:
+      action: ci
+      runner_pool: ${{ contains(github.event.pull_request.labels.*.name, 'pool:public') && 'public' || 'hybrid' }}
+      pr_number: ${{ format('{0}', github.event.pull_request.number) }}
+      pr_head_repo: ${{ github.event.pull_request.head.repo.full_name }}
+      pr_head_sha: ${{ github.event.pull_request.head.sha }}
