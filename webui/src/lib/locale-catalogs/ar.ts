@@ -90,7 +90,7 @@ export const UI_LABELS: Record<string, string> = {
   "Autosaves now; effective after restart": "يُحفَظ تلقائيًا الآن؛ وتصبح التغييرات سارية بعد إعادة التشغيل.",
   "Autosaving": "جارٍ الحفظ تلقائيًا",
   "Available": "متاح",
-  "Backend": "الخلفية",
+  "Backend": "النظام الخلفي",
   "Balanced (default)": "متوازن (افتراضي)",
   "Bottom": "قاع",
   "Bounded torrent multicall": "استدعاء متعدد محدود للتورنت",
