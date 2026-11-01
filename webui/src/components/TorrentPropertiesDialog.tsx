@@ -361,7 +361,7 @@ function FileRow({ file, torrentComplete, busy, renaming, name, onName, onRename
           <div style={{ minWidth: 0 }}>
             <div style={{ color: 'var(--text)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={file.path} dir="ltr" lang="und"><bdi dir="ltr" lang="und">{file.path}</bdi></div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
-              <div role="progressbar" aria-label={t('File progress for {path}', { path: file.path })} {...textProps('File progress for {path}')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100, Math.max(0, pct))} style={{ flex: 1, height: 4, background: 'var(--surface-2)', borderRadius: 999, overflow: 'hidden' }}>
+              <div role="progressbar" aria-label={t('File progress for {path}', { path: `\u2068${file.path}\u2069` })} {...textProps('File progress for {path}')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100, Math.max(0, pct))} style={{ flex: 1, height: 4, background: 'var(--surface-2)', borderRadius: 999, overflow: 'hidden' }}>
                 <div style={{
                   width: `${Math.min(100, Math.max(0, pct))}%`, height: '100%',
                   background: pct >= 100 ? 'var(--success)' : 'var(--accent)',
@@ -375,7 +375,7 @@ function FileRow({ file, torrentComplete, busy, renaming, name, onName, onRename
               }}><LocalizedText source={priority.label} /></span>
             </div>
           </div>
-          <select aria-label={t('Priority for {path}', { path: file.path })} {...textProps('Priority for {path}')} value={file.priority} disabled={busy} onChange={e => onPriority(Number(e.target.value))} style={{ ...INPUT, width: 112 }}>
+          <select aria-label={t('Priority for {path}', { path: `\u2068${file.path}\u2069` })} {...textProps('Priority for {path}')} value={file.priority} disabled={busy} onChange={e => onPriority(Number(e.target.value))} style={{ ...INPUT, width: 112 }}>
             <option value={0}><LocalizedText source="Do not download" /></option>
             <option value={1} {...textProps("Normal")}>{t("Normal")}</option>
             <option value={2} {...textProps("High")}>{t("High")}</option>

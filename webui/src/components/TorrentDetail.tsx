@@ -248,12 +248,12 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
       )}
 
       {confirmDelete && (
-        <div role="alertdialog" aria-label={translateInterface('Delete {name}', { name: t.name })} {...interfaceTextProps('Delete {name}')} aria-describedby="torrent-detail-delete-description" style={{
+        <div role="alertdialog" aria-label={translateInterface('Delete {name}', { name: `\u2068${t.name}\u2069` })} {...interfaceTextProps('Delete {name}')} aria-describedby="torrent-detail-delete-description" style={{
           padding: '10px 14px', background: 'color-mix(in srgb, var(--danger) 12%, var(--panel))', borderBottom: '1px solid var(--danger)',
           fontSize: 12,
         }}>
           <div id="torrent-detail-delete-description" style={{ color: 'var(--danger)', marginBottom: 8 }}>
-            <LocalizedText source="Delete “{name}”?" parameters={{ name: t.name }} />
+            <LocalizedText source="Delete “{name}”?" parameters={{ name: t.name }} undParameters={['name']} />
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
             <button type="button" disabled={busy} onClick={() => remove(false)} style={{
@@ -284,7 +284,7 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
             <span style={{ fontSize: 11, color: 'var(--faint)' }}><LocalizedText source="Progress" /></span>
             <span style={{ fontSize: 11, color: 'var(--muted)' }}>{formatRegionalNumber(progress, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%</span>
           </div>
-          <div role="progressbar" aria-label={translateInterface('Download progress for {name}', { name: t.name })} {...interfaceTextProps('Download progress for {name}')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100, Math.max(0, progress))} style={{ height: 4, background: 'var(--surface-2)', borderRadius: 2, overflow: 'hidden' }}>
+          <div role="progressbar" aria-label={translateInterface('Download progress for {name}', { name: `\u2068${t.name}\u2069` })} {...interfaceTextProps('Download progress for {name}')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100, Math.max(0, progress))} style={{ height: 4, background: 'var(--surface-2)', borderRadius: 2, overflow: 'hidden' }}>
             <div style={{
               width: `${progress}%`, height: '100%',
               background: progress >= 100 ? 'var(--success)' : 'var(--accent)', borderRadius: 2,
@@ -521,7 +521,7 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
                     textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   }} title={f.path} dir="ltr" lang="und"><bdi dir="ltr" lang="und">{f.path.split('/').pop()}</bdi></div>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 2 }}>
-                    <div role="progressbar" aria-label={translateInterface('Progress for {path}', { path: f.path })} {...interfaceTextProps('Progress for {path}')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100, Math.max(0, fp))} style={{ flex: 1, height: 2, background: 'var(--surface-2)', borderRadius: 1, overflow: 'hidden' }}>
+                    <div role="progressbar" aria-label={translateInterface('Progress for {path}', { path: `\u2068${f.path}\u2069` })} {...interfaceTextProps('Progress for {path}')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100, Math.max(0, fp))} style={{ flex: 1, height: 2, background: 'var(--surface-2)', borderRadius: 1, overflow: 'hidden' }}>
                       <div style={{ width: `${fp}%`, height: '100%', background: fp >= 100 ? 'var(--success)' : 'var(--accent)' }} />
                     </div>
                     <span style={{ fontSize: 10, color: 'var(--faint)', flexShrink: 0 }}>{fmtSize(f.size_bytes)}</span>

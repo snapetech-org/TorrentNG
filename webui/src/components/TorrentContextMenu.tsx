@@ -102,7 +102,7 @@ export function TorrentContextMenu({
       tabIndex={-1}
       data-status={status.label.toLowerCase()}
       role="menu"
-      aria-label={translateInterface('Actions for {name}', { name: menu.torrent.name })}
+      aria-label={translateInterface('Actions for {name}', { name: `\u2068${menu.torrent.name}\u2069` })}
       {...interfaceTextProps('Actions for {name}')}
       onKeyDown={moveMenuFocus}
       onContextMenu={e => e.preventDefault()}

@@ -301,7 +301,7 @@ function StorageJobs({ jobs }: { jobs: Job[] }) {
               <bdi dir="ltr" lang={getRegionalLocale() ?? 'und'}>{formatRegionalNumber(Math.round(job.progress * 100))}%</bdi>
             </span>
           </div>
-          <div role="progressbar" aria-label={localize('Storage job {id}', { id: job.job_id })} {...textProps('Storage job {id}')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.max(0, Math.min(1, job.progress)) * 100)} style={{ height: 7, borderRadius: 99, background: 'var(--surface-2)', overflow: 'hidden' }}>
+          <div role="progressbar" aria-label={localize('Storage job {id}', { id: `\u2068${job.job_id}\u2069` })} {...textProps('Storage job {id}')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.max(0, Math.min(1, job.progress)) * 100)} style={{ height: 7, borderRadius: 99, background: 'var(--surface-2)', overflow: 'hidden' }}>
             <div style={{ width: `${Math.max(0, Math.min(100, job.progress * 100))}%`, height: '100%', background: 'var(--accent)' }} />
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
@@ -481,7 +481,7 @@ function StorageRootCard({ root }: { root: NonNullable<Awaited<ReturnType<typeof
 
       {root.ok ? (
         <>
-            <div className="tng-storage-meter" role="progressbar" aria-label={localize('{path} storage used', { path: root.path })} {...textProps('{path} storage used')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={usedPercent} style={{ height: 8, background: 'var(--surface-2)', borderRadius: 99, overflow: 'hidden', marginBottom: 9 }}>
+            <div className="tng-storage-meter" role="progressbar" aria-label={localize('{path} storage used', { path: `\u2068${root.path}\u2069` })} {...textProps('{path} storage used')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={usedPercent} style={{ height: 8, background: 'var(--surface-2)', borderRadius: 99, overflow: 'hidden', marginBottom: 9 }}>
             <div style={{ width: `${usedPercent}%`, height: '100%', background: tone }} />
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8, fontSize: 12 }}>

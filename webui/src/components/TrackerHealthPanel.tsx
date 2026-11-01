@@ -88,7 +88,7 @@ export function TrackerHealthPanel({ onSelectTracker }: Props) {
               className="tng-card tng-tracker-row"
               data-tone={errorRatio >= 0.5 ? 'error' : errorRatio > 0 ? 'warn' : 'ok'}
               role="group"
-              aria-label={translateInterface('Tracker status for {host}', { host: hostLabel(tracker.tracker) })}
+              aria-label={translateInterface('Tracker status for {host}', { host: `\u2068${hostLabel(tracker.tracker)}\u2069` })}
               {...interfaceTextProps('Tracker status for {host}')}
               style={{
                 display: 'grid',
@@ -116,7 +116,7 @@ export function TrackerHealthPanel({ onSelectTracker }: Props) {
                   {onSelectTracker && (
                     <button
                       type="button"
-                      aria-label={translateInterface('View torrents on {host}', { host: hostLabel(tracker.tracker) })}
+                      aria-label={translateInterface('View torrents on {host}', { host: `\u2068${hostLabel(tracker.tracker)}\u2069` })}
                       {...interfaceTextProps('View torrents on {host}')}
                       onClick={e => { e.stopPropagation(); onSelectTracker(tracker.tracker) }}
                       style={{

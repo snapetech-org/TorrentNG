@@ -149,7 +149,7 @@ export function SavedViewsBar({ params, onApply }: Props) {
             </button>
             <button
               type="button"
-              aria-label={translateInterface('Delete saved view {name}', { name: view.name })}
+              aria-label={translateInterface('Delete saved view {name}', { name: `\u2068${view.name}\u2069` })}
               {...interfaceTextProps('Delete saved view {name}')}
               onClick={() => removeView(view.id)}
               disabled={Boolean(busy)}
