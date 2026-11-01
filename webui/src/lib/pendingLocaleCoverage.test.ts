@@ -22,10 +22,10 @@ import {
 const catalogs = [es, zhHans, hi, de, ja, fr, ptBR, ar, ko, zhHant, vi, id]
 
 describe('pending locale coverage ledger', () => {
-  it('tracks 79 source-owned UI strings without filler translations', () => {
+  it('tracks 81 source-owned UI strings without filler translations', () => {
     const sources = PENDING_UI_LOCALE_SOURCES.map(entry => entry.source)
-    expect(sources).toHaveLength(79)
-    expect(new Set(sources).size).toBe(79)
+    expect(sources).toHaveLength(81)
+    expect(new Set(sources).size).toBe(81)
     expect(PENDING_UI_LOCALE_SOURCES.every(entry => entry.caller.length > 0)).toBe(true)
     const callerSources = new Map<string, string>()
     for (const entry of PENDING_UI_LOCALE_SOURCES) {
@@ -38,14 +38,14 @@ describe('pending locale coverage ledger', () => {
     }
   })
 
-  it('records the producer and render caller for all 193 server sources', () => {
-    expect(SERVER_MESSAGE_SOURCE_CALLER_LEDGER).toHaveLength(193)
-    expect(new Set(SERVER_MESSAGE_SOURCE_CALLER_LEDGER.map(entry => entry.id)).size).toBe(193)
+  it('records the producer and render caller for all 195 server sources', () => {
+    expect(SERVER_MESSAGE_SOURCE_CALLER_LEDGER).toHaveLength(195)
+    expect(new Set(SERVER_MESSAGE_SOURCE_CALLER_LEDGER.map(entry => entry.id)).size).toBe(195)
 
     const pending = SERVER_MESSAGE_SOURCE_CALLER_LEDGER.filter(entry => entry.status === 'pending')
     const covered = SERVER_MESSAGE_SOURCE_CALLER_LEDGER.filter(entry => entry.status === 'covered')
-    expect(pending).toHaveLength(189)
-    expect(PENDING_SERVER_MESSAGE_SOURCE_IDS).toHaveLength(189)
+    expect(pending).toHaveLength(191)
+    expect(PENDING_SERVER_MESSAGE_SOURCE_IDS).toHaveLength(191)
     expect(covered.map(entry => entry.source).sort()).toEqual([
       'Tags updated',
       'Torrent added',
@@ -58,6 +58,6 @@ describe('pending locale coverage ledger', () => {
       for (const entry of pending) expect(Object.hasOwn(catalog, entry.source)).toBe(false)
       for (const entry of covered) expect(Object.hasOwn(catalog, entry.source)).toBe(true)
     }
-    expect(pending.length * catalogs.length).toBe(2_268)
+    expect(pending.length * catalogs.length).toBe(2_292)
   })
 })

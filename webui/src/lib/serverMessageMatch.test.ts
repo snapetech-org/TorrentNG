@@ -6,6 +6,7 @@ import {
   type ServerMessageRecord,
 } from './serverMessageMatch'
 import { SERVER_EVENT_KIND_LABELS } from './serverEventKinds'
+import { PENDING_UI_LOCALE_SOURCES } from './pendingLocaleCoverage'
 import { UI_LABELS as existingCatalog } from './locale-catalogs/es'
 
 function record(id: string, source: string, parameters: string[] = [], patterns = [source]): ServerMessageRecord {
@@ -136,9 +137,10 @@ describe('server message matching', () => {
     const sources = new Set([
       ...Object.keys(existingCatalog),
       ...serverMessages.map(sourceRecord => sourceRecord.source),
+      ...PENDING_UI_LOCALE_SOURCES.map(source => source.source),
     ])
 
-    expect(Object.keys(SERVER_EVENT_KIND_LABELS)).toHaveLength(43)
+    expect(Object.keys(SERVER_EVENT_KIND_LABELS)).toHaveLength(45)
     expect(SERVER_EVENT_KIND_LABELS.storage_updated).toBe('Storage')
     for (const source of Object.values(SERVER_EVENT_KIND_LABELS)) {
       expect(sources.has(source), source).toBe(true)

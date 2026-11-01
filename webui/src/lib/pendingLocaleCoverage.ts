@@ -79,6 +79,8 @@ export const PENDING_UI_LOCALE_SOURCES = [
   { source: 'Zero private flag and remove tracker source', caller: 'webui/src/components/SwarmSwitchPanel.tsx' },
   { source: 'bytes verified', caller: 'webui/src/components/SwarmSwitchPanel.tsx' },
   { source: 'Removing…', caller: 'webui/src/App.tsx' },
+  { source: 'rTorrent tracker identity error', caller: 'webui/src/lib/serverEventKinds.ts' },
+  { source: 'rTorrent tracker identity ready', caller: 'webui/src/lib/serverEventKinds.ts' },
   { source: 'Single sign-on failed. Check account access and try again.', caller: 'webui/src/App.tsx' },
 ] as const
 

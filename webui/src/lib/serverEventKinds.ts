@@ -24,6 +24,8 @@ export const SERVER_EVENT_KIND_LABELS = {
   rtorrent_sync_recovered: 'Sync recovered',
   rtorrent_stats_error: 'Transfer stats errors',
   rtorrent_stats_recovered: 'Transfer stats recovery',
+  rtorrent_identity_error: 'rTorrent tracker identity error',
+  rtorrent_identity_ready: 'rTorrent tracker identity ready',
   rtorrent_user_agent_error: 'User-agent errors',
   torrent_updated: 'Torrent updated',
   categories_updated: 'Categories',

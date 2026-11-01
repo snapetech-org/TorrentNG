@@ -3825,5 +3825,37 @@
         ]
       }
     ]
+  },
+  {
+    "id": "server.message.04c0ccbbbecc",
+    "source": "compatible-client service refused startup because rTorrent tracker identity was not applied",
+    "parameters": [],
+    "patterns": [
+      "compatible-client service refused startup because rTorrent tracker identity was not applied"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/main.rs",
+        "fragments": [
+          "compatible-client service refused startup because rTorrent tracker identity was not applied"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.a6d49e432fd3",
+    "source": "rTorrent tracker identity applied before compatible-client service became available",
+    "parameters": [],
+    "patterns": [
+      "rTorrent tracker identity applied before compatible-client service became available"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/main.rs",
+        "fragments": [
+          "rTorrent tracker identity applied before compatible-client service became available"
+        ]
+      }
+    ]
   }
 ]
