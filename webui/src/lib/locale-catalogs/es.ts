@@ -515,7 +515,7 @@ export const UI_LABELS: Record<string, string> = {
   "No summary data loaded.": "No hay datos resumidos.",
   "No time cap": "Sin límite de tiempo",
   "No torrents match this view": "Ningún torrent coincide con esta vista.",
-  "No tracker data cached yet": "No hay datos de rastreador caché todavía",
+  "No tracker data cached yet": "Aún no hay datos de rastreadores en caché.",
   "No trackers configured.": "No hay trackers configurados.",
   "No workflow rules configured": "No hay reglas de flujo de trabajo configuradas",
   "No workflow runs recorded": "No hay ejecuciones de flujos de trabajo registradas",

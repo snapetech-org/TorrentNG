@@ -547,7 +547,7 @@ export const UI_LABELS: Record<string, string> = {
   "Operator Logs": "オペレーターログ",
   "Optional advanced rtorrent.rc overrides imported after managed settings": "オプションの高度なrtorrent.rcオーバーライドは、管理された設定後にインポート",
   "Optional broader accept-all toggle; not required here because the compatible-client service already connects over the trusted local SCGI socket - load.start and load.raw_start below confirm untrusted-connection rejection isn't in effect.": "広範囲にすべての接続を許可する任意の切り替えは不要です。互換クライアントサービスは信頼されたローカルSCGIソケットで接続済みです。下のload.startとload.raw_startの確認で、これらの呼び出しが信頼されない接続として拒否されていないことを確認できます。",
-  "Other": "他の",
+  "Other": "その他",
   "Outgoing": "送信",
   "Overlay": "オーバーレイ",
   "Overlay path": "オーバーレイのパス",
