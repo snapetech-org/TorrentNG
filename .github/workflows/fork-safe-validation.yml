@@ -52,4 +52,3 @@ jobs:
           persist-credentials: false
       - name: Run offline policy unit tests
         run: python3 -m unittest scripts.test_protected_target scripts.test_release_notes scripts.test_backend_burndown_api_load
-

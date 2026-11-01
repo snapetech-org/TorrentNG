@@ -64,4 +64,3 @@ jobs:
           python3 scripts/release_notes.py preview \
             --base "$base" \
             --head "$head"
-
