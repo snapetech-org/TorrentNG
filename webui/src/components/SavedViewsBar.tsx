@@ -135,6 +135,8 @@ export function SavedViewsBar({ params, onApply }: Props) {
               onClick={() => onApply(view.params)}
               disabled={Boolean(busy)}
               title={safeViewTitle(view.params)}
+              dir="auto"
+              lang="und"
               style={{
                 background: 'transparent', border: 'none',
                 color: isActive ? 'var(--accent-text)' : 'var(--muted)',
@@ -143,7 +145,7 @@ export function SavedViewsBar({ params, onApply }: Props) {
                 cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.55 : 1,
               }}
             >
-              {view.name}
+              <bdi dir="auto" lang="und">{view.name}</bdi>
             </button>
             <button
               type="button"

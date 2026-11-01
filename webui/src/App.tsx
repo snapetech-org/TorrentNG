@@ -1,6 +1,6 @@
 import { LocalizedErrorText, LocalizedRichText, LocalizedText } from './lib/LocalizedText'
 import { interfaceTextProps, translateInterface } from './lib/interfaceLocale'
-import { Suspense, lazy, useState, useCallback, useEffect } from 'react'
+import { Fragment, Suspense, lazy, useState, useCallback, useEffect, useId, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTorrentsInfinite, flattenPages, useHealth } from './hooks/useTorrents'
 import { useWebSocket } from './hooks/useWebSocket'
@@ -59,20 +59,37 @@ function utpPathLabel(path: string, t: typeof translateInterface): string {
     case 'outgoing_peer_wire': return t('Outgoing')
     case 'metadata_fetch': return t('Metadata')
     case 'incoming_peer_wire': return t('Incoming')
-    default: return path.replaceAll('_', ' ')
+    default: return `\u2068${path.replaceAll('_', ' ')}\u2069`
   }
 }
 
-function utpStatus(capabilities: NonNullable<Awaited<ReturnType<typeof api.health>>['engine']>['capabilities'] | undefined, t: typeof translateInterface) {
+function utpStatus(
+  capabilities: NonNullable<Awaited<ReturnType<typeof api.health>>['engine']>['capabilities'] | undefined,
+  t: typeof translateInterface,
+  language: string,
+) {
   const networking = capabilities?.networking
   if (!networking) return null
   const paths = networking.utp_transport_paths ?? []
-  const label = paths.length
-    ? paths.map(path => utpPathLabel(path, t)).join('+')
-    : networking.utp_transport ? t('Enabled') : t('Off')
+  const knownPathSources: Record<string, string> = {
+    outgoing_peer_wire: 'Outgoing',
+    metadata_fetch: 'Metadata',
+    incoming_peer_wire: 'Incoming',
+  }
+  const directionProps = { lang: language, dir: language === 'ar' ? 'rtl' as const : 'ltr' as const }
+  const labelContent: ReactNode = paths.length
+    ? <>{paths.map((path, index) => (
+      <Fragment key={`${path}-${index}`}>
+        {index > 0 ? '+' : null}
+        {knownPathSources[path]
+          ? <span {...directionProps}>{t(knownPathSources[path])}</span>
+          : <bdi dir="auto" lang="und">{path}</bdi>}
+      </Fragment>
+    ))}</>
+    : <span {...directionProps}>{t(networking.utp_transport ? 'Enabled' : 'Off')}</span>
   const policy = [
-    networking.utp_outgoing_policy ? `${t('Outgoing')}=${networking.utp_outgoing_policy}` : null,
-    networking.utp_metadata_policy ? `${t('Metadata')}=${networking.utp_metadata_policy}` : null,
+    networking.utp_outgoing_policy ? `${t('Outgoing')}=\u2066${networking.utp_outgoing_policy}\u2069` : null,
+    networking.utp_metadata_policy ? `${t('Metadata')}=\u2066${networking.utp_metadata_policy}\u2069` : null,
     networking.utp_incoming_enabled !== undefined ? `${t('Incoming')}=${t(networking.utp_incoming_enabled ? 'On' : 'Off')}` : null,
   ].filter(Boolean).join(', ')
   const titleSource = paths.length
@@ -80,7 +97,35 @@ function utpStatus(capabilities: NonNullable<Awaited<ReturnType<typeof api.healt
     : policy ? 'No active uTP runtime transport path ({policy})' : 'No active uTP runtime transport path'
   const titleParameters = { paths: paths.map(path => utpPathLabel(path, t)).join(', '), policy }
   const title = t(titleSource, titleParameters)
-  return { label, title, titleSource, titleParameters, enabled: networking.utp_transport === true }
+  const localizedPath = (source: string) => <span lang={language} dir={language === 'ar' ? 'rtl' : 'ltr'}>{t(source)}</span>
+  const pathDescription = paths.map((path, index) => {
+    let value: ReactNode
+    switch (path) {
+      case 'outgoing_peer_wire': value = localizedPath('Outgoing'); break
+      case 'metadata_fetch': value = localizedPath('Metadata'); break
+      case 'incoming_peer_wire': value = localizedPath('Incoming'); break
+      default: value = <bdi dir="auto" lang="und">{path}</bdi>
+    }
+    return <Fragment key={`${path}-${index}`}>{index > 0 ? ', ' : null}{value}</Fragment>
+  })
+  const policyDescriptionEntries: ReactNode[] = []
+  if (networking.utp_outgoing_policy) {
+    policyDescriptionEntries.push(<Fragment key="outgoing">{localizedPath('Outgoing')}=<bdi dir="ltr" lang="und">{networking.utp_outgoing_policy}</bdi></Fragment>)
+  }
+  if (networking.utp_metadata_policy) {
+    policyDescriptionEntries.push(<Fragment key="metadata">{localizedPath('Metadata')}=<bdi dir="ltr" lang="und">{networking.utp_metadata_policy}</bdi></Fragment>)
+  }
+  if (networking.utp_incoming_enabled !== undefined) {
+    policyDescriptionEntries.push(<Fragment key="incoming">{localizedPath('Incoming')}={localizedPath(networking.utp_incoming_enabled ? 'On' : 'Off')}</Fragment>)
+  }
+  const policyDescription = policyDescriptionEntries.map((entry, index) => (
+    <Fragment key={index}>{index > 0 ? ', ' : null}{entry}</Fragment>
+  ))
+  const descriptionParameters = {
+    ...(paths.length ? { paths: pathDescription } : {}),
+    ...(policy ? { policy: policyDescription } : {}),
+  }
+  return { labelContent, title, titleSource, titleParameters, descriptionParameters, enabled: networking.utp_transport === true }
 }
 
 function backendHealthLabel(
@@ -94,8 +139,16 @@ function backendHealthLabel(
       connected: 'Connected', connecting: 'Connecting', starting: 'Starting',
       disconnected: 'Disconnected', unavailable: 'Unavailable', error: 'Error',
     }
-    if (!labels[normalized]) return status
-    return language === 'en' ? normalized : t(labels[normalized])
+    if (!labels[normalized]) return { value: status, raw: true }
+    return { value: language === 'en' ? normalized : t(labels[normalized]), raw: false }
+  }
+  const makeLabel = (source: string, status: string) => {
+    const renderedStatus = statusText(status)
+    return {
+      source,
+      statusText: renderedStatus.value,
+      rawStatus: renderedStatus.raw,
+    }
   }
   if (health?.backend) {
     const source = health.backend.type === 'torrentng' ? 'TorrentNG client: {status}' : 'backend: {status}'
@@ -103,8 +156,7 @@ function backendHealthLabel(
       type: health.backend.type,
       status: health.backend.status,
       connected: health.backend.status === 'connected',
-      source,
-      label: t(source, { status: statusText(health.backend.status) }),
+      ...makeLabel(source, health.backend.status),
     }
   }
   if (health?.native_engine) {
@@ -114,17 +166,16 @@ function backendHealthLabel(
       type: 'torrentng',
       status: health.ready === false ? 'starting' : 'connected',
       connected: health.ready !== false,
-      source,
-      label: t(source, { status: statusText(status) }),
+      ...makeLabel(source, status),
     }
   }
   const status = health?.rtorrent
+  const source = status ? 'backend: {status}' : 'Connecting…'
   return {
     type: 'backend',
     status: status ?? 'connecting',
     connected: status === 'connected',
-    source: status ? 'backend: {status}' : 'Connecting…',
-    label: status ? t('backend: {status}', { status: statusText(status) }) : t('Connecting…'),
+    ...(status ? makeLabel(source, status) : { source, statusText: '', rawStatus: false }),
   }
 }
 const SETTINGS_SECTION_KEY = 'tng.settingsSection'
@@ -307,6 +358,8 @@ function useSingleActiveTab() {
 
 export function App() {
   const { language, t, textProps } = useInterfaceLanguage()
+  const utpDescriptionId = useId()
+  const backendHealthDescriptionId = useId()
   const qc = useQueryClient()
   const activeTab = useSingleActiveTab()
   const [authState, setAuthState] = useState<AuthState>('checking')
@@ -386,7 +439,7 @@ export function App() {
     })
   }, [selected, torrents])
   const { data: health } = useHealth(activeTab.isActive && authState === 'authenticated')
-  const healthUtp = utpStatus(health?.engine?.capabilities, t)
+  const healthUtp = utpStatus(health?.engine?.capabilities, t, language)
   const backendHealth = backendHealthLabel(health, t, language)
   const { data: storage } = useQuery({
     queryKey: ['storage', 'status-bar'],
@@ -997,7 +1050,7 @@ export function App() {
           whiteSpace: 'nowrap', flex: '0 0 auto',
         }}>{t('Help')}</button>
 
-        <span className="tng-topbar-pill" data-tone={backendHealth.connected ? 'ok' : 'error'} role="status" aria-label={backendHealth.label} title={t('Selected backend connection state')} {...textProps(backendHealth.source)} style={{
+        <span className="tng-topbar-pill" data-tone={backendHealth.connected ? 'ok' : 'error'} role="status" aria-label={t('Backend')} aria-describedby={backendHealthDescriptionId} title={t('Selected backend connection state')} {...textProps(backendHealth.source)} style={{
           fontSize: 11, color: backendHealth.connected ? 'var(--success)' : 'var(--danger)',
           display: 'flex', alignItems: 'center', gap: 5, padding: '2px 7px',
           border: '1px solid ' + (backendHealth.connected ? 'color-mix(in srgb, var(--success) 42%, var(--border))' : 'color-mix(in srgb, var(--danger) 42%, var(--border))'),
@@ -1009,11 +1062,22 @@ export function App() {
             background: backendHealth.connected ? 'var(--success)' : 'var(--danger)',
             display: 'inline-block',
           }} />
-          {backendHealth.label}
+          <LocalizedText
+            source={backendHealth.source}
+            parameters={{ status: backendHealth.statusText }}
+            undParameters={backendHealth.rawStatus ? ['status'] : []}
+          />
+        </span>
+        <span id={backendHealthDescriptionId} className="tng-visually-hidden">
+          <LocalizedText
+            source={backendHealth.source}
+            parameters={backendHealth.statusText ? { status: backendHealth.statusText } : undefined}
+            undParameters={backendHealth.rawStatus ? ['status'] : []}
+          />
         </span>
 
         {healthUtp && (
-          <span className="tng-topbar-pill" data-tone={healthUtp.enabled ? 'ok' : 'neutral'} role="status" aria-label={t('uTP status: {status}', { status: healthUtp.label })} title={healthUtp.title} {...textProps(healthUtp.titleSource)} style={{
+          <span className="tng-topbar-pill" data-tone={healthUtp.enabled ? 'ok' : 'neutral'} role="status" aria-label={t('uTP status: {status}', { status: t(healthUtp.enabled ? 'On' : 'Off') })} aria-describedby={utpDescriptionId} title={healthUtp.title} {...textProps(healthUtp.titleSource)} style={{
             fontSize: 11,
             color: healthUtp.enabled ? 'var(--success)' : 'var(--muted)',
             display: 'flex', alignItems: 'center', gap: 5, padding: '2px 7px',
@@ -1021,7 +1085,12 @@ export function App() {
             borderRadius: 999,
             background: healthUtp.enabled ? 'color-mix(in srgb, var(--success) 9%, transparent)' : 'var(--surface)',
           }}>
-            <span aria-hidden="true">uTP </span><span lang={language} dir={language === 'ar' ? 'rtl' : 'ltr'}>{healthUtp.label}</span>
+            <span aria-hidden="true">uTP </span><span>{healthUtp.labelContent}</span>
+          </span>
+        )}
+        {healthUtp && (
+          <span id={utpDescriptionId} className="tng-visually-hidden">
+            <LocalizedRichText source={healthUtp.titleSource} parameters={healthUtp.descriptionParameters} />
           </span>
         )}
 
@@ -1230,8 +1299,11 @@ export function App() {
         backendStatus={backendHealth.status}
         cached={health?.cached_torrents}
         storage={storage?.roots?.[0]}
-        utpLabel={healthUtp?.label}
+        utpLabel={healthUtp?.labelContent}
         utpTitle={healthUtp?.title}
+        utpDescription={healthUtp
+          ? <LocalizedRichText source={healthUtp.titleSource} parameters={healthUtp.descriptionParameters} />
+          : undefined}
         utpEnabled={healthUtp?.enabled}
         togglingFeature={togglingFeature}
         featureError={featureError}

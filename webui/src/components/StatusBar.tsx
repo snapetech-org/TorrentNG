@@ -1,7 +1,7 @@
 import { LocalizedText } from '../lib/LocalizedText'
 import { interfaceTextProps, useInterfaceLanguage } from '../lib/interfaceLocale'
 import { formatRegionalNumber, getRegionalLocale } from '../lib/localeFormat'
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import type { LiveStats, StorageRoot } from '../api/client'
 
 interface Props {
@@ -13,8 +13,9 @@ interface Props {
   backendStatus: string
   cached?: number
   storage?: StorageRoot
-  utpLabel?: string
+  utpLabel?: React.ReactNode
   utpTitle?: string
+  utpDescription?: React.ReactNode
   utpEnabled?: boolean
   togglingFeature?: 'dht' | 'pex' | null
   featureError?: InterfaceMessage | null
@@ -58,35 +59,46 @@ function themedTone(color: string): { color: string; bg: string; border: string 
 }
 
 function Badge({
-  label, value, valueSuffix, title, state, onClick, disabled, meter,
+  label, rawLabel = false, value, valueSuffix, opaqueValue = false, title, description, valueContent, ariaLabel, state, onClick, disabled, meter,
 }: {
   label: string
-  value: string
-  valueSuffix?: string
+  rawLabel?: boolean
+  value?: string
+  valueSuffix?: React.ReactNode
+  opaqueValue?: boolean
   title?: string
+  description?: React.ReactNode
+  valueContent?: React.ReactNode
+  ariaLabel?: string
   state?: string
   onClick?: () => void
   disabled?: boolean
   meter?: number
 }) {
   const { language, t, textProps } = useInterfaceLanguage()
+  const descriptionId = useId()
   const colors = tone(state)
   const Element = onClick && !disabled ? 'button' : 'span'
   const handleClick = disabled ? undefined : onClick
-  const localizedLabel = t(label)
+  const localizedLabel = rawLabel ? label : t(label)
   const stateLabels = new Set(['connected', 'connecting', 'starting', 'disconnected', 'unknown', 'on', 'off', 'open', 'closed', 'listening'])
-  const localizedValue = stateLabels.has(value)
-    ? language === 'en' ? value : t(value[0].toUpperCase() + value.slice(1))
-    : value
+  const valueText = value ?? ''
+  const localizedValue = stateLabels.has(valueText)
+    ? language === 'en' ? valueText : t(valueText[0].toUpperCase() + valueText.slice(1))
+    : valueText
+  const accessibleValue = opaqueValue && !stateLabels.has(valueText) && valueText !== '...'
+    ? `\u2068${localizedValue}\u2069`
+    : localizedValue
   return (
     <Element
       className="tng-status-badge"
       data-state={state ?? 'idle'}
       type={Element === 'button' ? 'button' : undefined}
-      role={onClick ? 'switch' : undefined}
+      role={onClick ? 'switch' : description ? 'group' : undefined}
       aria-checked={onClick ? state === 'on' : undefined}
       aria-disabled={disabled || undefined}
-      aria-label={onClick ? t('{label}: {value}. Activate to toggle', { label: localizedLabel, value: localizedValue }) : undefined}
+      aria-label={ariaLabel ?? (onClick ? t('{label}: {value}. Activate to toggle', { label: localizedLabel, value: accessibleValue }) : undefined)}
+      aria-describedby={description ? descriptionId : undefined}
       title={title}
       onClick={handleClick}
       style={{
@@ -110,8 +122,15 @@ function Badge({
         boxShadow: `0 0 0 2px color-mix(in srgb, ${colors.color} 12%, transparent)`,
         flex: '0 0 auto',
       }} />
-      <span style={{ color: 'var(--faint)' }} {...textProps(label)}>{localizedLabel}</span>
-      <span {...(stateLabels.has(value) ? textProps(value[0].toUpperCase() + value.slice(1)) : {})}>{localizedValue}{valueSuffix}</span>
+      <span style={{ color: 'var(--faint)' }} {...(rawLabel ? {} : textProps(label))}>
+        {rawLabel ? <bdi dir="auto" lang="und">{localizedLabel}</bdi> : localizedLabel}
+      </span>
+      <span {...(stateLabels.has(valueText) ? textProps(valueText[0].toUpperCase() + valueText.slice(1)) : {})}>
+        {valueContent ?? (opaqueValue && !stateLabels.has(valueText) && valueText !== '...'
+          ? <bdi dir="auto" lang="und">{localizedValue}</bdi>
+          : localizedValue)}
+        {valueSuffix}
+      </span>
       {meter !== undefined && (
         <span aria-hidden="true" style={{
           position: 'absolute', left: 6, right: 6, bottom: 3, height: 2,
@@ -124,6 +143,7 @@ function Badge({
           }} />
         </span>
       )}
+      {description && <span id={descriptionId} className="tng-visually-hidden">{description}</span>}
     </Element>
   )
 }
@@ -147,11 +167,15 @@ function Notice({ tone, message, children }: { tone: 'ok' | 'error'; message?: I
 
 export function StatusBar({
   loaded, total, selected, stats, backendType, backendStatus, cached, storage, togglingFeature, onToggleDht, onTogglePex,
+  utpDescription,
   featureError, actionMessage, actionTone = 'ok', utpLabel, utpTitle, utpEnabled,
 }: Props) {
   const { t } = useInterfaceLanguage()
   const [mobileExpanded, setMobileExpanded] = useState(false)
   const connected = backendStatus === 'connected'
+  const utpAccessibleLabel = utpEnabled === undefined
+    ? undefined
+    : t('uTP status: {status}', { status: t(utpEnabled ? 'On' : 'Off') })
   const rendered = Math.min(loaded, total)
   const storageLabel = storage?.ok
     ? `${fmtBytes(storage.used_bytes)} / ${fmtBytes(storage.total_bytes)}`
@@ -160,8 +184,21 @@ export function StatusBar({
     ? (storage.used_bytes / storage.total_bytes) * 100
     : undefined
   const storageTitle = storage?.ok
-    ? t('Free space on {path}: {size}', { size: fmtBytes(storage.available_bytes), path: storage.path })
-    : storage?.error ?? t('Storage status unavailable')
+    ? t('Free space on {path}: {size}', {
+      size: `\u2066${fmtBytes(storage.available_bytes)}\u2069`,
+      path: `\u2066${storage.path}\u2069`,
+    })
+    : storage?.error ? `\u2068${storage.error}\u2069` : t('Storage status unavailable')
+  const storageDescription = storage?.ok
+    ? <LocalizedText
+      source="Free space on {path}: {size}"
+      parameters={{ path: storage.path, size: fmtBytes(storage.available_bytes) }}
+      undParameters={['path', 'size']}
+      parameterDirections={{ path: 'ltr', size: 'ltr' }}
+    />
+    : storage?.error
+      ? <bdi dir="auto" lang="und">{storage.error}</bdi>
+      : <LocalizedText source="Storage status unavailable" />
 
   return (
     <footer
@@ -176,7 +213,12 @@ export function StatusBar({
       color: 'var(--faint)', fontSize: 11, overflowX: 'auto',
     }} {...interfaceTextProps("Application status")}>
       <div className="tng-statusbar-summary" style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 'max-content' }}>
-        <Badge label={backendType === 'torrentng' ? 'TorrentNG client' : backendType === 'backend' ? 'backend' : backendType} value={connected ? 'connected' : 'disconnected'} state={connected ? 'on' : 'closed'} />
+        <Badge
+          label={backendType === 'torrentng' ? 'TorrentNG client' : backendType === 'backend' ? 'backend' : backendType}
+          rawLabel={backendType !== 'torrentng' && backendType !== 'backend'}
+          value={connected ? 'connected' : 'disconnected'}
+          state={connected ? 'on' : 'closed'}
+        />
       </div>
       <div className="tng-statusbar-counts" style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 'max-content' }}>
         <Badge label="Torrents" value={total.toLocaleString(getRegionalLocale())} state="idle" />
@@ -219,6 +261,7 @@ export function StatusBar({
           label="Disk"
           value={storageLabel}
           title={storageTitle}
+          description={storageDescription}
           state={storagePct !== undefined && storagePct > 92 ? 'closed' : storagePct !== undefined && storagePct > 82 ? 'unknown' : storage?.ok ? 'on' : 'unknown'}
           meter={storagePct}
         />
@@ -231,7 +274,8 @@ export function StatusBar({
         <Badge
           label="Firewall"
           value={stats.firewall ?? 'unknown'}
-          valueSuffix={stats.listen_port ? ` :${stats.listen_port}` : ''}
+          opaqueValue
+          valueSuffix={stats.listen_port ? <bdi dir="ltr" lang="und"> :{stats.listen_port}</bdi> : null}
           title={t("Incoming port listener state inferred from live TCP sockets")}
           state={stats.firewall}
         />
@@ -241,6 +285,7 @@ export function StatusBar({
           state={stats.dht}
           disabled={togglingFeature === 'dht'}
           value={togglingFeature === 'dht' ? '...' : (stats.dht ?? 'unknown')}
+          opaqueValue
           onClick={stats.dht === 'unknown' || togglingFeature ? undefined : onToggleDht}
         />
         <Badge
@@ -249,13 +294,16 @@ export function StatusBar({
           state={stats.pex}
           disabled={togglingFeature === 'pex'}
           value={togglingFeature === 'pex' ? '...' : (stats.pex ?? 'unknown')}
+          opaqueValue
           onClick={stats.pex === 'unknown' || togglingFeature ? undefined : onTogglePex}
         />
         {utpLabel && (
           <Badge
             label="uTP"
-            value={utpLabel}
+            valueContent={utpLabel}
+            ariaLabel={utpAccessibleLabel}
             title={utpTitle}
+            description={utpDescription}
             state={utpEnabled ? 'on' : 'off'}
           />
         )}

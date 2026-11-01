@@ -13,16 +13,23 @@ const applicationErrorSources = new Set([
 type Props = {
   source: string
   parameters?: Record<string, string | number>
+  undParameters?: string[]
+  parameterDirections?: Record<string, 'auto' | 'ltr'>
   spaceBefore?: boolean
   spaceAfter?: boolean
 }
 
-export function LocalizedText({ source, parameters = {}, spaceBefore = false, spaceAfter = false }: Props) {
+export function LocalizedText({ source, parameters = {}, undParameters = [], parameterDirections = {}, spaceBefore = false, spaceAfter = false }: Props) {
   const { t, textProps } = useInterfaceLanguage()
   const parameterValues = new Map<string, string | number>()
+  const undParameterMarkers = new Set<string>()
+  const parameterDirectionMarkers = new Map<string, 'auto' | 'ltr'>()
   const markerParameters = Object.fromEntries(Object.entries(parameters).map(([name, value], index) => {
     const marker = `\uE000TNG_LOCALIZED_PARAMETER_${index}\uE001`
+    const direction = parameterDirections[name]
     parameterValues.set(marker, value)
+    if (undParameters.includes(name)) undParameterMarkers.add(marker)
+    if (direction) parameterDirectionMarkers.set(marker, direction)
     return [name, marker]
   }))
   const translated = t(source, markerParameters)
@@ -33,7 +40,7 @@ export function LocalizedText({ source, parameters = {}, spaceBefore = false, sp
   return (
     <span {...textProps(source)}>
       {spaceBefore ? ' ' : null}{parts.map((part, index) => parameterValues.has(part)
-        ? <bdi key={`parameter-${index}`} dir="auto">{parameterValues.get(part)}</bdi>
+        ? <bdi key={`parameter-${index}`} dir={parameterDirectionMarkers.get(part) ?? 'auto'} lang={undParameterMarkers.has(part) ? 'und' : undefined}>{parameterValues.get(part)}</bdi>
         : <Fragment key={`text-${index}`}>{part}</Fragment>)}{spaceAfter ? ' ' : null}
     </span>
   )
@@ -49,7 +56,7 @@ export function LocalizedRichText({ source, parameters }: { source: string; para
         const match = /^\{([a-zA-Z][a-zA-Z0-9_]*)\}$/.exec(part)
         if (!match) return <Fragment key={index}>{part}</Fragment>
         const value = parameters[match[1]]
-        return value === undefined ? <Fragment key={index}>{part}</Fragment> : <bdi key={index} dir="ltr">{value}</bdi>
+        return value === undefined ? <Fragment key={index}>{part}</Fragment> : <bdi key={index} dir="ltr" lang="und">{value}</bdi>
       })}
     </span>
   )

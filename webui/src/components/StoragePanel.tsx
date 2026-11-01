@@ -2,7 +2,7 @@ import { LocalizedText } from '../lib/LocalizedText'
 import { useInterfaceLanguage } from '../lib/interfaceLocale'
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { formatRegionalNumber } from '../lib/localeFormat'
+import { formatRegionalNumber, getRegionalLocale } from '../lib/localeFormat'
 import { storageUsedPercent } from '../lib/storage'
 import { api, type Job, type StoragePlanRequest, type StoragePlanResponse } from '../api/client'
 
@@ -186,7 +186,7 @@ export function StoragePanel() {
             setPreview(null)
           }} style={fieldStyle} aria-label={localize("Storage root")} {...textProps("Storage root")}>
             {!selectedRoot && <option value=""><LocalizedText source="Select root" /></option>}
-            {roots.map(root => <option key={root.path} value={root.path}>{root.path}</option>)}
+            {roots.map(root => <option key={root.path} value={root.path} dir="ltr" lang="und">{root.path}</option>)}
           </select>
         </div>
 
@@ -224,7 +224,7 @@ export function StoragePanel() {
           )}
           <label style={labelStyle}>
             <span><LocalizedText source="Expected bytes" spaceAfter />{operation === 'delete' ? <LocalizedText source="(optional)" /> : <LocalizedText source="(required)" />}</span>
-            <input aria-label={localize("Expected bytes")} value={bytes} onChange={event => { setBytes(event.target.value); setPreview(null) }} inputMode="numeric" placeholder={localize(operation === 'delete' ? 'Optional' : 'Required')} style={fieldStyle} {...textProps("Expected bytes")} />
+            <input aria-label={localize("Expected bytes")} value={bytes} onChange={event => { setBytes(event.target.value); setPreview(null) }} inputMode="numeric" placeholder={localize(operation === 'delete' ? 'Optional' : 'Required')} style={fieldStyle} {...textProps("Expected bytes")} dir="ltr" lang="und" />
           </label>
         </div>
 
@@ -238,7 +238,10 @@ export function StoragePanel() {
               rows={3}
               placeholder={localize("Info hashes, one per line")}
               style={{ ...fieldStyle, resize: 'vertical', minHeight: 76 }}
-            {...textProps("Affected torrents")} />
+              {...textProps("Affected torrents")}
+              dir="ltr"
+              lang="und"
+            />
           </label>
         </div>
 
@@ -291,11 +294,11 @@ function StorageJobs({ jobs }: { jobs: Job[] }) {
             <strong {...textProps(STORAGE_JOB_STATES[job.state.toLowerCase()] ?? job.state)} style={{ color: 'var(--text)', fontSize: 12, textTransform: 'capitalize' }}>
               {localize(STORAGE_JOB_STATES[job.state.toLowerCase()] ?? job.state)}
             </strong>
-            <code style={{ color: 'var(--faint)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <code dir="ltr" lang="und" style={{ color: 'var(--faint)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {job.job_id}
             </code>
             <span style={{ marginLeft: 'auto', color: 'var(--muted)', fontSize: 12, fontWeight: 800 }}>
-              {formatRegionalNumber(Math.round(job.progress * 100))}%
+              <bdi dir="ltr" lang={getRegionalLocale() ?? 'und'}>{formatRegionalNumber(Math.round(job.progress * 100))}%</bdi>
             </span>
           </div>
           <div role="progressbar" aria-label={localize('Storage job {id}', { id: job.job_id })} {...textProps('Storage job {id}')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.max(0, Math.min(1, job.progress)) * 100)} style={{ height: 7, borderRadius: 99, background: 'var(--surface-2)', overflow: 'hidden' }}>
@@ -320,7 +323,7 @@ function PathField({ label, value, onChange }: { label: string; value: string; o
   return (
     <label style={labelStyle}>
       <span><LocalizedText source={label} /></span>
-      <input aria-label={localize('{label} path', { label: localize(label) })} {...textProps('{label} path')} value={value} onChange={event => onChange(event.target.value)} placeholder={localize('Path on storage root')} style={fieldStyle} />
+      <input aria-label={localize('{label} path', { label: localize(label) })} {...textProps('{label} path')} value={value} onChange={event => onChange(event.target.value)} placeholder={localize('Path on storage root')} style={fieldStyle} dir="ltr" lang="und" />
     </label>
   )
 }
@@ -338,7 +341,7 @@ function StoragePlanResult({ response }: { response: StoragePlanResponse }) {
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8 }}>
         <strong {...textProps(operationSource)} style={{ color: 'var(--text)', fontSize: 13, textTransform: 'capitalize' }}>{localize(operationSource)}</strong>
         <span style={{ color: tone, fontSize: 12, fontWeight: 800 }}>{response.plan.can_apply ? <LocalizedText source="Can apply" /> : <LocalizedText source="Needs attention" />}</span>
-        {response.job_id && <code style={{ color: 'var(--faint)', fontSize: 11 }}>{response.job_id}</code>}
+        {response.job_id && <code dir="ltr" lang="und" style={{ color: 'var(--faint)', fontSize: 11 }}>{response.job_id}</code>}
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 9 }}>
         <SummaryPill label="Steps" value={formatRegionalNumber(response.plan.steps.length)} />
@@ -349,7 +352,7 @@ function StoragePlanResult({ response }: { response: StoragePlanResponse }) {
       </div>
       {response.plan.issues.length > 0 && (
         <ul style={{ margin: '0 0 9px 16px', padding: 0, color: 'var(--warning)', fontSize: 12 }}>
-          {response.plan.issues.map(issue => <li key={issue}>{issue}</li>)}
+          {response.plan.issues.map(issue => <li key={issue}><bdi dir="auto" lang="und">{issue}</bdi></li>)}
         </ul>
       )}
       <div style={{ display: 'grid', gap: 6 }}>
@@ -367,10 +370,17 @@ function StoragePlanResult({ response }: { response: StoragePlanResponse }) {
             fontSize: 12,
           }}>
             <strong {...textProps(STORAGE_ACTIONS[step.action] ?? step.action)} style={{ color: 'var(--text)' }}>{localize(STORAGE_ACTIONS[step.action] ?? step.action)}</strong>
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={[step.source, step.destination].filter(Boolean).join(' -> ')}>
-              {[step.source, step.destination].filter(Boolean).join(' -> ') || localize('Storage operation')}
+            <span
+              style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              title={[step.source, step.destination].filter(Boolean).join(' -> ') || undefined}
+              dir={step.source || step.destination ? 'ltr' : undefined}
+              lang={step.source || step.destination ? 'und' : undefined}
+            >
+              {step.source || step.destination
+                ? <bdi dir="ltr" lang="und">{[step.source, step.destination].filter(Boolean).join(' -> ')}</bdi>
+                : localize('Storage operation')}
             </span>
-            <span>{fmtBytes(step.bytes)}</span>
+            <span><bdi dir="ltr" lang={getRegionalLocale() ?? 'und'}>{fmtBytes(step.bytes)}</bdi></span>
           </div>
           )
         })}
@@ -390,10 +400,17 @@ function StoragePlanResult({ response }: { response: StoragePlanResponse }) {
                 padding: '7px 9px',
               }}>
                 <strong {...textProps(STORAGE_ACTIONS[step.action] ?? step.action)} style={{ color: 'var(--text)' }}>{localize(STORAGE_ACTIONS[step.action] ?? step.action)}</strong>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={[step.source, step.destination].filter(Boolean).join(' -> ')}>
-                  {[step.source, step.destination].filter(Boolean).join(' -> ') || localize('Storage operation')}
+                <span
+                  style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                  title={[step.source, step.destination].filter(Boolean).join(' -> ') || undefined}
+                  dir={step.source || step.destination ? 'ltr' : undefined}
+                  lang={step.source || step.destination ? 'und' : undefined}
+                >
+                  {step.source || step.destination
+                    ? <bdi dir="ltr" lang="und">{[step.source, step.destination].filter(Boolean).join(' -> ')}</bdi>
+                    : localize('Storage operation')}
                 </span>
-                <span>{fmtBytes(step.bytes)}</span>
+                <span><bdi dir="ltr" lang={getRegionalLocale() ?? 'und'}>{fmtBytes(step.bytes)}</bdi></span>
               </div>
             ))}
           </div>
@@ -416,7 +433,7 @@ function SummaryPill({ label, value }: { label: string; value: string }) {
       fontSize: 11,
     }}>
       <span style={{ color: 'var(--faint)' }}><LocalizedText source={label} /></span>
-      <strong style={{ color: 'var(--text)' }}>{value}</strong>
+      <strong style={{ color: 'var(--text)' }}><bdi dir="ltr" lang={getRegionalLocale() ?? 'und'}>{value}</bdi></strong>
     </span>
   )
 }
@@ -447,8 +464,8 @@ function StorageRootCard({ root }: { root: NonNullable<Awaited<ReturnType<typeof
           flex: 1, minWidth: 0, color: root.ok ? 'var(--text)' : 'var(--danger)',
           fontSize: 13, fontFamily: 'monospace', overflow: 'hidden',
           textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        }} title={root.path}>
-          {root.path}
+        }} title={root.path} dir="ltr" lang="und">
+          <bdi dir="ltr" lang="und">{root.path}</bdi>
         </div>
         {root.readonly && (
           <span style={{
@@ -474,7 +491,7 @@ function StorageRootCard({ root }: { root: NonNullable<Awaited<ReturnType<typeof
           </div>
         </>
       ) : (
-        <div style={{ color: 'var(--danger)', fontSize: 12 }}>{root.error}</div>
+        <div style={{ color: 'var(--danger)', fontSize: 12 }}><bdi dir="auto" lang="und">{root.error}</bdi></div>
       )}
     </div>
   )
@@ -523,7 +540,7 @@ function StorageMetric({ label, value }: { label: string; value: string }) {
       background: 'var(--bg)', padding: '6px 8px', minWidth: 0,
     }}>
       <span style={{ color: 'var(--faint)', fontSize: 10, textTransform: 'uppercase', fontWeight: 700 }}><LocalizedText source={label} /></span>
-      <span style={{ color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</span>
+      <span style={{ color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}><bdi dir="ltr" lang={getRegionalLocale() ?? 'und'}>{value}</bdi></span>
     </span>
   )
 }

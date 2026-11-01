@@ -178,7 +178,7 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
       }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <h2 id="torrent-detail-title" style={{ margin: 0, display: 'block', fontWeight: 700, fontSize: 13, color: 'var(--text)', lineHeight: 1.3, overflowWrap: 'anywhere' }}>
-            {t.name}
+            <bdi dir="auto" lang="und">{t.name}</bdi>
           </h2>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 7 }}>
             <Pill color={state.color}><LocalizedText source={state.label} /></Pill>
@@ -309,14 +309,14 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
               borderRadius: 6, padding: '7px 8px',
             }}>
               <div style={LABEL}>{lbl}</div>
-              <div style={{ ...VALUE, marginBottom: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={val}>{val}</div>
+              <div style={{ ...VALUE, marginBottom: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={val} dir="auto" lang={getRegionalLocale() ?? 'und'}><bdi dir="auto" lang={getRegionalLocale() ?? 'und'}>{val}</bdi></div>
             </div>
           ))}
         </div>
 
         {t.category && (<>
           <div style={LABEL}><LocalizedText source="Category" /></div>
-          <div style={VALUE}>{t.category}</div>
+          <div style={VALUE}><bdi dir="auto" lang="und">{t.category}</bdi></div>
         </>)}
 
         {tags.length > 0 && (<>
@@ -326,7 +326,7 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
               <span key={tag} style={{
                 background: 'var(--surface-2)', color: 'var(--muted)',
                 padding: '1px 7px', borderRadius: 10, fontSize: 11,
-              }}>{tag}</span>
+              }}><bdi dir="auto" lang="und">{tag}</bdi></span>
             ))}
           </div>
         </>)}
@@ -390,16 +390,16 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
             </div>
           </div>
         ) : (
-          <div style={{ ...MONO, marginBottom: 12 }}>{t.directory || '—'}</div>
+          <div style={{ ...MONO, marginBottom: 12 }}><bdi dir="ltr" lang="und">{t.directory || '—'}</bdi></div>
         )}
 
         {t.message && (<>
           <div style={LABEL}><LocalizedText source="Message" /></div>
-          <div style={{ ...VALUE, color: 'var(--warning)' }}>{t.message}</div>
+          <div style={{ ...VALUE, color: 'var(--warning)' }}><bdi dir="auto" lang="und">{t.message}</bdi></div>
         </>)}
 
         <div style={LABEL}><LocalizedText source="Hash" /></div>
-        <div style={MONO}>{t.hash}</div>
+        <div style={MONO}><bdi dir="ltr" lang="und">{t.hash}</bdi></div>
 
         {/* Trackers */}
         {trackersLoading && (
@@ -477,7 +477,7 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
                       peers: tr.scrape_incomplete.toLocaleString(getRegionalLocale()),
                     }}
                   />
-                  {tr.message ? ` · ${tr.message}` : ''}
+                  {tr.message ? <> · <bdi dir="auto" lang="und">{tr.message}</bdi></> : ''}
                 </div>
               </div>
               )
@@ -519,7 +519,7 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
                   <div style={{
                     fontSize: 11, color: 'var(--muted)', overflow: 'hidden',
                     textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }} title={f.path}>{f.path.split('/').pop()}</div>
+                  }} title={f.path} dir="ltr" lang="und"><bdi dir="ltr" lang="und">{f.path.split('/').pop()}</bdi></div>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 2 }}>
                     <div role="progressbar" aria-label={translateInterface('Progress for {path}', { path: f.path })} {...interfaceTextProps('Progress for {path}')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100, Math.max(0, fp))} style={{ flex: 1, height: 2, background: 'var(--surface-2)', borderRadius: 1, overflow: 'hidden' }}>
                       <div style={{ width: `${fp}%`, height: '100%', background: fp >= 100 ? 'var(--success)' : 'var(--accent)' }} />

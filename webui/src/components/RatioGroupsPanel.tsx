@@ -135,7 +135,7 @@ export function RatioGroupsPanel() {
                 width: 7, height: 7, borderRadius: 999,
                 background: group.enabled ? 'var(--success)' : 'var(--faint)',
               }} />
-              {group.name}
+              <bdi dir="auto" lang="und">{group.name}</bdi>
             </strong>
             <span style={{ color: 'var(--muted)' }}><LocalizedText source="Ratio: {value}" parameters={{ value: group.ratio_limit.toLocaleString(getRegionalLocale()) }} /></span>
             <span style={{ color: 'var(--muted)' }}>
@@ -143,8 +143,15 @@ export function RatioGroupsPanel() {
                 ? <LocalizedText source="No time cap" />
                 : <LocalizedText source={group.seeding_time_limit === 1 ? '{value} minute' : '{value} minutes'} parameters={{ value: group.seeding_time_limit.toLocaleString(getRegionalLocale()) }} />}
             </span>
-            <span style={{ color: 'var(--faint)' }}>{group.category || <LocalizedText source="Any category" />}</span>
-            <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={group.tracker ? maskAnnounceUrl(group.tracker) : undefined}>{group.tracker ? maskAnnounceUrl(group.tracker) : <LocalizedText source="any tracker" />}</span>
+            <span style={{ color: 'var(--faint)' }}>{group.category ? <bdi dir="auto" lang="und">{group.category}</bdi> : <LocalizedText source="Any category" />}</span>
+            <span
+              style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              title={group.tracker ? maskAnnounceUrl(group.tracker) : undefined}
+              dir={group.tracker ? 'ltr' : undefined}
+              lang={group.tracker ? 'und' : undefined}
+            >
+              {group.tracker ? <bdi dir="ltr" lang="und">{maskAnnounceUrl(group.tracker)}</bdi> : <LocalizedText source="any tracker" />}
+            </span>
             <button
               type="button"
               onClick={() => apply(group.name, true)}

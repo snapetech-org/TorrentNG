@@ -29,9 +29,9 @@ export function EnginePanel() {
         <h2 id="backend-title" style={{ fontSize: 13, margin: 0, color: 'var(--text)' }}><LocalizedText source="Backend" /></h2>
         {data && (
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <Badge ok text={data.backend.type === 'torrentng' ? <LocalizedText source="TorrentNG client" /> : <bdi dir="ltr">{data.backend.type}</bdi>} />
+            <Badge ok text={data.backend.type === 'torrentng' ? <LocalizedText source="TorrentNG client" /> : <bdi dir="ltr" lang="und">{data.backend.type}</bdi>} />
             {isRtorrent && <Badge ok={driftProblems === 0} text={driftProblems === 0 ? <LocalizedText source="Profile matches defaults" /> : <LocalizedText source="{count} drift" parameters={{ count: driftProblems.toLocaleString(getRegionalLocale()) }} />} />}
-            {isRtorrent && <Badge ok={data.capabilities.every(c => c.available)} text={<bdi dir="ltr">{`${data.capabilities.filter(c => c.available).length}/${data.capabilities.length} XMLRPC`}</bdi>} />}
+            {isRtorrent && <Badge ok={data.capabilities.every(c => c.available)} text={<bdi dir="ltr" lang="und">{`${data.capabilities.filter(c => c.available).length}/${data.capabilities.length} XMLRPC`}</bdi>} />}
             <button
               type="button"
               onClick={() => {
@@ -154,6 +154,30 @@ function yesNo(value: boolean): string {
   return value ? 'yes' : 'no'
 }
 
+const ENGINE_CAPABILITY_LABELS: Record<string, string> = {
+  method_index: 'XMLRPC method index',
+  tracker_user_agent: 'Tracker HTTP user-agent control',
+  http_stack_metrics: 'HTTP tracker stack telemetry',
+  http_proxy: 'HTTP tracker proxy',
+  ssl_verify: 'Tracker TLS verification controls',
+  trusted_rpc_toggle: 'RPC trusted connection toggle',
+  jsonrpc: 'JSON-RPC transport',
+  raw_torrent_load: 'Raw torrent load',
+  magnet_load: 'Magnet load',
+  tracker_announce: 'Manual tracker announce',
+  tracker_insert: 'Tracker insert',
+  scgi_gzip: 'SCGI gzip controls',
+  bounded_multicall: 'Bounded torrent multicall',
+  live_rate_multicall: 'Live-rate torrent multicall',
+  live_summary: 'TorrentNG live summary',
+}
+
+const ENGINE_CAPABILITY_DETAILS = new Set([
+  'command not exposed by running rTorrent build',
+  'Optional broader accept-all toggle; not required here because the compatible-client service already connects over the trusted local SCGI socket - load.start and load.raw_start below confirm untrusted-connection rejection isn\'t in effect.',
+  'Not exposed by this rTorrent build, AND load.start/load.raw_start are also unavailable - torrent add calls from *arr apps are likely being rejected as untrusted. See docs/AUDIT.md (RPC Trust Model).',
+])
+
 function backendDisplayName(type: string): string {
   return type === 'torrentng' ? 'TorrentNG client' : type
 }
@@ -164,7 +188,10 @@ function Capabilities({ data }: { data: EngineDiagnostics }) {
     <Panel>
       <Subhead><LocalizedText source="Capabilities" /></Subhead>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 8 }}>
-        {data.capabilities.map(cap => (
+        {data.capabilities.map(cap => {
+          const labelSource = ENGINE_CAPABILITY_LABELS[cap.key] === cap.label ? cap.label : undefined
+          const detailSource = cap.detail && ENGINE_CAPABILITY_DETAILS.has(cap.detail) ? cap.detail : undefined
+          return (
           <div key={cap.key} className="tng-engine-capability" data-available={cap.available ? 'true' : 'false'} style={{
             border: '1px solid var(--border)',
             borderRadius: 6,
@@ -173,19 +200,24 @@ function Capabilities({ data }: { data: EngineDiagnostics }) {
             minWidth: 0,
           }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-              <span {...textProps(cap.label)} style={{ fontSize: 12, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t(cap.label)}</span>
+              <span {...(labelSource ? textProps(labelSource) : {})} style={{ fontSize: 12, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {labelSource ? t(labelSource) : <bdi dir="auto" lang="und">{cap.label}</bdi>}
+              </span>
               <Badge ok={cap.available} text={<LocalizedText source={cap.available ? 'yes' : 'no'} />} />
             </div>
-            <div title={cap.command} style={{ fontSize: 11, color: 'var(--faint)', marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {cap.command}
+            <div title={cap.command} dir="ltr" lang="und" style={{ fontSize: 11, color: 'var(--faint)', marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <bdi dir="ltr" lang="und">{cap.command}</bdi>
             </div>
             {cap.detail && (
               <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 5, lineHeight: 1.4 }}>
-                <span {...textProps(cap.detail)}>{t(cap.detail)}</span>
+                {detailSource
+                  ? <span {...textProps(detailSource)}>{t(detailSource)}</span>
+                  : <bdi dir="auto" lang="und">{cap.detail}</bdi>}
               </div>
             )}
           </div>
-        ))}
+          )
+        })}
       </div>
     </Panel>
   )
@@ -254,10 +286,16 @@ function ProfileDrift({ data }: { data: EngineDiagnostics }) {
               background: 'color-mix(in srgb, var(--danger) 10%, var(--surface))',
               fontSize: 12,
             }}>
-              <div title={row.command} {...textProps(row.label)} style={{ color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t(row.label)}</div>
-              <div title={row.expected} style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}><LocalizedText source="Expected: {value}" parameters={{ value: row.expected }} /></div>
-              <div title={row.actual ?? row.detail ?? ''} style={{ color: 'var(--danger)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {row.status === 'unavailable' ? <LocalizedText source="Unavailable" /> : <LocalizedText source="Actual: {value}" parameters={{ value: row.actual ?? '' }} />}
+              <div title={row.command} dir="ltr" lang="und" style={{ color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span {...textProps(row.label)}>{t(row.label)}</span>
+              </div>
+              <div title={row.expected} dir="auto" lang="und" style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <LocalizedText source="Expected: {value}" parameters={{ value: row.expected }} undParameters={['value']} />
+              </div>
+              <div title={row.actual ?? row.detail ?? ''} dir="auto" lang="und" style={{ color: 'var(--danger)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {row.status === 'unavailable'
+                  ? <LocalizedText source="Unavailable" />
+                  : <LocalizedText source="Actual: {value}" parameters={{ value: row.actual ?? '' }} undParameters={['value']} />}
               </div>
             </div>
           ))}
@@ -1142,7 +1180,9 @@ function ChangeReview({ settings, draft, customRcDirty, values, saving }: {
               fontSize: 11,
               minWidth: 0,
             }}>
-              <span title={setting.command} {...interfaceTextProps(setting.label)} style={{ color: 'var(--text)', fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{translateInterface(setting.label)}</span>
+              <span title={setting.command} dir="ltr" lang="und" style={{ color: 'var(--text)', fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span {...interfaceTextProps(setting.label)}>{translateInterface(setting.label)}</span>
+              </span>
               <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 <LocalizedText source="From {value}" parameters={{ value: formatSettingValue(base, setting.unit) }} />
               </span>
@@ -1401,7 +1441,7 @@ function Readout({ label, value, mono }: { label: string; value: string; mono?: 
   return (
     <div style={{ minWidth: 0, display: 'grid', gap: 2 }}>
       <span style={{ color: 'var(--faint)', fontSize: 9, fontWeight: 800, textTransform: 'uppercase' }}><LocalizedText source={label} /></span>
-      <span title={value} style={{
+      <span title={value} dir="ltr" lang="und" style={{
         color: 'var(--muted)',
         fontSize: 10,
         fontFamily: mono ? 'ui-monospace, SFMono-Regular, Menlo, monospace' : undefined,
@@ -1409,7 +1449,7 @@ function Readout({ label, value, mono }: { label: string; value: string; mono?: 
         textOverflow: 'ellipsis',
         whiteSpace: 'nowrap',
       }}>
-        {value}
+        <bdi dir="ltr" lang="und">{value}</bdi>
       </span>
     </div>
   )
@@ -1621,7 +1661,7 @@ function CommandIndex({ commands }: { commands?: { ok: boolean; count: number; c
             fontSize: 11,
             color: 'var(--muted)',
           }}>
-            {filtered.map(command => <div key={command} title={command} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{command}</div>)}
+            {filtered.map(command => <div key={command} title={command} dir="ltr" lang="und" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}><bdi dir="ltr" lang="und">{command}</bdi></div>)}
           </div>
         </details>
       )}
@@ -1658,10 +1698,10 @@ function Rows({ rows }: { rows: [string, string][] }) {
             <div style={{ color: 'var(--faint)' }}><LocalizedText source={k} /></div>
             <div
               title={localizable ? translateInterface(v) : v}
-              {...(localizable ? interfaceTextProps(v) : {})}
+              {...(localizable ? interfaceTextProps(v) : { dir: 'ltr', lang: 'und' })}
               style={{ color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
             >
-              {localizable ? <LocalizedText source={v} /> : <bdi dir="ltr">{v}</bdi>}
+              {localizable ? <LocalizedText source={v} /> : <bdi dir="ltr" lang="und">{v}</bdi>}
             </div>
           </div>
         )

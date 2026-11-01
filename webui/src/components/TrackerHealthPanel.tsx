@@ -13,8 +13,7 @@ function hostLabel(url: string): string {
   }
 }
 
-function fmtDate(ts: number, neverLabel: string): string {
-  if (!ts) return neverLabel
+function fmtDate(ts: number): string {
   return new Date(ts * 1000).toLocaleString(getRegionalLocale())
 }
 
@@ -111,8 +110,8 @@ export function TrackerHealthPanel({ onSelectTracker }: Props) {
                   <span style={{
                     color: 'var(--text)', fontWeight: 700, overflow: 'hidden',
                     textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }} title={maskAnnounceUrl(tracker.tracker)}>
-                    {hostLabel(tracker.tracker)}
+                  }} title={maskAnnounceUrl(tracker.tracker)} dir="ltr" lang="und">
+                    <bdi dir="ltr" lang="und">{hostLabel(tracker.tracker)}</bdi>
                   </span>
                   {onSelectTracker && (
                     <button
@@ -144,7 +143,11 @@ export function TrackerHealthPanel({ onSelectTracker }: Props) {
               <div style={{ color: 'var(--faint)', textAlign: 'right' }}>
                 <div><LocalizedText source="Seed count: {count}" parameters={{ count: tracker.seed_count.toLocaleString(getRegionalLocale()) }} /></div>
                 <div><LocalizedText source="Peer count: {count}" parameters={{ count: tracker.peer_count.toLocaleString(getRegionalLocale()) }} /></div>
-                <div style={{ color: 'var(--faint)', marginTop: 2 }}>{fmtDate(tracker.last_updated, translateInterface('Never'))}</div>
+                <div style={{ color: 'var(--faint)', marginTop: 2 }}>
+                  {tracker.last_updated
+                    ? <bdi dir="auto" lang={getRegionalLocale() ?? 'und'}>{fmtDate(tracker.last_updated)}</bdi>
+                    : <LocalizedText source="Never" />}
+                </div>
               </div>
               <span aria-hidden="true" style={{
                 gridColumn: '1 / -1',
@@ -204,7 +207,7 @@ function Summary({ label, value, tone }: { label: string; value: number; tone: '
       background: 'var(--surface)', padding: '5px 8px', fontSize: 12,
     }}>
       <span style={{ color: 'var(--faint)' }}><LocalizedText source={label} /></span>
-      <span style={{ color, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{value.toLocaleString(getRegionalLocale())}</span>
+      <span style={{ color, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}><bdi dir="ltr" lang={getRegionalLocale() ?? 'und'}>{value.toLocaleString(getRegionalLocale())}</bdi></span>
     </span>
   )
 }
@@ -212,7 +215,7 @@ function Summary({ label, value, tone }: { label: string; value: number; tone: '
 function Metric({ label, value, color }: { label: string; value: number; color: string }) {
   return (
     <div>
-      <div style={{ color, fontWeight: 700, fontSize: 15 }}>{value.toLocaleString(getRegionalLocale())}</div>
+      <div style={{ color, fontWeight: 700, fontSize: 15 }}><bdi dir="ltr" lang={getRegionalLocale() ?? 'und'}>{value.toLocaleString(getRegionalLocale())}</bdi></div>
       <div style={{ color: 'var(--faint)', fontSize: 11 }}><LocalizedText source={label} /></div>
     </div>
   )

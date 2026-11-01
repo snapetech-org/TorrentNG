@@ -991,14 +991,16 @@ export function TorrentTable({
                       fontWeight: isSelected || isDetail ? 650 : 500,
                     }}
                     title={t.name}
+                    dir="auto"
+                    lang="und"
                   >
-                    {t.name}
+                    <bdi dir="auto" lang="und">{t.name}</bdi>
                   </span>
                   {t.message && (
                     <span style={{
                       overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                       color: 'var(--warning)', fontSize: 10,
-                    }} title={t.message}>{t.message}</span>
+                    }} title={t.message} dir="auto" lang="und"><bdi dir="auto" lang="und">{t.message}</bdi></span>
                   )}
                 </span>
               ),
@@ -1028,10 +1030,10 @@ export function TorrentTable({
               downloaded: <span style={{ color: 'var(--muted)' }}>{fmtSize(t.down_total)}</span>,
               uploaded: <span style={{ color: 'var(--muted)' }}>{fmtSize(t.up_total)}</span>,
               priority: <span style={{ color: 'var(--faint)' }} title={localize('Priority value {priority}', { priority: formatRegionalNumber(t.priority) })} {...textProps(priority.source)}>{localize(priority.source, priority.parameters)}</span>,
-              category: <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.category || '—'}</span>,
-              tags: <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.tags}>{t.tags || '—'}</span>,
-              tracker: <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.tracker_url ? maskAnnounceUrl(t.tracker_url) : undefined}>{trackerHost(t.tracker_url)}</span>,
-              path: <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.base_path || t.directory}>{shortPath(t.base_path || t.directory)}</span>,
+              category: <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}><bdi dir="auto" lang="und">{t.category || '—'}</bdi></span>,
+              tags: <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.tags} dir="auto" lang="und"><bdi dir="auto" lang="und">{t.tags || '—'}</bdi></span>,
+              tracker: <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.tracker_url ? maskAnnounceUrl(t.tracker_url) : undefined} dir="ltr" lang="und"><bdi dir="ltr" lang="und">{trackerHost(t.tracker_url)}</bdi></span>,
+              path: <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.base_path || t.directory} dir="ltr" lang="und"><bdi dir="ltr" lang="und">{shortPath(t.base_path || t.directory)}</bdi></span>,
               actions: null,
             }
             const rowBg = isDetail || isSelected ? 'var(--selected)'
@@ -1044,8 +1046,8 @@ export function TorrentTable({
                 aria-rowindex={pageOffset + item.index + 2}
                 aria-selected={isSelected}
                 aria-label={t.message
-                  ? localize('{name}, {status}. {message}', { name: t.name, status: accessibleLabel, message: t.message })
-                  : localize('{name}, {status}', { name: t.name, status: accessibleLabel })}
+                  ? localize('{name}, {status}. {message}', { name: `\u2068${t.name}\u2069`, status: `\u2068${accessibleLabel}\u2069`, message: `\u2068${t.message}\u2069` })
+                  : localize('{name}, {status}', { name: `\u2068${t.name}\u2069`, status: `\u2068${accessibleLabel}\u2069` })}
                 tabIndex={focusedHash === t.hash || (!focusedHash && item.index === 0) ? 0 : -1}
                 ref={node => {
                   if (node) rowRefs.current.set(t.hash, node)
@@ -1054,7 +1056,7 @@ export function TorrentTable({
                 onFocus={() => setFocusedHash(t.hash)}
                 data-status={labelSource.toLowerCase()}
                 data-detail={isDetail ? 'true' : 'false'}
-                title={localize('{action} {name}. Shift-click for a range; Control/Command-click to add or remove.', { action: localize(isSelected ? 'Deselect' : 'Select'), name: t.name })}
+                title={localize('{action} {name}. Shift-click for a range; Control/Command-click to add or remove.', { action: localize(isSelected ? 'Deselect' : 'Select'), name: `\u2068${t.name}\u2069` })}
                 {...textProps('{action} {name}. Shift-click for a range; Control/Command-click to add or remove.')}
                 onClick={event => onSelect(t.hash, selectionMode(event))}
                 onContextMenu={e => {
@@ -1128,12 +1130,13 @@ function ProgressCell({ value }: { value: number | null }) {
   if (value === null) {
     return <span aria-label={localize("Progress unavailable")} style={{ color: 'var(--faint)' }} {...textProps("Progress unavailable")}>—</span>
   }
+  const percent = `${formatRegionalNumber(value, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`
   return (
-    <span role="progressbar" aria-label={localize("Torrent progress")} aria-valuemin={0} aria-valuemax={100} aria-valuenow={value} title={`${formatRegionalNumber(value, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`} style={{
+    <span role="progressbar" aria-label={localize("Torrent progress")} aria-valuemin={0} aria-valuemax={100} aria-valuenow={value} title={`\u2066${percent}\u2069`} style={{
       display: 'grid', gap: 3, width: '100%', minWidth: 0,
     }} {...textProps("Torrent progress")}>
       <span style={{ color: value >= 100 ? 'var(--success)' : 'var(--muted)', fontSize: 11, lineHeight: 1 }}>
-        {formatRegionalNumber(value, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%
+        <bdi dir="ltr" lang={getRegionalLocale() ?? 'und'}>{percent}</bdi>
       </span>
       <span style={{
         display: 'block', height: 3, borderRadius: 99, overflow: 'hidden',
