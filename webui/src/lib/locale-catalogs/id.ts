@@ -570,7 +570,7 @@ export const UI_LABELS: Record<string, string> = {
   "Peers": "Peer",
   "Pending": "Tertunda",
   "Pending autosave": "Penyimpanan otomatis tertunda",
-  "Pending autosave · changes: {count} · live: {live} · restart: {restart} · custom lines edited.": "Penyimpanan otomatis tertunda · perubahan: {count} · siaran langsung: {live} · mulai ulang: {restart} · baris khusus diedit.",
+  "Pending autosave · changes: {count} · live: {live} · restart: {restart} · custom lines edited.": "Penyimpanan otomatis tertunda · perubahan: {count} · tanpa memulai ulang: {live} · mulai ulang: {restart} · baris khusus diedit.",
   "Pending autosave · changes: {count} · live: {live} · restart: {restart}.": "Penyimpanan otomatis tertunda · perubahan: {count} · langsung diterapkan: {live} · perlu mulai ulang: {restart}.",
   "Per-torrent download slots": "Slot unduh per torrent",
   "Per-torrent upload slots": "Slot unggah per torrent",
