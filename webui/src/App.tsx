@@ -1,5 +1,5 @@
 import { LocalizedErrorText, LocalizedRichText, LocalizedText } from './lib/LocalizedText'
-import { interfaceTextProps, translateInterface } from './lib/interfaceLocale'
+import { interfaceTextProps, selectedTorrentCountSource, translateInterface } from './lib/interfaceLocale'
 import { Fragment, Suspense, lazy, useState, useCallback, useEffect, useId, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTorrentsInfinite, flattenPages, useHealth } from './hooks/useTorrents'
@@ -1036,12 +1036,12 @@ export function App() {
           </span>
         )}
         {selected.size > 0 && view === 'torrents' && (
-          <span className="tng-topbar-pill" data-tone="accent" role="status" aria-label={t('{count} selected', { count: selected.size.toLocaleString(getRegionalLocale()) })} {...textProps('{count} selected')} style={{
+          <span className="tng-topbar-pill" data-tone="accent" role="status" aria-label={t(selectedTorrentCountSource(selected.size), { count: selected.size.toLocaleString(getRegionalLocale()) })} {...textProps(selectedTorrentCountSource(selected.size))} style={{
             color: 'var(--accent-text)', background: 'var(--accent-soft)', border: '1px solid var(--accent)',
             borderRadius: 999, padding: '2px 8px', fontSize: 11, fontWeight: 800,
             whiteSpace: 'nowrap', flex: '0 0 auto',
           }}>
-            {t('{count} selected', { count: selected.size.toLocaleString(getRegionalLocale()) })}
+            {t(selectedTorrentCountSource(selected.size), { count: selected.size.toLocaleString(getRegionalLocale()) })}
           </span>
         )}
         <button type="button" onClick={() => setHelpOpen(true)} title={t('Help and links')} {...textProps('Help and links')} style={{

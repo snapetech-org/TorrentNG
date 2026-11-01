@@ -1,5 +1,5 @@
 import { LocalizedErrorText, LocalizedText } from '../lib/LocalizedText'
-import { interfaceTextProps, translateInterface } from '../lib/interfaceLocale'
+import { interfaceTextProps, selectedTorrentCountSource, translateInterface } from '../lib/interfaceLocale'
 import { getRegionalLocale } from '../lib/localeFormat'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -75,7 +75,7 @@ export function BulkActionBar({ hashes, onClear }: Props) {
       fontSize: 12,
     }} {...interfaceTextProps("Bulk torrent actions")}>
       <span role="status" aria-live="polite" style={{ color: 'var(--accent)', fontWeight: 600, marginRight: 4 }}>
-        <LocalizedText source="{count} selected" parameters={{ count: hashes.length.toLocaleString(getRegionalLocale()) }} />
+        <LocalizedText source={selectedTorrentCountSource(hashes.length)} parameters={{ count: hashes.length.toLocaleString(getRegionalLocale()) }} />
       </span>
 
       {ACTIONS.map(a => (

@@ -1,5 +1,5 @@
 import { LocalizedText } from '../lib/LocalizedText'
-import { useInterfaceLanguage } from '../lib/interfaceLocale'
+import { selectedTorrentCountSource, useInterfaceLanguage } from '../lib/interfaceLocale'
 import { formatRegionalNumber, getRegionalLocale } from '../lib/localeFormat'
 import { useRef, useEffect, useMemo, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
@@ -885,7 +885,7 @@ export function TorrentTable({
                 color: 'var(--accent-text)', borderRadius: 999, padding: '0 7px',
                 fontSize: 10, fontWeight: 800, textTransform: 'none', letterSpacing: 0,
               }}>
-                {isSelectingAllMatching ? <LocalizedText source="Selecting…" /> : localize('{count} selected', { count: formatRegionalNumber(selected.size) })}
+                {isSelectingAllMatching ? <LocalizedText source="Selecting…" /> : localize(selectedTorrentCountSource(selected.size), { count: formatRegionalNumber(selected.size) })}
               </span>
             )}
             {columnsOpen && (
