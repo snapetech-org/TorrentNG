@@ -114,7 +114,7 @@ export function RatioGroupsPanel() {
       {error && <Notice tone="error">{typeof error === 'string' ? <LocalizedErrorText message={error} /> : <LocalizedText source={error.source} parameters={error.parameters} />}</Notice>}
       {preview && (
         <Notice tone="ok">
-          <LocalizedText source="Preview found {count} matches for {name}" parameters={{ count: preview.count.toLocaleString(getRegionalLocale()), name: preview.name }} />
+          <LocalizedText source={preview.count === 1 ? 'Preview found {count} match for {name}' : 'Preview found {count} matches for {name}'} parameters={{ count: preview.count.toLocaleString(getRegionalLocale()), name: preview.name }} />
         </Notice>
       )}
 

@@ -739,12 +739,16 @@ export function TorrentTable({
                 aria-label={
                   allVisible ? localize('Deselect all')
                     : isSelectingAllMatching ? localize('Selecting all matching torrents…')
-                      : localize('Select all {count} torrents matching the current filter', { count: formatRegionalNumber(total) })
+                      : total === 1
+                        ? localize('Select the matching torrent')
+                        : localize('Select all {count} torrents matching the current filter', { count: formatRegionalNumber(total) })
                 }
                 title={
                   allVisible ? localize('Deselect all')
                     : total > torrents.length
-                      ? localize('Select all {count} torrents matching the current filter (not just the {loaded} loaded so far)', { count: formatRegionalNumber(total), loaded: formatRegionalNumber(torrents.length) })
+                      ? total === 1
+                        ? localize('Select the matching torrent even though it is not loaded yet')
+                        : localize('Select all {count} torrents matching the current filter (not just the {loaded} loaded so far)', { count: formatRegionalNumber(total), loaded: formatRegionalNumber(torrents.length) })
                       : localize('Select all visible torrents')
                 }
                 checked={allVisible}

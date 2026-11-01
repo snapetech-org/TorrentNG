@@ -448,7 +448,9 @@ function RtorrentSettingsPanel() {
     .reduce((sum, group) => sum + group.settings.length, 0)
   const allGroupsCollapsed = filteredGroups.length > 0 && filteredGroups.every(group => collapsedGroups.has(group.name))
   const autosaveText = lastSaveFailed
-    ? t('{count} pending changes could not be saved. Retry when the API is available.', { count: dirtyCount.toLocaleString(getRegionalLocale()) })
+    ? t(dirtyCount === 1
+      ? '{count} pending change could not be saved. Retry when the API is available.'
+      : '{count} pending changes could not be saved. Retry when the API is available.', { count: dirtyCount.toLocaleString(getRegionalLocale()) })
     : save.isPending
       ? t('Saving changes…')
       : dirtyCount === 0
@@ -574,7 +576,9 @@ function RtorrentSettingsPanel() {
           </div>
           {lastSaveFailed && (
             <div role="alert" style={visuallyHiddenStyle}>
-              <LocalizedText source="{count} pending changes could not be saved. Retry when the API is available." parameters={{ count: dirtyCount.toLocaleString(getRegionalLocale()) }} /></div>
+              <LocalizedText source={dirtyCount === 1
+                ? '{count} pending change could not be saved. Retry when the API is available.'
+                : '{count} pending changes could not be saved. Retry when the API is available.'} parameters={{ count: dirtyCount.toLocaleString(getRegionalLocale()) }} /></div>
           )}
           <div style={{
             display: 'grid',
@@ -750,7 +754,9 @@ function RtorrentSettingsPanel() {
               padding: '8px 10px',
               fontSize: 12,
             }}>
-              <LocalizedText source="{count} pending changes could not be saved. Retry when the API is available." parameters={{ count: dirtyCount.toLocaleString(getRegionalLocale()) }} /></div>
+              <LocalizedText source={dirtyCount === 1
+                ? '{count} pending change could not be saved. Retry when the API is available.'
+                : '{count} pending changes could not be saved. Retry when the API is available.'} parameters={{ count: dirtyCount.toLocaleString(getRegionalLocale()) }} /></div>
           )}
           <div style={{ display: 'grid', gap: 12 }}>
             {filteredGroups.map(group => {

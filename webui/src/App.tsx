@@ -974,12 +974,12 @@ export function App() {
         </nav>
 
         {view === 'torrents' && (
-          <span className="tng-topbar-pill" data-tone="neutral" role="status" aria-label={t('{count} torrents', { count: total.toLocaleString(getRegionalLocale()) })} {...textProps('{count} torrents')} style={{
+          <span className="tng-topbar-pill" data-tone="neutral" role="status" aria-label={t(total === 1 ? '{count} torrent' : '{count} torrents', { count: total.toLocaleString(getRegionalLocale()) })} {...textProps(total === 1 ? '{count} torrent' : '{count} torrents')} style={{
             color: 'var(--muted)', background: 'var(--surface)', border: '1px solid var(--border)',
             borderRadius: 999, padding: '2px 8px', fontSize: 11, fontWeight: 700,
             whiteSpace: 'nowrap', flex: '0 0 auto',
           }}>
-            {t('{count} torrents', { count: total.toLocaleString(getRegionalLocale()) })}
+            {t(total === 1 ? '{count} torrent' : '{count} torrents', { count: total.toLocaleString(getRegionalLocale()) })}
           </span>
         )}
         {selected.size > 0 && view === 'torrents' && (
@@ -1541,7 +1541,7 @@ function DeleteDialog({ pending, busy, onCancel, onRemove, onRemoveFiles }: {
           <div style={{ marginTop: 8, color: 'var(--text)', fontSize: 13, lineHeight: 1.4, wordBreak: 'break-word' }}>
             {pending.hashes.length === 1 && pending.torrents[0]
               ? pending.torrents[0].name
-              : <LocalizedText source="{count} selected torrents" parameters={{ count: formatRegionalNumber(pending.hashes.length) }} />}
+              : <LocalizedText source={pending.hashes.length === 1 ? '{count} selected torrent' : '{count} selected torrents'} parameters={{ count: formatRegionalNumber(pending.hashes.length) }} />}
           </div>
           <div id="delete-torrent-description" style={{
             marginTop: 10, color: 'var(--faint)', fontSize: 12, lineHeight: 1.45,

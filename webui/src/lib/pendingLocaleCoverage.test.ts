@@ -22,16 +22,19 @@ import {
 const catalogs = [es, zhHans, hi, de, ja, fr, ptBR, ar, ko, zhHant, vi, id]
 
 describe('pending locale coverage ledger', () => {
-  it('tracks 81 source-owned UI strings without filler translations', () => {
+  it('tracks 90 source-owned UI strings without filler translations', () => {
     const sources = PENDING_UI_LOCALE_SOURCES.map(entry => entry.source)
-    expect(sources).toHaveLength(81)
-    expect(new Set(sources).size).toBe(81)
-    expect(PENDING_UI_LOCALE_SOURCES.every(entry => entry.caller.length > 0)).toBe(true)
+    expect(sources).toHaveLength(90)
+    expect(new Set(sources).size).toBe(90)
     const callerSources = new Map<string, string>()
     for (const entry of PENDING_UI_LOCALE_SOURCES) {
-      const caller = callerSources.get(entry.caller) ?? readFileSync(resolve(process.cwd(), '..', entry.caller), 'utf8')
-      callerSources.set(entry.caller, caller)
-      expect(caller, entry.caller).toContain(entry.source)
+      const callers = 'callers' in entry ? entry.callers : [entry.caller]
+      expect(callers.length).toBeGreaterThan(0)
+      for (const callerPath of callers) {
+        const caller = callerSources.get(callerPath) ?? readFileSync(resolve(process.cwd(), '..', callerPath), 'utf8')
+        callerSources.set(callerPath, caller)
+        expect(caller, callerPath).toContain(entry.source)
+      }
     }
     for (const catalog of catalogs) {
       for (const source of sources) expect(Object.hasOwn(catalog, source)).toBe(false)
