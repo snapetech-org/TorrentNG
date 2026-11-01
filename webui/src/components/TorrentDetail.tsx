@@ -308,7 +308,7 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
               minWidth: 0, background: 'var(--surface)', border: '1px solid var(--border)',
               borderRadius: 6, padding: '7px 8px',
             }}>
-              <div style={LABEL}>{lbl}</div>
+              <div style={LABEL}><LocalizedText source={lbl} /></div>
               <div style={{ ...VALUE, marginBottom: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={val} dir="auto" lang={getRegionalLocale() ?? 'und'}><bdi dir="auto" lang={getRegionalLocale() ?? 'und'}>{val}</bdi></div>
             </div>
           ))}
