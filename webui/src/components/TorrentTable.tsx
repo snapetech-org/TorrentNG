@@ -956,21 +956,43 @@ export function TorrentTable({
             const isSelected = selected.has(t.hash)
             const isDetail = detailHash === t.hash
             const accent = rowAccent(t)
+            const rowLabelId = `torrent-row-${encodeURIComponent(t.hash)}`
+            const checkboxLabelId = `${rowLabelId}-checkbox`
             const cells: Record<ColKey, React.ReactNode> = {
               check: (
-                <input
-                  type="checkbox"
-                  aria-label={localize(isSelected ? 'Deselect {name}' : 'Select {name}', { name: t.name })}
-                  {...textProps(isSelected ? 'Deselect {name}' : 'Select {name}')}
-                  checked={isSelected}
-                  tabIndex={-1}
-                  onClick={event => {
-                    event.stopPropagation()
-                    onSelect(t.hash, selectionMode(event, false), true)
-                  }}
-                  onChange={() => undefined}
-                  style={{ accentColor: 'var(--accent)', cursor: 'pointer' }}
-                />
+                <>
+                  <input
+                    type="checkbox"
+                    aria-labelledby={checkboxLabelId}
+                    checked={isSelected}
+                    tabIndex={-1}
+                    onClick={event => {
+                      event.stopPropagation()
+                      onSelect(t.hash, selectionMode(event, false), true)
+                    }}
+                    onChange={() => undefined}
+                    style={{ accentColor: 'var(--accent)', cursor: 'pointer' }}
+                  />
+                  <span id={checkboxLabelId} className="tng-visually-hidden">
+                    <LocalizedText
+                      source={isSelected ? 'Deselect {name}' : 'Select {name}'}
+                      parameters={{ name: t.name }}
+                      undParameters={['name']}
+                    />
+                  </span>
+                  <span id={rowLabelId} className="tng-visually-hidden">
+                    <LocalizedText
+                      source={t.message ? '{name}, {status}. {message}' : '{name}, {status}'}
+                      parameters={{
+                        name: t.name,
+                        status: accessibleLabel,
+                        ...(t.message ? { message: t.message } : {}),
+                      }}
+                      parameterLanguages={{ status: textProps(accessibleSource).lang }}
+                      undParameters={t.message ? ['name', 'message'] : ['name']}
+                    />
+                  </span>
+                </>
               ),
               kind: (
                 <span role="img" aria-label={localize(kind.label)} title={localize(kind.label)} {...textProps(kind.label)} style={{
@@ -1045,9 +1067,7 @@ export function TorrentTable({
                 role="row"
                 aria-rowindex={pageOffset + item.index + 2}
                 aria-selected={isSelected}
-                aria-label={t.message
-                  ? localize('{name}, {status}. {message}', { name: `\u2068${t.name}\u2069`, status: `\u2068${accessibleLabel}\u2069`, message: `\u2068${t.message}\u2069` })
-                  : localize('{name}, {status}', { name: `\u2068${t.name}\u2069`, status: `\u2068${accessibleLabel}\u2069` })}
+                aria-labelledby={rowLabelId}
                 tabIndex={focusedHash === t.hash || (!focusedHash && item.index === 0) ? 0 : -1}
                 ref={node => {
                   if (node) rowRefs.current.set(t.hash, node)
@@ -1056,8 +1076,6 @@ export function TorrentTable({
                 onFocus={() => setFocusedHash(t.hash)}
                 data-status={labelSource.toLowerCase()}
                 data-detail={isDetail ? 'true' : 'false'}
-                title={localize('{action} {name}. Shift-click for a range; Control/Command-click to add or remove.', { action: localize(isSelected ? 'Deselect' : 'Select'), name: `\u2068${t.name}\u2069` })}
-                {...textProps('{action} {name}. Shift-click for a range; Control/Command-click to add or remove.')}
                 onClick={event => onSelect(t.hash, selectionMode(event))}
                 onContextMenu={e => {
                   e.preventDefault()

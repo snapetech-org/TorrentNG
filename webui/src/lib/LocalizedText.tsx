@@ -14,21 +14,24 @@ type Props = {
   source: string
   parameters?: Record<string, string | number>
   undParameters?: string[]
+  parameterLanguages?: Record<string, string>
   parameterDirections?: Record<string, 'auto' | 'ltr'>
   spaceBefore?: boolean
   spaceAfter?: boolean
 }
 
-export function LocalizedText({ source, parameters = {}, undParameters = [], parameterDirections = {}, spaceBefore = false, spaceAfter = false }: Props) {
+export function LocalizedText({ source, parameters = {}, undParameters = [], parameterLanguages = {}, parameterDirections = {}, spaceBefore = false, spaceAfter = false }: Props) {
   const { t, textProps } = useInterfaceLanguage()
   const parameterValues = new Map<string, string | number>()
   const undParameterMarkers = new Set<string>()
+  const parameterLanguageMarkers = new Map<string, string>()
   const parameterDirectionMarkers = new Map<string, 'auto' | 'ltr'>()
   const markerParameters = Object.fromEntries(Object.entries(parameters).map(([name, value], index) => {
     const marker = `\uE000TNG_LOCALIZED_PARAMETER_${index}\uE001`
     const direction = parameterDirections[name]
     parameterValues.set(marker, value)
     if (undParameters.includes(name)) undParameterMarkers.add(marker)
+    if (parameterLanguages[name]) parameterLanguageMarkers.set(marker, parameterLanguages[name])
     if (direction) parameterDirectionMarkers.set(marker, direction)
     return [name, marker]
   }))
@@ -40,7 +43,7 @@ export function LocalizedText({ source, parameters = {}, undParameters = [], par
   return (
     <span {...textProps(source)}>
       {spaceBefore ? ' ' : null}{parts.map((part, index) => parameterValues.has(part)
-        ? <bdi key={`parameter-${index}`} dir={parameterDirectionMarkers.get(part) ?? 'auto'} lang={undParameterMarkers.has(part) ? 'und' : undefined}>{parameterValues.get(part)}</bdi>
+        ? <bdi key={`parameter-${index}`} dir={parameterDirectionMarkers.get(part) ?? 'auto'} lang={undParameterMarkers.has(part) ? 'und' : parameterLanguageMarkers.get(part)}>{parameterValues.get(part)}</bdi>
         : <Fragment key={`text-${index}`}>{part}</Fragment>)}{spaceAfter ? ' ' : null}
     </span>
   )
@@ -110,7 +113,7 @@ export function LocalizedErrorText({ message }: { message: string }) {
         // These exact AuthError messages are authored by api/client.ts login().
         source = message
       } else {
-        return <>{message}</>
+        return <bdi dir="auto" lang="und">{message}</bdi>
       }
     }
   }
@@ -123,7 +126,7 @@ export function LocalizedErrorText({ message }: { message: string }) {
     <span {...textProps(source)}>
       {segments.flatMap((segment, index) => index === 0
         ? [segment]
-        : [<bdi key={`error-value-${index}`} dir="ltr">{dynamicValue}</bdi>, segment])}
+        : [<bdi key={`error-value-${index}`} dir="ltr" lang="und">{dynamicValue}</bdi>, segment])}
     </span>
   )
 }

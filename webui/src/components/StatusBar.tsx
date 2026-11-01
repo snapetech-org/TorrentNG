@@ -77,18 +77,17 @@ function Badge({
 }) {
   const { language, t, textProps } = useInterfaceLanguage()
   const descriptionId = useId()
+  const actionHintId = useId()
   const colors = tone(state)
   const Element = onClick && !disabled ? 'button' : 'span'
   const handleClick = disabled ? undefined : onClick
   const localizedLabel = rawLabel ? label : t(label)
   const stateLabels = new Set(['connected', 'connecting', 'starting', 'disconnected', 'unknown', 'on', 'off', 'open', 'closed', 'listening'])
   const valueText = value ?? ''
-  const localizedValue = stateLabels.has(valueText)
-    ? language === 'en' ? valueText : t(valueText[0].toUpperCase() + valueText.slice(1))
+  const valueSource = stateLabels.has(valueText) ? valueText[0].toUpperCase() + valueText.slice(1) : undefined
+  const localizedValue = valueSource
+    ? language === 'en' ? valueText : t(valueSource)
     : valueText
-  const accessibleValue = opaqueValue && !stateLabels.has(valueText) && valueText !== '...'
-    ? `\u2068${localizedValue}\u2069`
-    : localizedValue
   return (
     <Element
       className="tng-status-badge"
@@ -97,7 +96,8 @@ function Badge({
       role={onClick ? 'switch' : description ? 'group' : undefined}
       aria-checked={onClick ? state === 'on' : undefined}
       aria-disabled={disabled || undefined}
-      aria-label={ariaLabel ?? (onClick ? t('{label}: {value}. Activate to toggle', { label: localizedLabel, value: accessibleValue }) : undefined)}
+      aria-label={ariaLabel}
+      aria-labelledby={onClick && !ariaLabel ? actionHintId : undefined}
       aria-describedby={description ? descriptionId : undefined}
       title={title}
       onClick={handleClick}
@@ -125,7 +125,7 @@ function Badge({
       <span style={{ color: 'var(--faint)' }} {...(rawLabel ? {} : textProps(label))}>
         {rawLabel ? <bdi dir="auto" lang="und">{localizedLabel}</bdi> : localizedLabel}
       </span>
-      <span {...(stateLabels.has(valueText) ? textProps(valueText[0].toUpperCase() + valueText.slice(1)) : {})}>
+      <span {...(valueSource ? textProps(valueSource) : {})}>
         {valueContent ?? (opaqueValue && !stateLabels.has(valueText) && valueText !== '...'
           ? <bdi dir="auto" lang="und">{localizedValue}</bdi>
           : localizedValue)}
@@ -143,6 +143,18 @@ function Badge({
           }} />
         </span>
       )}
+      {onClick && !ariaLabel && <span id={actionHintId} className="tng-visually-hidden"><LocalizedText
+        source="{label}: {value}. Activate to toggle"
+        parameters={{ label: localizedLabel, value: localizedValue }}
+        parameterLanguages={{
+          ...(!rawLabel ? { label: textProps(label).lang } : {}),
+          ...(valueSource ? { value: textProps(valueSource).lang } : {}),
+        }}
+        undParameters={[
+          ...(rawLabel ? ['label'] : []),
+          ...(opaqueValue && !stateLabels.has(valueText) && valueText !== '...' ? ['value'] : []),
+        ]}
+      /></span>}
       {description && <span id={descriptionId} className="tng-visually-hidden">{description}</span>}
     </Element>
   )
@@ -183,12 +195,6 @@ export function StatusBar({
   const storagePct = storage?.ok && storage.total_bytes > 0
     ? (storage.used_bytes / storage.total_bytes) * 100
     : undefined
-  const storageTitle = storage?.ok
-    ? t('Free space on {path}: {size}', {
-      size: `\u2066${fmtBytes(storage.available_bytes)}\u2069`,
-      path: `\u2066${storage.path}\u2069`,
-    })
-    : storage?.error ? `\u2068${storage.error}\u2069` : t('Storage status unavailable')
   const storageDescription = storage?.ok
     ? <LocalizedText
       source="Free space on {path}: {size}"
@@ -260,7 +266,7 @@ export function StatusBar({
         <Badge
           label="Disk"
           value={storageLabel}
-          title={storageTitle}
+          title={!storage?.ok && !storage?.error ? t('Storage status unavailable') : undefined}
           description={storageDescription}
           state={storagePct !== undefined && storagePct > 92 ? 'closed' : storagePct !== undefined && storagePct > 82 ? 'unknown' : storage?.ok ? 'on' : 'unknown'}
           meter={storagePct}
