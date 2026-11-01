@@ -66,7 +66,7 @@ function utpPathLabel(path: string, t: typeof translateInterface): string {
 function utpStatus(
   capabilities: NonNullable<Awaited<ReturnType<typeof api.health>>['engine']>['capabilities'] | undefined,
   t: typeof translateInterface,
-  language: string,
+  language: ReturnType<typeof useInterfaceLanguage>['language'],
 ) {
   const networking = capabilities?.networking
   if (!networking) return null
@@ -76,17 +76,17 @@ function utpStatus(
     metadata_fetch: 'Metadata',
     incoming_peer_wire: 'Incoming',
   }
-  const directionProps = { lang: language, dir: language === 'ar' ? 'rtl' as const : 'ltr' as const }
+  const localizedPath = (source: string) => <span {...interfaceTextProps(source, language)}>{t(source)}</span>
   const labelContent: ReactNode = paths.length
     ? <>{paths.map((path, index) => (
       <Fragment key={`${path}-${index}`}>
         {index > 0 ? '+' : null}
         {knownPathSources[path]
-          ? <span {...directionProps}>{t(knownPathSources[path])}</span>
+          ? localizedPath(knownPathSources[path])
           : <bdi dir="auto" lang="und">{path}</bdi>}
       </Fragment>
     ))}</>
-    : <span {...directionProps}>{t(networking.utp_transport ? 'Enabled' : 'Off')}</span>
+    : localizedPath(networking.utp_transport ? 'Enabled' : 'Off')
   const policy = [
     networking.utp_outgoing_policy ? `${t('Outgoing')}=\u2066${networking.utp_outgoing_policy}\u2069` : null,
     networking.utp_metadata_policy ? `${t('Metadata')}=\u2066${networking.utp_metadata_policy}\u2069` : null,
@@ -97,7 +97,6 @@ function utpStatus(
     : policy ? 'No active uTP runtime transport path ({policy})' : 'No active uTP runtime transport path'
   const titleParameters = { paths: paths.map(path => utpPathLabel(path, t)).join(', '), policy }
   const title = t(titleSource, titleParameters)
-  const localizedPath = (source: string) => <span lang={language} dir={language === 'ar' ? 'rtl' : 'ltr'}>{t(source)}</span>
   const pathDescription = paths.map((path, index) => {
     let value: ReactNode
     switch (path) {

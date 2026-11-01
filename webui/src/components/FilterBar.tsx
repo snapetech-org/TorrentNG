@@ -21,6 +21,10 @@ const MEDIA_TYPE_LABELS: Record<string, string> = {
   software: 'Software/Archive', other: 'Other',
 }
 
+function ownLabel(labels: Record<string, string>, value: string): string | undefined {
+  return Object.prototype.hasOwnProperty.call(labels, value) ? labels[value] : undefined
+}
+
 interface Props {
   params: ListParams
   onChange: (p: Partial<ListParams>) => void
@@ -36,8 +40,8 @@ export function FilterBar({ params, onChange }: Props) {
   const hasSidebarFilters = Boolean(params.status || params.category || params.tag || params.tracker || params.media_type)
   const activeCount = [params.filter || search, params.status, params.category, params.tag, params.tracker, params.media_type].filter(Boolean).length
   const sortColumnSource = params.sort ?? 'name'
-  const sortColumn = params.sort ? SORT_COLUMNS[params.sort] : 'Name'
-  const knownSortColumn = !params.sort || Boolean(sortColumn)
+  const sortColumn = params.sort ? ownLabel(SORT_COLUMNS, params.sort) : 'Name'
+  const knownSortColumn = !params.sort || sortColumn !== undefined
   const sortColumnText = sortColumn ? t(sortColumn) : params.sort ?? t('Name')
   const sortDirection = params.dir === 'desc' ? 'Descending' : 'Ascending'
   const sortLabelSource = 'Sort {column} {direction}'
@@ -197,48 +201,52 @@ export function FilterBar({ params, onChange }: Props) {
               />
             </span>
           )}
-          {chips.map(([label, value, key]) => (
-            <span
-              key={`${label}:${value}`}
-              className="tng-filter-chip"
-              title={key === 'tracker' ? maskAnnounceUrl(value) : key === 'filter' || key === 'category' || key === 'tag' ? value : undefined}
-              dir={key === 'tracker' ? 'ltr' : key === 'filter' || key === 'category' || key === 'tag' ? 'auto' : undefined}
-              lang={key === 'tracker' || key === 'filter' || key === 'category' || key === 'tag' ? 'und' : undefined}
-              style={{
-              display: 'inline-flex', alignItems: 'center', gap: 4,
-              maxWidth: 190, border: '1px solid var(--border)', borderRadius: 999,
-              background: 'var(--surface)', color: 'var(--muted)', padding: '2px 7px',
-              fontSize: 11,
-            }}>
-              <span style={{ color: 'var(--faint)' }}>{localized(label)}</span>
-              <span {...(key === 'status' && STATUS_LABELS[value]
-                ? textProps(STATUS_LABELS[value])
-                : key === 'media_type' && MEDIA_TYPE_LABELS[value]
-                  ? textProps(MEDIA_TYPE_LABELS[value])
-                  : key === 'status' || key === 'media_type' ? {} : textProps(value))} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {key === 'tracker' ? <bdi dir="ltr" lang="und">{maskAnnounceUrl(value)}</bdi>
-                  : key === 'status' ? STATUS_LABELS[value]
-                    ? t(STATUS_LABELS[value]) : <bdi dir="auto" lang="und">{value}</bdi>
-                    : key === 'media_type' ? MEDIA_TYPE_LABELS[value]
-                      ? t(MEDIA_TYPE_LABELS[value]) : <bdi dir="auto" lang="und">{value}</bdi>
-                      : <bdi dir="auto" lang="und">{value}</bdi>}
-              </span>
-              <button
-                type="button"
-                aria-label={t('Clear {label} filter', { label: t(label) })}
-                onClick={() => {
-                  if (key === 'filter') setSearch('')
-                  onChange({ [key]: undefined, offset: 0 })
-                }}
+          {chips.map(([label, value, key]) => {
+            const statusSource = key === 'status' ? ownLabel(STATUS_LABELS, value) : undefined
+            const mediaTypeSource = key === 'media_type' ? ownLabel(MEDIA_TYPE_LABELS, value) : undefined
+            return (
+              <span
+                key={`${label}:${value}`}
+                className="tng-filter-chip"
+                title={key === 'tracker' ? maskAnnounceUrl(value) : key === 'filter' || key === 'category' || key === 'tag' ? value : undefined}
+                dir={key === 'tracker' ? 'ltr' : key === 'filter' || key === 'category' || key === 'tag' ? 'auto' : undefined}
+                lang={key === 'tracker' || key === 'filter' || key === 'category' || key === 'tag' ? 'und' : undefined}
                 style={{
-                  background: 'transparent', border: 0, color: 'var(--faint)', padding: '0 0 0 2px',
-                  fontSize: 12, lineHeight: 1, cursor: 'pointer',
-                }}
-              >
-                ×
-              </button>
-            </span>
-          ))}
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  maxWidth: 190, border: '1px solid var(--border)', borderRadius: 999,
+                  background: 'var(--surface)', color: 'var(--muted)', padding: '2px 7px',
+                  fontSize: 11,
+                }}>
+                <span style={{ color: 'var(--faint)' }}>{localized(label)}</span>
+                <span {...(statusSource
+                  ? textProps(statusSource)
+                  : mediaTypeSource
+                    ? textProps(mediaTypeSource)
+                    : key === 'status' || key === 'media_type' ? {} : textProps(value))} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {key === 'tracker' ? <bdi dir="ltr" lang="und">{maskAnnounceUrl(value)}</bdi>
+                    : key === 'status' ? statusSource
+                      ? t(statusSource) : <bdi dir="auto" lang="und">{value}</bdi>
+                      : key === 'media_type' ? mediaTypeSource
+                        ? t(mediaTypeSource) : <bdi dir="auto" lang="und">{value}</bdi>
+                        : <bdi dir="auto" lang="und">{value}</bdi>}
+                </span>
+                <button
+                  type="button"
+                  aria-label={t('Clear {label} filter', { label: t(label) })}
+                  onClick={() => {
+                    if (key === 'filter') setSearch('')
+                    onChange({ [key]: undefined, offset: 0 })
+                  }}
+                  style={{
+                    background: 'transparent', border: 0, color: 'var(--faint)', padding: '0 0 0 2px',
+                    fontSize: 12, lineHeight: 1, cursor: 'pointer',
+                  }}
+                >
+                  ×
+                </button>
+              </span>
+            )
+          })}
         </div>
       )}
     </div>
