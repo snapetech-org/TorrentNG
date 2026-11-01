@@ -13,7 +13,7 @@ export const UI_LABELS: Record<string, string> = {
   "API Tokens": "API टोकन",
   "API request failed (HTTP {status}): {path}": "API अनुरोध विफल (HTTP {status}): {path}",
   "API tokens are configured in {tokenConfig} or {tokenFileConfig}. On Unraid, find the token in the container's {unraidSetting} setting. The existing-client profile also accepts {tngApiTokens} or {rtngApiTokens}. Runtime credential changes are saved in the service state directory. Select Restore to load values from {configFile} again.": "API टोकन {tokenConfig} या {tokenFileConfig} में कॉन्फ़िगर किए जाते हैं। Unraid में टोकन कंटेनर की {unraidSetting} सेटिंग में मिलेगा। मौजूदा क्लाइंट प्रोफ़ाइल {tngApiTokens} या {rtngApiTokens} भी स्वीकार करती है। क्रेडेंशियल में बदलाव सेवा की स्थिति निर्देशिका में सहेजे जाते हैं। {configFile} से मान फिर लोड करने के लिए “पुनर्स्थापित करें” चुनें।",
-  "API-token login:": "API-token लॉगिन:",
+  "API-token login:": "API टोकन लॉगिन:",
   "Action": "कार्रवाई",
   "Actions": "कार्रवाई",
   "Actions for {name}": "{name} के लिए क्रियाएँ",

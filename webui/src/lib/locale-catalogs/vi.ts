@@ -572,7 +572,7 @@ export const UI_LABELS: Record<string, string> = {
   "Pending autosave": "Đang chờ tự động lưu",
   "Pending autosave · changes: {count} · live: {live} · restart: {restart} · custom lines edited.": "Đang chờ tự động lưu · thay đổi: {count} · trực tiếp: {live} · khởi động lại: {restart} · đã chỉnh sửa các dòng tùy chỉnh.",
   "Pending autosave · changes: {count} · live: {live} · restart: {restart}.": "Đang chờ tự động lưu · thay đổi: {count} · trực tiếp: {live} · khởi động lại: {restart}.",
-  "Per-torrent download slots": "Số slot tải xuống cho mỗi torrent",
+  "Per-torrent download slots": "Số khe tải xuống cho mỗi torrent",
   "Per-torrent upload slots": "Số khe tải lên cho mỗi torrent",
   "Persist completion state": "Lưu trạng thái hoàn tất",
   "Piece hashes": "Mã băm các mảnh",
