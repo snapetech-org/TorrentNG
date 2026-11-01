@@ -918,7 +918,7 @@ export const UI_LABELS: Record<string, string> = {
   "Torrent rename": "Renommer le torrent",
   "Torrent row number": "Numéro de ligne du torrent",
   "Torrent updated": "Torrent mis à jour",
-  "TorrentNG WebUI controls and support links": "Commandes de l’interface Web TorrentNG et liens d’assistance",
+  "TorrentNG WebUI controls and support links": "Commandes de la WebUI TorrentNG et liens d’assistance",
   "TorrentNG client": "client TorrentNG",
   "TorrentNG client: {status}": "Client TorrentNG : {status}",
   "TorrentNG is open in another tab": "TorrentNG est ouvert dans un autre onglet",

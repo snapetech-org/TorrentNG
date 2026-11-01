@@ -296,7 +296,7 @@ export const UI_LABELS: Record<string, string> = {
   "Enabled": "已启用",
   "Engine Profile Drift": "引擎配置偏差",
   "Engine diagnostics unavailable": "引擎诊断不可用",
-  "Enter a URL or drag a .torrent file.": "输入网址或拖放 .torrent 文件。",
+  "Enter a URL or drag a .torrent file.": "输入 URL 或拖放 .torrent 文件。",
   "Enter an absolute folder path.": "请输入绝对文件夹路径。",
   "Error": "错误",
   "Errored": "出错",
