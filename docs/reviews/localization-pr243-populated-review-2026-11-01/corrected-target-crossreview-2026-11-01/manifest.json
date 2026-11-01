@@ -1,0 +1,68 @@
+{
+  "artifact_kind": "torrentng-exact-head-corrected-target-crossreview-v1",
+  "catalog_hashes": {
+    "webui/src/lib/locale-catalogs/hi.ts": "3c34cb175020380f510fd6b4e93c335bee2c34c97b6a30d9c9bdf487e83dd7db",
+    "webui/src/lib/locale-catalogs/vi.ts": "56fdb38d88a8e99c1029404b3015e8eb1db2209b0a81497f25ee51949df3ce82",
+    "webui/src/lib/locale-catalogs/zh-Hant.ts": "901667f2d4930141d08013b10a58619e82473500cb502b86340ed4037379d3cd"
+  },
+  "is_draft": true,
+  "limitations": [
+    "Moderate-confidence semantic review is not native-speaker approval.",
+    "This batch does not close whole-app visual review.",
+    "No build, tests, CI, browser session, or release action was performed."
+  ],
+  "live_state": "OPEN",
+  "locale_count": 3,
+  "mergeable": "MERGEABLE",
+  "native_speaker_review": "not performed; still required",
+  "placeholder_and_literal_review": {
+    "placeholder_mismatches": 0,
+    "placeholders_present": false,
+    "protected_literals_checked": 4
+  },
+  "pr_body_edited": false,
+  "prior_review_pins": {
+    "first-slice/decisions.jsonl": {
+      "bytes": 6357,
+      "sha256": "1bedaf551967e8d12249991079db9fe6e1b0c65aafd4aaae54e001cfdf244ba8"
+    },
+    "primary-review/reviewed-cells.jsonl": {
+      "bytes": 4605133,
+      "sha256": "cf46ba64e7659b49c22cfc6fba2bac8b3ac92fc80e17c826a1975217a7ba6612"
+    },
+    "remaining-39/decisions.jsonl": {
+      "bytes": 48859,
+      "sha256": "87123108377f2c12cade1154181439a027893689e72d12fdd8fa13ff7441330b"
+    }
+  },
+  "pull_request": 243,
+  "repository": "snapetech-org/TorrentNG",
+  "repository_path": "/mnt/disks/scratch/task-worktrees/localization-20261030/torrentng",
+  "review_outcomes": {
+    "accepted": 4,
+    "correction": 0,
+    "held": 0
+  },
+  "review_scope": "Independent exact-current-target cross-review of four corrected populated cells whose prior head decisions were correction proposals. Each current target hash was compared with the previous proposal hash and no prior accepted/held record for the current hash was found.",
+  "reviewed_cells": 4,
+  "reviewed_head": "b5e694e279a5060ff3a4dea790b54dc1b57ded86",
+  "reviewed_tree": "a92a915714c63b793d567be2a858ec78f4a6fbe4",
+  "selection_policy": "Only exact target values newly applied at the current head from the prior correction proposals were selected. The old targets had nonterminal correction decisions; the new current target hashes had no terminal accepted or held disposition. All other previously accepted/held cells were excluded.",
+  "shared_ledgers_edited": false,
+  "source_context_hashes": {
+    "sidecar/src/api/handlers.rs": "cd1bf9af2fc4e36214d7a7cfb886fb87b4cc47c47c4db11ba7bdee67438277ba",
+    "sidecar/src/rtorrent/engine.rs": "97d04c8563613c0eff7a3f2763b1c76472b5e7fc111f0bf4ea597822a2958be4",
+    "webui/src/components/AuthPanel.tsx": "d6272eb927f9d1b37aeea0774efb790c18b82368e9b12733f1ade82d1728841e",
+    "webui/src/components/EnginePanel.tsx": "432cf872db5065e1d80bf2527831a8833b2c2f1d2e59268760cb0ca962bb35f7",
+    "webui/src/components/TorrentPropertiesDialog.tsx": "a01ebade22af0b6aac756ea2c4fbd3fbd5d8a8f3d0a6d6f921d5d6179632e3ef",
+    "webui/src/lib/maskUrl.tsx": "199dc8d9e4d9c27ca3f49dfdf9135089511a0bb4cc483b3574289bc350d95024"
+  },
+  "source_or_catalog_edits_by_this_review": false,
+  "source_sha256_by_id": {
+    "ui.1469bb43b85b7a39": "1469bb43b85b7a39e6ebad761cdcb4864ab2454e6cfe8b7e651cbb1c10c6e11a",
+    "ui.56a8dbbe19bc11be": "56a8dbbe19bc11be8fc9508bff71cae453320ec6c6abc7ddf8b3b34c76d5c992",
+    "ui.7edd6763647818b3": "7edd6763647818b325dffad0e7f81b1dcfcca0b6895cbca2afe0074095f6382d",
+    "ui.c9a86f9058e8d28c": "c9a86f9058e8d28c0f68d1f37edee7b432435ea48ad627a3d6593df74d84b2d1"
+  },
+  "tests_builds_scans_browser_run": false
+}

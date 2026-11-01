@@ -24,3 +24,7 @@ This review reconciles all populated target cells in the 12 direct locale catalo
 - `first-slice/` and `remaining-39/` contain the independent exact-head selections, contexts, decisions, eligibility reconciliations, manifests, and checksums for the 44 changed targets.
 
 The evidence records that native-speaker approval is still required and is not claimed here. Final headed-browser review must be repeated against the updated PR head after these catalog changes.
+
+## Current corrected-target cross-review
+
+At PR head `b5e694e279a5060ff3a4dea790b54dc1b57ded86` / tree `a92a915714c63b793d567be2a858ec78f4a6fbe4`, an independent exact-current-hash review revisited the four target values proposed by the previous correction batch. All four current values were accepted unchanged at moderate confidence. No additional correction or hold was proposed. The evidence is in `corrected-target-crossreview-2026-11-01/`; it records the current catalog and callsite hashes and preserves the need for native-speaker signoff.
