@@ -94,7 +94,10 @@ function loadCatalog(language: InterfaceLanguage) {
 
 function activateLanguage(language: InterfaceLanguage) {
   activeLanguage = language
-  if (typeof document !== 'undefined') document.documentElement.lang = language
+  if (typeof document !== 'undefined') {
+    document.documentElement.lang = language
+    document.documentElement.dir = language === 'ar' ? 'rtl' : 'ltr'
+  }
   loadCatalog(language)
   notify()
 }
