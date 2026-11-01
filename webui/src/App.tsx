@@ -81,7 +81,7 @@ function utpStatus(
     ? <>{paths.map((path, index) => (
       <Fragment key={`${path}-${index}`}>
         {index > 0 ? '+' : null}
-        {knownPathSources[path]
+        {Object.hasOwn(knownPathSources, path)
           ? localizedPath(knownPathSources[path])
           : <bdi dir="auto" lang="und">{path}</bdi>}
       </Fragment>
@@ -138,8 +138,9 @@ function backendHealthLabel(
       connected: 'Connected', connecting: 'Connecting', starting: 'Starting',
       disconnected: 'Disconnected', unavailable: 'Unavailable', error: 'Error',
     }
-    if (!labels[normalized]) return { value: status, raw: true }
-    return { value: language === 'en' ? normalized : t(labels[normalized]), raw: false }
+    if (!Object.hasOwn(labels, normalized)) return { value: status, raw: true }
+    const label = labels[normalized]
+    return { value: language === 'en' ? normalized : t(label), raw: false }
   }
   const makeLabel = (source: string, status: string) => {
     const renderedStatus = statusText(status)
