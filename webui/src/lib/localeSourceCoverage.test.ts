@@ -14,20 +14,19 @@ import { UI_LABELS as vi } from './locale-catalogs/vi'
 import { UI_LABELS as zhHans } from './locale-catalogs/zh-Hans'
 import { UI_LABELS as zhHant } from './locale-catalogs/zh-Hant'
 import {
-  PENDING_SERVER_MESSAGE_SOURCE_IDS,
-  PENDING_UI_LOCALE_SOURCES,
+  REGISTERED_UI_LOCALE_SOURCES,
   SERVER_MESSAGE_SOURCE_CALLER_LEDGER,
-} from './pendingLocaleCoverage'
+} from './localeSourceCoverage'
 
 const catalogs = [es, zhHans, hi, de, ja, fr, ptBR, ar, ko, zhHant, vi, id]
 
-describe('pending locale coverage ledger', () => {
-  it('tracks 90 source-owned UI strings without filler translations', () => {
-    const sources = PENDING_UI_LOCALE_SOURCES.map(entry => entry.source)
+describe('registered locale source ledger', () => {
+  it('tracks 90 source-owned UI strings and their catalog presence', () => {
+    const sources = REGISTERED_UI_LOCALE_SOURCES.map(entry => entry.source)
     expect(sources).toHaveLength(90)
     expect(new Set(sources).size).toBe(90)
     const callerSources = new Map<string, string>()
-    for (const entry of PENDING_UI_LOCALE_SOURCES) {
+    for (const entry of REGISTERED_UI_LOCALE_SOURCES) {
       const callers = 'callers' in entry ? entry.callers : [entry.caller]
       expect(callers.length).toBeGreaterThan(0)
       for (const callerPath of callers) {
@@ -37,30 +36,34 @@ describe('pending locale coverage ledger', () => {
       }
     }
     for (const catalog of catalogs) {
-      for (const source of sources) expect(Object.hasOwn(catalog, source)).toBe(false)
+      for (const source of sources) expect(Object.hasOwn(catalog, source)).toBe(true)
     }
   })
 
-  it('records the producer and render caller for all 195 server sources', () => {
+  it('records producers, render callers, and catalog presence for all 195 server sources', () => {
     expect(SERVER_MESSAGE_SOURCE_CALLER_LEDGER).toHaveLength(195)
     expect(new Set(SERVER_MESSAGE_SOURCE_CALLER_LEDGER.map(entry => entry.id)).size).toBe(195)
 
-    const pending = SERVER_MESSAGE_SOURCE_CALLER_LEDGER.filter(entry => entry.status === 'pending')
-    const covered = SERVER_MESSAGE_SOURCE_CALLER_LEDGER.filter(entry => entry.status === 'covered')
-    expect(pending).toHaveLength(191)
-    expect(PENDING_SERVER_MESSAGE_SOURCE_IDS).toHaveLength(191)
-    expect(covered.map(entry => entry.source).sort()).toEqual([
+    const newCatalogKeys = SERVER_MESSAGE_SOURCE_CALLER_LEDGER
+      .filter(entry => entry.catalogRegistration === 'new-catalog-key')
+    const existingCatalogKeys = SERVER_MESSAGE_SOURCE_CALLER_LEDGER
+      .filter(entry => entry.catalogRegistration === 'existing-catalog-key')
+    expect(newCatalogKeys).toHaveLength(191)
+    expect(existingCatalogKeys.map(entry => entry.source).sort()).toEqual([
       'Tags updated',
       'Torrent added',
       'Torrent removed',
       'Torrent updated',
     ])
-    expect(pending.every(entry => entry.producerPaths.length > 0 && entry.callerPaths.length === 2)).toBe(true)
+    expect(SERVER_MESSAGE_SOURCE_CALLER_LEDGER.every(entry =>
+      entry.producerPaths.length > 0 && entry.callerPaths.length === 2,
+    )).toBe(true)
 
     for (const catalog of catalogs) {
-      for (const entry of pending) expect(Object.hasOwn(catalog, entry.source)).toBe(false)
-      for (const entry of covered) expect(Object.hasOwn(catalog, entry.source)).toBe(true)
+      for (const entry of SERVER_MESSAGE_SOURCE_CALLER_LEDGER) {
+        expect(Object.hasOwn(catalog, entry.source)).toBe(true)
+      }
     }
-    expect(pending.length * catalogs.length).toBe(2_292)
+    expect(newCatalogKeys.length * catalogs.length).toBe(2_292)
   })
 })

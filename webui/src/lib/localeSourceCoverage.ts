@@ -1,6 +1,6 @@
 import serverMessages from './server-messages.json'
 
-export const PENDING_UI_LOCALE_SOURCES = [
+export const REGISTERED_UI_LOCALE_SOURCES = [
   { source: 'Candidate details', caller: 'webui/src/components/SwarmSwitchPanel.tsx' },
   { source: 'Candidate format', caller: 'webui/src/components/SwarmSwitchPanel.tsx' },
   { source: 'Candidate public infohash', caller: 'webui/src/components/SwarmSwitchPanel.tsx' },
@@ -113,9 +113,7 @@ export const SERVER_MESSAGE_SOURCE_CALLER_LEDGER = serverMessages.map(record => 
   source: record.source,
   producerPaths: [...new Set(record.sources.map(source => source.path))],
   callerPaths: SERVER_MESSAGE_CALLERS,
-  status: REUSED_SERVER_MESSAGE_SOURCES.has(record.source) ? 'covered' as const : 'pending' as const,
+  catalogRegistration: REUSED_SERVER_MESSAGE_SOURCES.has(record.source)
+    ? 'existing-catalog-key' as const
+    : 'new-catalog-key' as const,
 }))
-
-export const PENDING_SERVER_MESSAGE_SOURCE_IDS = SERVER_MESSAGE_SOURCE_CALLER_LEDGER
-  .filter(entry => entry.status === 'pending')
-  .map(entry => entry.id)

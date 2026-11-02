@@ -1,0 +1,109 @@
+{
+  "callers": [
+    {
+      "excerpts": [
+        {
+          "line": 489,
+          "text": "    ? t(dirtyCount === 1"
+        },
+        {
+          "line": 490,
+          "text": "      ? '{count} pending change could not be saved. Retry when the API is available.'"
+        },
+        {
+          "line": 491,
+          "text": "      : '{count} pending changes could not be saved. Retry when the API is available.', { count: dirtyCount.toLocaleString(getRegionalLocale()) })"
+        },
+        {
+          "line": 618,
+          "text": "                ? '{count} pending change could not be saved. Retry when the API is available.'"
+        },
+        {
+          "line": 619,
+          "text": "                : '{count} pending changes could not be saved. Retry when the API is available.'} parameters={{ count: dirtyCount.toLocaleString(getRegionalLocale()) }} /></div>"
+        },
+        {
+          "line": 796,
+          "text": "                ? '{count} pending change could not be saved. Retry when the API is available.'"
+        },
+        {
+          "line": 797,
+          "text": "                : '{count} pending changes could not be saved. Retry when the API is available.'} parameters={{ count: dirtyCount.toLocaleString(getRegionalLocale()) }} /></div>"
+        }
+      ],
+      "path": "webui/src/components/EnginePanel.tsx",
+      "rationale": "The singular pending-change source is selected only when dirtyCount === 1; all other values select the plural source.",
+      "sha256": "432cf872db5065e1d80bf2527831a8833b2c2f1d2e59268760cb0ca962bb35f7"
+    },
+    {
+      "excerpts": [
+        {
+          "line": 117,
+          "text": "          <LocalizedText source={preview.count === 1 ? 'Preview found {count} match for {name}' : 'Preview found {count} matches for {name}'} parameters={{ count: preview.count.toLocaleString(getRegionalLocale()), name: preview.name }} />"
+        }
+      ],
+      "path": "webui/src/components/RatioGroupsPanel.tsx",
+      "rationale": "The singular preview-match source is selected only when preview.count === 1; all other counts select the plural source.",
+      "sha256": "401c5dfc2d5180701b653e6b7d645cd99fb62a6924d49f955232f11fb2c9d1bf"
+    },
+    {
+      "excerpts": [
+        {
+          "line": 41,
+          "text": "  const rulesSummarySource = rules.length === 1"
+        },
+        {
+          "line": 42,
+          "text": "    ? runs.length === 1 ? '{rules} rule · {runs} run' : '{rules} rule · {runs} runs'"
+        },
+        {
+          "line": 43,
+          "text": "    : runs.length === 1 ? '{rules} rules · {runs} run' : '{rules} rules · {runs} runs'"
+        },
+        {
+          "line": 151,
+          "text": "            source={preview.count === 1 ? 'Preview found {count} match for {name}' : 'Preview found {count} matches for {name}'}"
+        },
+        {
+          "line": 152,
+          "text": "            parameters={{ count: preview.count.toLocaleString(getRegionalLocale()), name: preview.name }}"
+        }
+      ],
+      "path": "webui/src/components/WorkflowsPanel.tsx",
+      "rationale": "The singular rules/runs source is selected only when rules.length === 1 and runs.length === 1; the other three combinations select their corresponding plural source. The preview-match source is singular only when preview.count === 1.",
+      "sha256": "4d431baca17ce8386dd05dcf0ec3df7eb54a78c45dd44a58bd6dc6bccec18fd3"
+    }
+  ],
+  "catalogFiles": [
+    [
+      "webui/src/lib/locale-catalogs/ar.ts",
+      "a1cef764db6d8b2ad07a9da672d86dde34a2d80806a965d85e247a34e870b61c"
+    ],
+    [
+      "webui/src/lib/locale-catalogs/de.ts",
+      "60f99a2e4a4e6acbdd1a435cf6ed1d045a19fd21a900e3154e1ddf39807a3b78"
+    ],
+    [
+      "webui/src/lib/locale-catalogs/es.ts",
+      "631bbb88b99839babc71603d6a4d926d22780be11540bab4a7327a2bc669f22a"
+    ],
+    [
+      "webui/src/lib/locale-catalogs/fr.ts",
+      "307c1e0d97fce911361cab2bc7ad9524803f16ff2066427a9121391f69a6d9af"
+    ],
+    [
+      "webui/src/lib/locale-catalogs/hi.ts",
+      "3c34cb175020380f510fd6b4e93c335bee2c34c97b6a30d9c9bdf487e83dd7db"
+    ],
+    [
+      "webui/src/lib/locale-catalogs/pt-BR.ts",
+      "5771ddd7c7da4a11ecb2855978c4c63f894ed80e9aa3428dc5a57d70ad284f7d"
+    ]
+  ],
+  "head": "e0736c65f62c65bd28d88bb310cb605d125e15e5",
+  "reviewLedger": {
+    "path": "docs/reviews/localization-pr243-populated-review-2026-11-01/new-cells/root-semantic-review-2026-11-01.jsonl",
+    "sha256": "ff5e1c340754d4d00eecbc81d39bfbaba4926251c5852f7074f63904ddcd2f20"
+  },
+  "tree": "07b6f31e4d37b7e8b907b635f71c5a81fcba5e54"
+}
