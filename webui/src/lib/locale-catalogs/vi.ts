@@ -929,7 +929,7 @@ export const UI_LABELS: Record<string, string> = {
   "Total size": "Tổng kích thước",
   "Total uploaded": "Tổng dung lượng đã tải lên",
   "Total: {count}": "Tổng: {count}",
-  "Tracker": "Trình theo dõi",
+  "Tracker": "tracker",
   "Tracker DNS cache": "Bộ nhớ đệm DNS của tracker",
   "Tracker Errors": "Lỗi từ tracker",
   "Tracker HTTP": "HTTP của tracker",
