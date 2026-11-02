@@ -33,3 +33,7 @@ At PR head `b5e694e279a5060ff3a4dea790b54dc1b57ded86` / tree `a92a915714c63b793d
 ## Caller-verified singular-count cross-review
 
 At PR head `e0736c65f62c65bd28d88bb310cb605d125e15e5` / tree `07b6f31e4d37b7e8b907b635f71c5a81fcba5e54`, Codex root cross-reviewed the 16 remaining exact-current-target cells previously flagged for singular-count context. The six preview-match targets, five pending-change targets, and five one-rule/one-run targets were accepted unchanged. Their source branches select singular keys only when the runtime count or cardinality is exactly one; plural branches cover all other values. No catalog target changed. The decision ledger, exact caller excerpts, and SHA-256 are in `cross-review/caller-verified-singular-crossreview-16-2026-11-02.jsonl`, `cross-review/caller-verified-singular-crossreview-16-contexts.json`, and their companion checksum file. Native-speaker approval remains outstanding.
+
+## Delivery validation — 2026-11-02
+
+Static inventory reconciliation confirmed 1,423 keys in each of the twelve catalogs, all 90 registered UI sources and all 195 server records mapped to present keys, and all 16 caller-cross-review target hashes unchanged. `git diff --check` passed. No tests, builds, or CI jobs were run. The repository commit hook automatically ran Semgrep Community Edition on local host `kspld0` while creating commit `9ef8f85a`; it scanned three TypeScript files, ran 210 rules, and reported zero findings. This was an unintended local scan outside the private ephemeral JIT policy; it was not rerun.
