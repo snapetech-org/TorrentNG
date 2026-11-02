@@ -395,13 +395,15 @@ export function TorrentSidebar({ params, total, mediaInference, onChange, onAppl
               onClick={() => onApply(view.params)}
               disabled={Boolean(viewsBusy)}
               title={safeViewTitle(view.params)}
+              dir="auto"
+              lang="und"
               style={{ ...savedViewButtonStyle, opacity: viewsBusy ? 0.55 : 1, cursor: viewsBusy ? 'not-allowed' : 'pointer' }}
             >
-              <span style={labelStyle}>{view.name}</span>
+              <span style={labelStyle}><bdi dir="auto" lang="und">{view.name}</bdi></span>
             </button>
             <button
               type="button"
-              aria-label={translateInterface('Delete {name}', { name: view.name })}
+              aria-label={translateInterface('Delete {name}', { name: `\u2068${view.name}\u2069` })}
               {...interfaceTextProps('Delete {name}')}
               onClick={() => removeView(view.id)}
               disabled={Boolean(viewsBusy)}

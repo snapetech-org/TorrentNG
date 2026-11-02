@@ -38,6 +38,9 @@ export function WorkflowsPanel() {
     staleTime: 5_000,
     refetchInterval: 10_000,
   })
+  const rulesSummarySource = rules.length === 1
+    ? runs.length === 1 ? '{rules} rule · {runs} run' : '{rules} rule · {runs} runs'
+    : runs.length === 1 ? '{rules} rules · {runs} run' : '{rules} rules · {runs} runs'
 
   async function save() {
     if (pending) return
@@ -107,7 +110,7 @@ export function WorkflowsPanel() {
           <h2 id="workflow-rules-title" style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text)' }}><LocalizedText source="Workflow Rules" /></h2>
           <div style={{ fontSize: 12, color: 'var(--faint)', marginTop: 2 }}>
             <LocalizedText
-              source="{rules} rules · {runs} runs"
+              source={rulesSummarySource}
               parameters={{
                 rules: rules.length.toLocaleString(getRegionalLocale()),
                 runs: runs.length.toLocaleString(getRegionalLocale()),
@@ -145,7 +148,7 @@ export function WorkflowsPanel() {
       {preview && (
         <Notice tone="ok">
           <LocalizedText
-            source="Preview found {count} matches for {name}"
+            source={preview.count === 1 ? 'Preview found {count} match for {name}' : 'Preview found {count} matches for {name}'}
             parameters={{ count: preview.count.toLocaleString(getRegionalLocale()), name: preview.name }}
           />
         </Notice>

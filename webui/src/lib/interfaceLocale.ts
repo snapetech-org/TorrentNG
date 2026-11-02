@@ -20,6 +20,10 @@ export type InterfaceLanguage = (typeof INTERFACE_LANGUAGE_OPTIONS)[number]['val
 type TranslatedLanguage = Exclude<InterfaceLanguage, 'en'>
 type LocaleCatalog = Record<string, string>
 
+export function selectedTorrentCountSource(count: number) {
+  return count === 1 ? '{count} selected torrent' : '{count} selected torrents'
+}
+
 const STORAGE_KEY = 'torrentng.interface-language'
 const listeners = new Set<() => void>()
 const catalogCache = new Map<TranslatedLanguage, LocaleCatalog>()
@@ -94,6 +98,10 @@ function loadCatalog(language: InterfaceLanguage) {
 
 function activateLanguage(language: InterfaceLanguage) {
   activeLanguage = language
+  if (typeof document !== 'undefined') {
+    document.documentElement.lang = language
+    document.documentElement.dir = language === 'ar' ? 'rtl' : 'ltr'
+  }
   loadCatalog(language)
   notify()
 }

@@ -173,9 +173,9 @@ export function AddTorrentDialog({ onClose }: Props) {
                   border: '1px solid var(--border)', borderRadius: 6, padding: '5px 7px',
                   background: 'var(--surface)',
                 }}>
-                  <span style={{ fontSize: 12, color: 'var(--muted)', flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📄 {f.name}</span>
+                  <span style={{ fontSize: 12, color: 'var(--muted)', flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📄 <bdi dir="auto" lang="und">{f.name}</bdi></span>
                   <span style={{ color: 'var(--faint)', fontSize: 10, fontVariantNumeric: 'tabular-nums' }}>{fmtSize(f.size)}</span>
-                  <button type="button" aria-label={t('Remove {name}', { name: f.name })} {...textProps('Remove {name}')} onClick={e => { e.stopPropagation(); setFiles(p => p.filter(x => x !== f)) }}
+                  <button type="button" aria-label={t('Remove {name}', { name: `\u2068${f.name}\u2069` })} {...textProps('Remove {name}')} onClick={e => { e.stopPropagation(); setFiles(p => p.filter(x => x !== f)) }}
                     style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14, padding: '0 2px' }}>✕</button>
                 </div>
               ))}

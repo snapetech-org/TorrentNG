@@ -1,0 +1,349 @@
+{
+  "artifactKind": "post-correction exact-head semantic review attestation",
+  "repository": "snapetech-org/TorrentNG",
+  "pullRequest": 243,
+  "reviewedHead": "ad256fee0e65449d0b01062ff7e87e05bd0f6dc8",
+  "reviewedTree": "2df9a688fbae93e4627cd0e96ba02cbbf6e3d944",
+  "postCorrectionHead": "891a16e742ef2c811eeb6fe7b5f6bf3f6801a228",
+  "postCorrectionTree": "3496450977464a31522682f28371157d1dbe0118",
+  "parentMatchesReviewedHead": true,
+  "reviewEvidenceManifestSha256": "9281582cd9fae12fec1f4d2d0c58cc9168153cf20bf350b5e171d03a6569a713",
+  "reviewedCells": 13704,
+  "reviewedRows": 1142,
+  "localeCount": 12,
+  "sourceHashesReattested": 34,
+  "sourceHashesMatchOriginal": true,
+  "catalogHashesReattested": 12,
+  "catalogHashesAfterCorrections": {
+    "webui/src/lib/locale-catalogs/ar.ts": "b55e2abd67bd515f84fc36be910795f2c855de5d5b692c177e23eafe61af4237",
+    "webui/src/lib/locale-catalogs/de.ts": "55349c6e56f8fcc6d93768e5e19dccb72a5f19fbe2986653cbc604272e8a1281",
+    "webui/src/lib/locale-catalogs/es.ts": "6b0c354b3bb2f26c587b313862a94bffd1bce783a3717e696d63271410b0f171",
+    "webui/src/lib/locale-catalogs/fr.ts": "b8f9549cd5a9ec9d63366357f04ae18d4f4958484703ccb4f91e030850fd38fb",
+    "webui/src/lib/locale-catalogs/hi.ts": "3063b1f9e00165af54faa26ee242e7d87ed39298519d48c3c105ef6b65d5c72b",
+    "webui/src/lib/locale-catalogs/id.ts": "00af1e2a1b1a1d55953430860c4d98bfcbd272c5fe346ad499875e514041900c",
+    "webui/src/lib/locale-catalogs/ja.ts": "05a819b117c67b69b47e1ec0b293d0e4d7a244284413879402f57f5b2044701b",
+    "webui/src/lib/locale-catalogs/ko.ts": "79af5be5085b6e7b3bd065e62851e01ca223d99a6b8d41d9ae5b48ab389ff8f8",
+    "webui/src/lib/locale-catalogs/pt-BR.ts": "bf29973c21455d933ccdfd0c88a4cbfa5a280e67ac5858480fe0853e9b2d11dd",
+    "webui/src/lib/locale-catalogs/vi.ts": "dbf25077a997ff9cf39d258b2c2bd1bffb7ab87832f352795b398ec7948e162e",
+    "webui/src/lib/locale-catalogs/zh-Hans.ts": "207369ef58c6c2e51eb751cd213bb9161a34e5b27efd30efc6252fb4bde6ed94",
+    "webui/src/lib/locale-catalogs/zh-Hant.ts": "52eaa09115aee2de3c0a5276dd7012dd7fb0d7a997c21e67ded58d48e5f7dac8"
+  },
+  "onlyChangedPaths": [
+    "webui/src/lib/locale-catalogs/ar.ts",
+    "webui/src/lib/locale-catalogs/de.ts",
+    "webui/src/lib/locale-catalogs/es.ts",
+    "webui/src/lib/locale-catalogs/hi.ts",
+    "webui/src/lib/locale-catalogs/id.ts",
+    "webui/src/lib/locale-catalogs/ja.ts",
+    "webui/src/lib/locale-catalogs/ko.ts",
+    "webui/src/lib/locale-catalogs/vi.ts"
+  ],
+  "definiteCorrections": [
+    {
+      "cellId": "vi:ui.89db19f651b18285",
+      "locale": "vi",
+      "key": "(required)",
+      "source": "(required)",
+      "currentTarget": "(được yêu cầu)",
+      "suggestedTarget": "(bắt buộc)",
+      "sourceSha256": "89db19f651b1828501f3d1631171b1d6b13a77a402ab26b8dabb6e9992dd3b59",
+      "sourceEvidence": [
+        "webui/src/components/StoragePanel.tsx:226 — Expected bytes plus required/optional marker"
+      ],
+      "rationale": "In StoragePanel this is appended to “Expected bytes”. “Được yêu cầu” means “requested” and reads like the bytes are being requested, not that this value is mandatory."
+    },
+    {
+      "cellId": "de:ui.e9a880b7e00b1393",
+      "locale": "de",
+      "key": "Category applied",
+      "source": "Category applied",
+      "currentTarget": "Angewendete Kategorie",
+      "suggestedTarget": "Kategorie angewendet",
+      "sourceSha256": "e9a880b7e00b1393caaeea4cbe4d4a1fcc6e9f8490d2386261092b719a595a55",
+      "sourceEvidence": [
+        "webui/src/components/BulkEditDialog.tsx:87 — toast source passed after set-category succeeds"
+      ],
+      "rationale": "This is a success toast after the user applies a category. “Angewendete Kategorie” is a noun phrase (“applied category”), not a clear completion message."
+    },
+    {
+      "cellId": "de:ui.3f80647159a42053",
+      "locale": "de",
+      "key": "Could not save login credentials.",
+      "source": "Could not save login credentials.",
+      "currentTarget": "Es konnte keine Anmeldeinformationen gespeichert werden.",
+      "suggestedTarget": "Anmeldeinformationen konnten nicht gespeichert werden.",
+      "sourceSha256": "3f80647159a42053e9733f1e35b2de4f6c853a32b64c19dd37b794e90a574718",
+      "sourceEvidence": [
+        "webui/src/components/AuthPanel.tsx:24 — error notice after credential save fails"
+      ],
+      "rationale": "Plural “Anmeldeinformationen” requires plural “konnten”; current impersonal singular “konnte” disagrees with the passive subject."
+    },
+    {
+      "cellId": "hi:ui.54a0e8c17ebb21a1",
+      "locale": "hi",
+      "key": "Error",
+      "source": "Error",
+      "currentTarget": "गलती",
+      "suggestedTarget": "त्रुटि",
+      "sourceSha256": "54a0e8c17ebb21a11f8a25b8042786ef7efe52441e6cc87e92c67e0c4c0c6e78",
+      "sourceEvidence": [
+        "Locale peer: Hindi “Errors” and “unknown error” use त्रुटि"
+      ],
+      "rationale": "The standalone system-status heading currently uses “गलती” (“mistake”). “त्रुटि” is the established technical/system-error term, also used elsewhere in this catalog."
+    },
+    {
+      "cellId": "hi:ui.2a8949fcabe98bc2",
+      "locale": "hi",
+      "key": "Engine Profile Drift",
+      "source": "Engine Profile Drift",
+      "currentTarget": "इंजन प्रोफाइल बहाव",
+      "suggestedTarget": "इंजन प्रोफ़ाइल में विचलन",
+      "sourceSha256": "2a8949fcabe98bc2e43259089d565f7febd0b63aae37eec051cd5416af966764",
+      "sourceEvidence": [
+        "webui/src/components/EnginePanel.tsx:273; ProfileDrift renders rows where status != match"
+      ],
+      "rationale": "This is the EnginePanel heading for rows whose actual runtime profile differs from the expected/default profile. “बहाव” is literal physical flow/drift, not a configuration discrepancy."
+    },
+    {
+      "cellId": "hi:ui.e9a65bbbedb99376",
+      "locale": "hi",
+      "key": "Established and pending peer sockets on the incoming port",
+      "source": "Established and pending peer sockets on the incoming port",
+      "currentTarget": "आने वाले बंदरगाह पर सहकर्मी सॉकेट स्थापित और लंबित",
+      "suggestedTarget": "आने वाले पोर्ट पर स्थापित और लंबित पीयर सॉकेट",
+      "sourceSha256": "e9a65bbbedb99376518c7eeaba1f4c5f5faea2a70db29dcf5fcf33380305d1b7",
+      "sourceEvidence": [
+        "webui/src/components/StatusBar.tsx:277 — title for incoming peer socket counts"
+      ],
+      "rationale": "“सहकर्मी” means colleague/coworker and the adjective sequence is unnatural for established/pending network sockets. Retain the technical peer term and attach both states to sockets."
+    },
+    {
+      "cellId": "id:ui.e9a65bbbedb99376",
+      "locale": "id",
+      "key": "Established and pending peer sockets on the incoming port",
+      "source": "Established and pending peer sockets on the incoming port",
+      "currentTarget": "Soket rekan yang sudah mapan dan tertunda pada port masuk",
+      "suggestedTarget": "Soket peer yang sudah terbentuk dan yang masih menunggu pada port masuk",
+      "sourceSha256": "e9a65bbbedb99376518c7eeaba1f4c5f5faea2a70db29dcf5fcf33380305d1b7",
+      "sourceEvidence": [
+        "webui/src/components/StatusBar.tsx:277 — title for incoming peer socket counts"
+      ],
+      "rationale": "“Rekan yang sudah mapan” reads as an established colleague; it does not describe a network socket. Use the peer-socket term and the connection states."
+    },
+    {
+      "cellId": "vi:ui.b7af4a8fa467bfcb",
+      "locale": "vi",
+      "key": "Filtered by {filter}",
+      "source": "Filtered by {filter}",
+      "currentTarget": "Được lọc bởi {filter}",
+      "suggestedTarget": "Được lọc theo {filter}",
+      "sourceSha256": "b7af4a8fa467bfcbe4aa373eac6a746395d9f8ffd8f99fc48e6b9364a7c6b385",
+      "sourceEvidence": [
+        "webui/src/components/EnginePanel.tsx:691–693 — filter is inserted as a quoted criterion"
+      ],
+      "rationale": "At this callsite `{filter}` is the filter/search criterion, not an agent performing the action. “Bởi” is agentive “by”; use “theo” (“according to/by criterion”)."
+    },
+    {
+      "cellId": "vi:ui.7f7912287aa3ec31",
+      "locale": "vi",
+      "key": "Filtered by {filter} and {view}",
+      "source": "Filtered by {filter} and {view}",
+      "currentTarget": "Được lọc bởi {filter} và {view}",
+      "suggestedTarget": "Được lọc theo {filter} và {view}",
+      "sourceSha256": "7f7912287aa3ec31eedde3d47495aa99ae99f62876ba2fe095df47ef8ecbd79a",
+      "sourceEvidence": [
+        "webui/src/components/EnginePanel.tsx:691–693 — filter and view are selected criteria"
+      ],
+      "rationale": "Same criterion context as the singular form; `bởi` incorrectly suggests an agent."
+    },
+    {
+      "cellId": "vi:ui.c9a86f9058e8d28c",
+      "locale": "vi",
+      "key": "Per-torrent download slots",
+      "source": "Per-torrent download slots",
+      "currentTarget": "Số luồng tải xuống cho mỗi torrent",
+      "suggestedTarget": "Số slot tải xuống cho mỗi torrent",
+      "sourceSha256": "c9a86f9058e8d28c0f68d1f37edee7b432435ea48ad627a3d6593df74d84b2d1",
+      "sourceEvidence": [
+        "webui/src/components/EnginePanel.tsx:1470 — Transfer Slots described as global and per-torrent concurrency limits"
+      ],
+      "rationale": "The label is a per-torrent concurrency/transfer-slot limit. “Luồng” means thread/stream, which describes a different resource; use the slot term (or explicitly “số kết nối tải xuống đồng thời”)."
+    },
+    {
+      "cellId": "es:ui.00594419409ea711",
+      "locale": "es",
+      "key": "No tracker data cached yet",
+      "source": "No tracker data cached yet",
+      "currentTarget": "No hay datos de rastreador caché todavía",
+      "suggestedTarget": "Aún no hay datos de rastreadores en caché.",
+      "sourceSha256": "00594419409ea711c14528b379b3bf094271a2516cc845ace032ccf14cc83ca0",
+      "sourceEvidence": [
+        "webui/src/components/TrackerHealthPanel.tsx:68 — empty-state message"
+      ],
+      "rationale": "Current “datos de rastreador caché” lacks the relation/preposition and is ungrammatical; it fails to clearly say tracker data is cached."
+    },
+    {
+      "cellId": "hi:ui.00594419409ea711",
+      "locale": "hi",
+      "key": "No tracker data cached yet",
+      "source": "No tracker data cached yet",
+      "currentTarget": "अभी तक कोई ट्रैकर डेटा कैश नहीं",
+      "suggestedTarget": "अभी तक ट्रैकर का कोई डेटा कैश नहीं हुआ है।",
+      "sourceSha256": "00594419409ea711c14528b379b3bf094271a2516cc845ace032ccf14cc83ca0",
+      "sourceEvidence": [
+        "webui/src/components/TrackerHealthPanel.tsx:68 — empty-state message"
+      ],
+      "rationale": "Current phrase ends at “cache” without a verb/completion, so the empty-state message reads as a fragment."
+    },
+    {
+      "cellId": "hi:ui.c7704183c819206b",
+      "locale": "hi",
+      "key": "No storage roots reported.",
+      "source": "No storage roots reported.",
+      "currentTarget": "कोई भंडारण जड़ों की सूचना नहीं दी गई।",
+      "suggestedTarget": "स्टोरेज रूट की कोई जानकारी नहीं मिली।",
+      "sourceSha256": "c7704183c819206b33ae5949d4f9ac5cc8641284e24d299bedd24d2e6d5ca9c6",
+      "sourceEvidence": [
+        "webui/src/components/StoragePanel.tsx:158 — empty-state message"
+      ],
+      "rationale": "Current word order/case “कोई भंडारण जड़ों की सूचना” is ungrammatical. This empty state means no storage roots were reported/received."
+    },
+    {
+      "cellId": "ja:ui.f97e9da0e3b879f0",
+      "locale": "ja",
+      "key": "Other",
+      "source": "Other",
+      "currentTarget": "他の",
+      "suggestedTarget": "その他",
+      "sourceSha256": "f97e9da0e3b879f0a9df979ae260a5f7e1371edb127c1862d4f861981166cdc1",
+      "sourceEvidence": [
+        "webui/src/components/TorrentTable.tsx:302; TorrentSidebar.tsx:49; FilterBar.tsx:21 — residual type category"
+      ],
+      "rationale": "This is the standalone residual media-type category shown in the torrent list/filter. “他の” is a modifier that expects a following noun; it is not a natural standalone category label."
+    },
+    {
+      "cellId": "ko:ui.f97e9da0e3b879f0",
+      "locale": "ko",
+      "key": "Other",
+      "source": "Other",
+      "currentTarget": "다른",
+      "suggestedTarget": "기타",
+      "sourceSha256": "f97e9da0e3b879f0a9df979ae260a5f7e1371edb127c1862d4f861981166cdc1",
+      "sourceEvidence": [
+        "webui/src/components/TorrentTable.tsx:302; TorrentSidebar.tsx:49; FilterBar.tsx:21 — residual type category"
+      ],
+      "rationale": "This is a standalone residual media-type category. “다른” is a determiner/adjective requiring a noun; “기타” is the standalone “Other” category label."
+    },
+    {
+      "cellId": "ko:ui.b764cdc0eab71374",
+      "locale": "ko",
+      "key": "Unknown",
+      "source": "Unknown",
+      "currentTarget": "알려지지 않은",
+      "suggestedTarget": "알 수 없음",
+      "sourceSha256": "b764cdc0eab7137467211272fa539f1260d1bf2e71bcf6ff3bdc960f5c16aa14",
+      "sourceEvidence": [
+        "Storage rating values; locale peer: ko “unknown” = 알 수 없음"
+      ],
+      "rationale": "This is the standalone storage-rating value “Unknown”. Current “알려지지 않은” is an adjective meaning “unknown [noun]” and leaves the label incomplete; the lowercase peer value in the same catalog uses “알 수 없음”."
+    },
+    {
+      "cellId": "id:ui.f8841cecc95a81eb",
+      "locale": "id",
+      "key": "Showing first {count} tags",
+      "source": "Showing first {count} tags",
+      "currentTarget": "Menampilkan tag {count} pertama",
+      "suggestedTarget": "Menampilkan {count} tag pertama",
+      "sourceSha256": "f8841cecc95a81ebd717a0c1367fd917d0d0c727ece948bd041b5ef04fa11f9b",
+      "sourceEvidence": [
+        "webui/src/components/TorrentSidebar.tsx:317 — overflow note for visible tags"
+      ],
+      "rationale": "Current Indonesian order “tag {count} pertama” reads as a numbered/first tag, not the first `{count}` tags. Move count before the noun."
+    },
+    {
+      "cellId": "id:ui.f0eb35d7bdfc0b04",
+      "locale": "id",
+      "key": "Showing first {count} trackers",
+      "source": "Showing first {count} trackers",
+      "currentTarget": "Menampilkan pelacak {count} pertama",
+      "suggestedTarget": "Menampilkan {count} tracker pertama",
+      "sourceSha256": "f0eb35d7bdfc0b04cfd7742eb86211d7dcf5f189ebd06ce2c738e1871ce88389",
+      "sourceEvidence": [
+        "webui/src/components/TorrentSidebar.tsx:364 — overflow note for visible trackers"
+      ],
+      "rationale": "Current order “pelacak {count} pertama” has the same count/ordinal ambiguity. Use `{count}` before the noun."
+    },
+    {
+      "cellId": "hi:ui.acd6ec33dd1c18e4",
+      "locale": "hi",
+      "key": "Share limits applied",
+      "source": "Share limits applied",
+      "currentTarget": "शेयर सीमा लागू की गईं",
+      "suggestedTarget": "साझाकरण सीमाएँ लागू की गईं",
+      "sourceSha256": "acd6ec33dd1c18e498856457d9ecbafa2a95a597cbff493559080a673c81b992",
+      "sourceEvidence": [
+        "webui/src/components/BulkEditDialog.tsx:125 — success toast after applying share limits"
+      ],
+      "rationale": "The target pairs singular “सीमा” with the plural feminine verb “गईं”. Make the noun plural to match “Share limits”."
+    },
+    {
+      "cellId": "ar:ui.7c0192318cf76593",
+      "locale": "ar",
+      "key": "{count} error applying {name}",
+      "source": "{count} error applying {name}",
+      "currentTarget": "حدث خطأ واحد ({count}) أثناء تطبيق {name}",
+      "suggestedTarget": "حدث خطأ ({count}) أثناء تطبيق {name}",
+      "sourceSha256": "7c0192318cf76593d015e1dce6fdd937d128aee34d67061a7300f1cdf6cf0b21",
+      "sourceEvidence": [
+        "webui/src/components/WorkflowsPanel.tsx:94 uses the singular template when errorCount === 1"
+      ],
+      "rationale": "The source branch is the singular-error form. “خطأ واحد ({count})” expresses “one error (1)” and duplicates the same count. Remove the written “one” while retaining the placeholder."
+    },
+    {
+      "cellId": "ar:ui.133d9bdbe93485bb",
+      "locale": "ar",
+      "key": "{count} error running {name}",
+      "source": "{count} error running {name}",
+      "currentTarget": "حدث خطأ واحد ({count}) أثناء تشغيل {name}",
+      "suggestedTarget": "حدث خطأ ({count}) أثناء تشغيل {name}",
+      "sourceSha256": "133d9bdbe93485bb7beaf0c3d756d49928df633c7476f331956b3de3d2558ef6",
+      "sourceEvidence": [
+        "webui/src/components/WorkflowsPanel.tsx:94 uses the singular template when errorCount === 1"
+      ],
+      "rationale": "The source branch is the singular-error form. “خطأ واحد ({count})” expresses “one error (1)” and duplicates the same count. Remove the written “one” while retaining the placeholder."
+    },
+    {
+      "cellId": "ar:ui.06e77c75d768fd6e",
+      "locale": "ar",
+      "key": "Trackers",
+      "source": "Trackers",
+      "currentTarget": "أجهزة التتبع",
+      "suggestedTarget": "المتعقّبات",
+      "sourceSha256": "06e77c75d768fd6e3cda059d6cb1a2955582c4d470b1056e11990e1e468094ed",
+      "sourceEvidence": [
+        "webui/src/components/TorrentDetail.tsx:404–416 — section listing/editing torrent tracker URLs"
+      ],
+      "rationale": "This is the heading for BitTorrent tracker entries (URLs/scrape data), not physical tracking devices. Current “أجهزة التتبع” means tracking devices; “المتعقّبات” or “خوادم التتبع” preserves the torrent-server meaning."
+    },
+    {
+      "cellId": "vi:ui.43a1be8eae235be2",
+      "locale": "vi",
+      "key": "rTorrent settings unavailable",
+      "source": "rTorrent settings unavailable",
+      "currentTarget": "Không có cài đặt rTorrent",
+      "suggestedTarget": "Không thể truy cập cài đặt rTorrent",
+      "sourceSha256": "43a1be8eae235be24e6f525554b3ad946384b4e71b481a6d3986adf6899a4a08",
+      "sourceEvidence": [
+        "webui/src/components/EnginePanel.tsx — rTorrent settings capability/status message"
+      ],
+      "rationale": "“Không có cài đặt” says that no settings exist. The source status says the rTorrent settings are unavailable, which can mean they could not be retrieved/accessed."
+    }
+  ],
+  "unresolvedCandidates": 25,
+  "invariantLiteralSignals": 21,
+  "limitations": [
+    "No native-speaker review was performed.",
+    "No visual/browser app review was performed at this exact head.",
+    "Catalog parity is still incomplete: 3,372 target cells were untranslated at the reviewed parent; this semantic correction commit does not add missing translations."
+  ]
+}

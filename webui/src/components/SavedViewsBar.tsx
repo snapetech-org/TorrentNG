@@ -135,6 +135,8 @@ export function SavedViewsBar({ params, onApply }: Props) {
               onClick={() => onApply(view.params)}
               disabled={Boolean(busy)}
               title={safeViewTitle(view.params)}
+              dir="auto"
+              lang="und"
               style={{
                 background: 'transparent', border: 'none',
                 color: isActive ? 'var(--accent-text)' : 'var(--muted)',
@@ -143,11 +145,11 @@ export function SavedViewsBar({ params, onApply }: Props) {
                 cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.55 : 1,
               }}
             >
-              {view.name}
+              <bdi dir="auto" lang="und">{view.name}</bdi>
             </button>
             <button
               type="button"
-              aria-label={translateInterface('Delete saved view {name}', { name: view.name })}
+              aria-label={translateInterface('Delete saved view {name}', { name: `\u2068${view.name}\u2069` })}
               {...interfaceTextProps('Delete saved view {name}')}
               onClick={() => removeView(view.id)}
               disabled={Boolean(busy)}
