@@ -55,7 +55,17 @@
     "webui/src/lib/locale-catalogs/fr.ts": "307c1e0d97fce911361cab2bc7ad9524803f16ff2066427a9121391f69a6d9af",
     "webui/src/lib/locale-catalogs/vi.ts": "b8bca0eeffe703a56cdbe864bee67f78a40381bdb1b38d70a6ccbc86f17ea9c2"
   },
-  "independentCrossReview": "pending",
+  "independentCrossReview": {
+    "status": "accepted",
+    "reviewedHead": "5dd6e073d67bff8f58d3d9859c3b6411d5cd8c2f",
+    "evidence": "docs/reviews/localization-pr243-populated-review-2026-11-01/terminology-crossreview-2026-11-02.json",
+    "sha256": "41b34b3aee0f8883bcab23f9929e6620e7ed19b71bb3c3e39f09877fae7012b6",
+    "cells": 3,
+    "accepted": 3,
+    "correctionNeeded": 0,
+    "held": 0,
+    "qualifiedNativeSignoff": false
+  },
   "browserReviewAtCurrentHead": false,
   "testsBuildsAndCi": "not run"
 }
