@@ -1,0 +1,1 @@
+9283a43d5f6997cce3b4b1fbd5ca821bd12cd6568a5a8c8eb1d2cf6a5b99cefc  docs/pr-evidence/pr243-localization-2026-11-04/statusbar-rtl-isolation/README.md
