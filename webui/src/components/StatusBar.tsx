@@ -227,10 +227,10 @@ export function StatusBar({
         />
       </div>
       <div className="tng-statusbar-counts" style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 'max-content' }}>
-        <Badge label="Torrents" value={total.toLocaleString(getRegionalLocale())} state="idle" />
-        {rendered !== total && <Badge label="Rendered" value={rendered.toLocaleString(getRegionalLocale())} state="idle" />}
-        {cached !== undefined && <Badge label="Cached" value={cached.toLocaleString(getRegionalLocale())} state="idle" />}
-        {selected > 0 && <Badge label="Selected" value={selected.toLocaleString(getRegionalLocale())} state="on" />}
+        <Badge label="Torrents" value={total.toLocaleString(getRegionalLocale())} opaqueValue state="idle" />
+        {rendered !== total && <Badge label="Rendered" value={rendered.toLocaleString(getRegionalLocale())} opaqueValue state="idle" />}
+        {cached !== undefined && <Badge label="Cached" value={cached.toLocaleString(getRegionalLocale())} opaqueValue state="idle" />}
+        {selected > 0 && <Badge label="Selected" value={selected.toLocaleString(getRegionalLocale())} opaqueValue state="on" />}
         {featureError && <Notice tone="error" message={featureError} />}
         {actionMessage && <Notice tone={actionTone} message={actionMessage} />}
       </div>
@@ -245,8 +245,8 @@ export function StatusBar({
       </nav>
       <span className="tng-statusbar-spacer" style={{ flex: 1 }} />
       <div className="tng-statusbar-live" style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 'max-content' }}>
-        <Badge label="DL" value={fmtSpeed(stats.download_speed)} state={(stats.download_speed ?? 0) > 0 ? 'on' : 'unknown'} />
-        <Badge label="UL" value={fmtSpeed(stats.upload_speed)} state={(stats.upload_speed ?? 0) > 0 ? 'on' : 'unknown'} />
+        <Badge label="DL" value={fmtSpeed(stats.download_speed)} opaqueValue state={(stats.download_speed ?? 0) > 0 ? 'on' : 'unknown'} />
+        <Badge label="UL" value={fmtSpeed(stats.upload_speed)} opaqueValue state={(stats.upload_speed ?? 0) > 0 ? 'on' : 'unknown'} />
       </div>
       <button
         type="button"
@@ -261,11 +261,12 @@ export function StatusBar({
         {mobileExpanded ? <LocalizedText source="Less ▴" /> : <LocalizedText source="More ▾" />}
       </button>
       <div className="tng-statusbar-metrics" style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 'max-content' }}>
-        <Badge label="Total downloaded" value={fmtBytes(stats.download_total)} title={t("Downloaded since the daemon last started (not a lifetime total)")} state="on" />
-        <Badge label="Total uploaded" value={fmtBytes(stats.upload_total)} title={t("Uploaded since the daemon last started (not a lifetime total)")} state="on" />
+        <Badge label="Total downloaded" value={fmtBytes(stats.download_total)} opaqueValue title={t("Downloaded since the daemon last started (not a lifetime total)")} state="on" />
+        <Badge label="Total uploaded" value={fmtBytes(stats.upload_total)} opaqueValue title={t("Uploaded since the daemon last started (not a lifetime total)")} state="on" />
         <Badge
           label="Disk"
           value={storageLabel}
+          opaqueValue
           title={!storage?.ok && !storage?.error ? t('Storage status unavailable') : undefined}
           description={storageDescription}
           state={storagePct !== undefined && storagePct > 92 ? 'closed' : storagePct !== undefined && storagePct > 82 ? 'unknown' : storage?.ok ? 'on' : 'unknown'}
@@ -274,6 +275,7 @@ export function StatusBar({
         <Badge
           label="Connections"
           value={`${(stats.connections ?? 0).toLocaleString(getRegionalLocale())}${stats.pending_connections ? ` +${formatRegionalNumber(stats.pending_connections)}` : ''}`}
+          opaqueValue
           title={t("Established and pending peer sockets on the incoming port")}
           state={(stats.connections ?? 0) > 0 ? 'on' : 'unknown'}
         />
