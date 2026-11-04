@@ -16,4 +16,4 @@ An independent code review of the exact diff confirmed that all ten value callsi
 
 ## Review limits
 
-The static review also noted an assurance limitation in `localeSourceCoverage.test.ts`: the recorded producer-path mappings are not checked against actual callsites. This remains documented and unchanged. No tests, builds, scans, CI, workflow changes, or native-speaker review were performed for this remediation. The PR remains open and draft; no merge, release, or tag was made.
+The static review also noted an assurance limitation in `localeSourceCoverage.test.ts`: the recorded producer-path mappings are not checked against actual callsites. This remains documented and unchanged. No tests, builds, or CI jobs were run. The source commit’s automatic local pre-commit hook ran Semgrep on `StatusBar.tsx` (210 rules, zero findings); this is hook output, not full validation. No workflow changes or native-speaker review were performed. The PR remains open and draft; no merge, release, or tag was made.
