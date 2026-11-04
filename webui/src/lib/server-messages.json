@@ -1,0 +1,3861 @@
+[
+  {
+    "id": "server.message.85744d9f617c",
+    "source": "A public session already exists; restore it before choosing another candidate",
+    "parameters": [],
+    "patterns": [
+      "A public session already exists; restore it before choosing another candidate"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "A public session already exists; restore it before choosing another candidate"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.43cd37ac7434",
+    "source": "BEP 52 piece-layer root does not match file pieces root",
+    "parameters": [],
+    "patterns": [
+      "BEP 52 piece-layer root does not match file pieces root"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "BEP 52 piece-layer root does not match file pieces root"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.e266109414e8",
+    "source": "Candidate changed; compare swarms again before switching",
+    "parameters": [],
+    "patterns": [
+      "Candidate changed; compare swarms again before switching"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "Candidate changed; compare swarms again before switching"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.df6aee19fd35",
+    "source": "Choose either a generated variant or a supplied torrent",
+    "parameters": [],
+    "patterns": [
+      "Choose either a generated variant or a supplied torrent"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "Choose either a generated variant or a supplied torrent"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.446a462354fa",
+    "source": "Compare swarms before selecting the public candidate",
+    "parameters": [],
+    "patterns": [
+      "Compare swarms before selecting the public candidate"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-api-native/src/swarm.rs",
+        "fragments": [
+          "Compare swarms before selecting the public candidate"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.3aef96e64004",
+    "source": "Crash recovery",
+    "parameters": [],
+    "patterns": [
+      "crash_recovery"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "crash_recovery"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.e18600c8fe89",
+    "source": "Crash safety settings changed",
+    "parameters": [],
+    "patterns": [
+      "crash_safety_updated"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "crash_safety_updated"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.5470b4cedfcd",
+    "source": "Enable DHT in session settings before using a public swarm",
+    "parameters": [],
+    "patterns": [
+      "Enable DHT in session settings before using a public swarm"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "Enable DHT in session settings before using a public swarm"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.e8bf0222d7b8",
+    "source": "Engine started",
+    "parameters": [],
+    "patterns": [
+      "engine_started"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "engine_started"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.3cf9258b743d",
+    "source": "Engine stopped",
+    "parameters": [],
+    "patterns": [
+      "engine_stopped"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "engine_stopped"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.e19bb77fc5e1",
+    "source": "File paths, order, sizes, or padding differ; shared storage requires an exact layout",
+    "parameters": [],
+    "patterns": [
+      "File paths, order, sizes, or padding differ; shared storage requires an exact layout"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/swarm.rs",
+        "fragments": [
+          "File paths, order, sizes, or padding differ; shared storage requires an exact layout"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.d533ae706ba3",
+    "source": "Files were renamed or remapped; restore the original layout before switching",
+    "parameters": [],
+    "patterns": [
+      "Files were renamed or remapped; restore the original layout before switching"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "Files were renamed or remapped; restore the original layout before switching"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.b83957077527",
+    "source": "Finish or restore the interrupted switch before deleting the private copy",
+    "parameters": [],
+    "patterns": [
+      "Finish or restore the interrupted switch before deleting the private copy"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "Finish or restore the interrupted switch before deleting the private copy"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.ad329fe0ad8a",
+    "source": "Invalid info dictionary",
+    "parameters": [],
+    "patterns": [
+      "Invalid info dictionary"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/swarm.rs",
+        "fragments": [
+          "Invalid info dictionary"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.3fb3522f8b6e",
+    "source": "Invalid metainfo dictionary",
+    "parameters": [],
+    "patterns": [
+      "Invalid metainfo dictionary"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/swarm.rs",
+        "fragments": [
+          "Invalid metainfo dictionary"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.aed7019e1203",
+    "source": "Invalid original hash",
+    "parameters": [],
+    "patterns": [
+      "Invalid original hash"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_probe.rs",
+        "fragments": [
+          "Invalid original hash"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.5cad1a30948a",
+    "source": "Invalid public hash",
+    "parameters": [],
+    "patterns": [
+      "Invalid public hash"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_probe.rs",
+        "fragments": [
+          "Invalid public hash"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.4c2661931162",
+    "source": "Magnet added",
+    "parameters": [],
+    "patterns": [
+      "magnet_added"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "magnet_added"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.503180706766",
+    "source": "Metadata resolved",
+    "parameters": [],
+    "patterns": [
+      "metadata_resolved"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "metadata_resolved"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.c48a1dc0de69",
+    "source": "Missing info dictionary",
+    "parameters": [],
+    "patterns": [
+      "Missing info dictionary"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/swarm.rs",
+        "fragments": [
+          "Missing info dictionary"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.27107ed4f62c",
+    "source": "No retained private torrent exists for this public torrent",
+    "parameters": [],
+    "patterns": [
+      "No retained private torrent exists for this public torrent"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "No retained private torrent exists for this public torrent"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.b8cc83ea5519",
+    "source": "Only private torrents can create a public counterpart",
+    "parameters": [],
+    "patterns": [
+      "Only private torrents can create a public counterpart"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/swarm.rs",
+        "fragments": [
+          "Only private torrents can create a public counterpart"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.b210c27f4d03",
+    "source": "Original metainfo identity does not match its session",
+    "parameters": [],
+    "patterns": [
+      "Original metainfo identity does not match its session"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "Original metainfo identity does not match its session"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.99c2c11acd3b",
+    "source": "Original private torrent not found",
+    "parameters": [],
+    "patterns": [
+      "Original private torrent not found"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "Original private torrent not found"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.3e1bbf0127da",
+    "source": "Piece hashes differ; this public torrent is not an identical payload",
+    "parameters": [],
+    "patterns": [
+      "Piece hashes differ; this public torrent is not an identical payload"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/swarm.rs",
+        "fragments": [
+          "Piece hashes differ; this public torrent is not an identical payload"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.601b457b00c2",
+    "source": "Private swarm restored",
+    "parameters": [],
+    "patterns": [
+      "swarm_restored_private"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "swarm_restored_private"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.12163f676290",
+    "source": "Private swarm restored with fresh verification",
+    "parameters": [],
+    "patterns": [
+      "Private swarm restored with fresh verification"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "Private swarm restored with fresh verification"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.ce724a05ab1c",
+    "source": "Private torrent copy deleted",
+    "parameters": [],
+    "patterns": [
+      "swarm_private_copy_deleted"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "swarm_private_copy_deleted"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.01a21b95d077",
+    "source": "Public metainfo exceeds 8 MiB",
+    "parameters": [],
+    "patterns": [
+      "Public metainfo exceeds 8 MiB"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-api-native/src/swarm.rs",
+        "fragments": [
+          "Public metainfo exceeds 8 MiB"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.82a0381cf84d",
+    "source": "Public metainfo is not valid base64",
+    "parameters": [],
+    "patterns": [
+      "Public metainfo is not valid base64"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-api-native/src/swarm.rs",
+        "fragments": [
+          "Public metainfo is not valid base64"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.ca029e7df7e8",
+    "source": "Public recovery session started",
+    "parameters": [],
+    "patterns": [
+      "Public recovery session started"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "Public recovery session started"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.44e224fda233",
+    "source": "Public swarm started",
+    "parameters": [],
+    "patterns": [
+      "swarm_switched_public"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "swarm_switched_public"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.f2f8e7726794",
+    "source": "Public torrent is independent; private restore is unavailable",
+    "parameters": [],
+    "patterns": [
+      "Public torrent is independent; private restore is unavailable"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "Public torrent is independent; private restore is unavailable"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.0537d77de561",
+    "source": "RSS rules updated",
+    "parameters": [],
+    "patterns": [
+      "RSS rules updated"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "RSS rules updated"
+        ]
+      },
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "RSS rules updated"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.b7cdf46c9ad8",
+    "source": "Recheck recovered; torrent paused",
+    "parameters": [],
+    "patterns": [
+      "recheck_recovered_paused"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "recheck_recovered_paused"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.9c9c3a6669d4",
+    "source": "Restore the private swarm before changing shared files, trackers, or removing payload data",
+    "parameters": [],
+    "patterns": [
+      "Restore the private swarm before changing shared files, trackers, or removing payload data"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "Restore the private swarm before changing shared files, trackers, or removing payload data"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.9d02a6d0baac",
+    "source": "Select a public .torrent file",
+    "parameters": [],
+    "patterns": [
+      "Select a public .torrent file"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "Select a public .torrent file"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.b06667110e3d",
+    "source": "Swarm Switch metainfo exceeds 8 MiB",
+    "parameters": [],
+    "patterns": [
+      "Swarm Switch metainfo exceeds 8 MiB"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "Swarm Switch metainfo exceeds 8 MiB"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.ddbd47fe6633",
+    "source": "Swarm Switch preparation is busy; retry shortly",
+    "parameters": [],
+    "patterns": [
+      "Swarm Switch preparation is busy; retry shortly"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "Swarm Switch preparation is busy; retry shortly"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.72c8be470993",
+    "source": "Swarm Switch request failed ({value0}).",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Swarm Switch request failed ({value0})."
+    ],
+    "sources": [
+      {
+        "path": "webui/src/api/client.ts",
+        "fragments": [
+          "Swarm Switch request failed ("
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.8d099da00b80",
+    "source": "Swarm Switch requires a private original and a public counterpart",
+    "parameters": [],
+    "patterns": [
+      "Swarm Switch requires a private original and a public counterpart"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/swarm.rs",
+        "fragments": [
+          "Swarm Switch requires a private original and a public counterpart"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.cd5764a08479",
+    "source": "Swarm Switch requires the TorrentNG engine",
+    "parameters": [],
+    "patterns": [
+      "Swarm Switch requires the TorrentNG engine"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-api-native/src/swarm.rs",
+        "fragments": [
+          "Swarm Switch requires the TorrentNG engine"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.245e4f6b48a5",
+    "source": "Swarm comparison is busy; retry shortly",
+    "parameters": [],
+    "patterns": [
+      "Swarm comparison is busy; retry shortly"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_probe.rs",
+        "fragments": [
+          "Swarm comparison is busy; retry shortly"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.471e9eecff5a",
+    "source": "Swarm comparison memory budget is busy; retry shortly",
+    "parameters": [],
+    "patterns": [
+      "Swarm comparison memory budget is busy; retry shortly"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_probe.rs",
+        "fragments": [
+          "Swarm comparison memory budget is busy; retry shortly"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.c63d357bce8b",
+    "source": "Swarm metainfo memory budget exhausted",
+    "parameters": [],
+    "patterns": [
+      "Swarm metainfo memory budget exhausted"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/swarm.rs",
+        "fragments": [
+          "Swarm metainfo memory budget exhausted"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.20f944884fcf",
+    "source": "Tags updated",
+    "parameters": [],
+    "patterns": [
+      "tags updated"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "tags updated"
+        ]
+      },
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "tags updated"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.bfcaad990faf",
+    "source": "The public candidate is already loaded or reserved; remove that torrent without deleting files first",
+    "parameters": [],
+    "patterns": [
+      "The public candidate is already loaded or reserved; remove that torrent without deleting files first"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "The public candidate is already loaded or reserved; remove that torrent without deleting files first"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.1f4863bb9f2b",
+    "source": "The retained private torrent file is invalid",
+    "parameters": [],
+    "patterns": [
+      "The retained private torrent file is invalid"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "The retained private torrent file is invalid"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.78078cf660dc",
+    "source": "The retained private torrent file is unavailable; keep the public session or delete the retained private entry",
+    "parameters": [],
+    "patterns": [
+      "The retained private torrent file is unavailable; keep the public session or delete the retained private entry"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "The retained private torrent file is unavailable; keep the public session or delete the retained private entry"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.f9450a7c24cc",
+    "source": "The retained private torrent identity does not match this session",
+    "parameters": [],
+    "patterns": [
+      "The retained private torrent identity does not match this session"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "The retained private torrent identity does not match this session"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.175d2369c3bb",
+    "source": "The supplied torrent is private; choose a public .torrent",
+    "parameters": [],
+    "patterns": [
+      "The supplied torrent is private; choose a public .torrent"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/swarm.rs",
+        "fragments": [
+          "The supplied torrent is private; choose a public .torrent"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.8014bc3a0875",
+    "source": "This torrent is parked by Swarm Switch; use Restore private swarm",
+    "parameters": [],
+    "patterns": [
+      "This torrent is parked by Swarm Switch; use Restore private swarm"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "This torrent is parked by Swarm Switch; use Restore private swarm"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.4661a558fd53",
+    "source": "Torrent added",
+    "parameters": [],
+    "patterns": [
+      "torrent_added"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "torrent_added"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.0397aef35ffb",
+    "source": "Torrent fields updated",
+    "parameters": [],
+    "patterns": [
+      "torrent_fields_updated"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "torrent_fields_updated"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.6c88e6ab46e1",
+    "source": "Torrent labels updated",
+    "parameters": [],
+    "patterns": [
+      "labels_updated"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "labels_updated"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.bc160854ea2c",
+    "source": "Torrent limits updated",
+    "parameters": [],
+    "patterns": [
+      "limits_updated"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "limits_updated"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.52eaad997163",
+    "source": "Torrent not found",
+    "parameters": [],
+    "patterns": [
+      "Torrent not found"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "Torrent not found"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.d2e7c839201c",
+    "source": "Torrent paused",
+    "parameters": [],
+    "patterns": [
+      "torrent_paused"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "torrent_paused"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.5444d578cb6b",
+    "source": "Torrent recheck requested",
+    "parameters": [],
+    "patterns": [
+      "check_requested"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "check_requested"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.6d9707274970",
+    "source": "Torrent removal failed",
+    "parameters": [],
+    "patterns": [
+      "torrent_remove_failed"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "torrent_remove_failed"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.ec28668efbe3",
+    "source": "Torrent removal queued",
+    "parameters": [],
+    "patterns": [
+      "torrent_remove_queued"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "torrent_remove_queued"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.188bfc25c81f",
+    "source": "Torrent removed",
+    "parameters": [],
+    "patterns": [
+      "torrent_removed",
+      "torrent removed"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "torrent_removed"
+        ]
+      },
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "torrent removed"
+        ]
+      },
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "torrent removed"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.b3713ae239b6",
+    "source": "Torrent restored",
+    "parameters": [],
+    "patterns": [
+      "torrent_restored"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "torrent_restored"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.bf1f88bc9f79",
+    "source": "Torrent resumed",
+    "parameters": [],
+    "patterns": [
+      "torrent_resumed"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "torrent_resumed"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.50da155874f5",
+    "source": "Torrent updated",
+    "parameters": [],
+    "patterns": [
+      "torrent updated"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "torrent updated"
+        ]
+      },
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "torrent updated"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.2ef4e025a72e",
+    "source": "Torrent versions differ; use a counterpart with the same v1/v2/hybrid format",
+    "parameters": [],
+    "patterns": [
+      "Torrent versions differ; use a counterpart with the same v1/v2/hybrid format"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/swarm.rs",
+        "fragments": [
+          "Torrent versions differ; use a counterpart with the same v1/v2/hybrid format"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.c6a01fe409bd",
+    "source": "TorrentNG client started",
+    "parameters": [],
+    "patterns": [
+      "TorrentNG client started"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "TorrentNG client started"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.5daf6a324911",
+    "source": "TorrentNG client stopped",
+    "parameters": [],
+    "patterns": [
+      "TorrentNG client stopped"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "TorrentNG client stopped"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.e69cc90d9ea5",
+    "source": "TorrentNG compatible-client service started",
+    "parameters": [],
+    "patterns": [
+      "TorrentNG compatible-client service started"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/main.rs",
+        "fragments": [
+          "TorrentNG compatible-client service started"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.b11069d02d83",
+    "source": "TorrentNG restart requested",
+    "parameters": [],
+    "patterns": [
+      "TorrentNG restart requested"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "TorrentNG restart requested"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.1df47c196349",
+    "source": "Tracker reannounce requested",
+    "parameters": [],
+    "patterns": [
+      "tracker_reannounce_requested"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "tracker_reannounce_requested"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.fad3132ac016",
+    "source": "Trackers updated",
+    "parameters": [],
+    "patterns": [
+      "trackers_updated"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "trackers_updated"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.7e5f802d34c2",
+    "source": "V1 piece sizes differ; the shared payload cannot be proven identical",
+    "parameters": [],
+    "patterns": [
+      "V1 piece sizes differ; the shared payload cannot be proven identical"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/swarm.rs",
+        "fragments": [
+          "V1 piece sizes differ; the shared payload cannot be proven identical"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.2e4b42527de3",
+    "source": "V2 file paths, sizes, padding, or content roots differ",
+    "parameters": [],
+    "patterns": [
+      "V2 file paths, sizes, padding, or content roots differ"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/swarm.rs",
+        "fragments": [
+          "V2 file paths, sizes, padding, or content roots differ"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.f4c586babb38",
+    "source": "backend sync failed",
+    "parameters": [],
+    "patterns": [
+      "backend sync failed"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/sync.rs",
+        "fragments": [
+          "backend sync failed"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.81e2ee9eb2f1",
+    "source": "backend sync recovered",
+    "parameters": [],
+    "patterns": [
+      "backend sync recovered"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/sync.rs",
+        "fragments": [
+          "backend sync recovered"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.ca131e3484df",
+    "source": "backend transfer stats probe failed",
+    "parameters": [],
+    "patterns": [
+      "backend transfer stats probe failed"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/stats.rs",
+        "fragments": [
+          "backend transfer stats probe failed"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.889c14a7a3fc",
+    "source": "backend transfer stats recovered",
+    "parameters": [],
+    "patterns": [
+      "backend transfer stats recovered"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/stats.rs",
+        "fragments": [
+          "backend transfer stats recovered"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.b51dc6e4bd71",
+    "source": "backend user agent update failed",
+    "parameters": [],
+    "patterns": [
+      "backend user agent update failed"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "backend user agent update failed"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.8563e943b382",
+    "source": "backend user agent updated",
+    "parameters": [],
+    "patterns": [
+      "backend user agent updated"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "backend user agent updated"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.faa88e6fd1e1",
+    "source": "bencode error: bencode allocation budget denied for {value0} bytes",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "bencode error: bencode allocation budget denied for {value0} bytes"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-bencode/src/error.rs",
+        "fragments": [
+          "bencode allocation budget denied for {bytes} bytes"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "bencode error: {0}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.08bc359ea2bd",
+    "source": "bencode error: bencode allocation failed",
+    "parameters": [],
+    "patterns": [
+      "bencode error: bencode allocation failed"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-bencode/src/error.rs",
+        "fragments": [
+          "bencode allocation failed"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "bencode error: {0}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.748fe7c63515",
+    "source": "bencode error: invalid integer: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "bencode error: invalid integer: {value0}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-bencode/src/error.rs",
+        "fragments": [
+          "invalid integer: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "bencode error: {0}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.c86fb77b88ff",
+    "source": "bencode error: invalid string length: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "bencode error: invalid string length: {value0}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-bencode/src/error.rs",
+        "fragments": [
+          "invalid string length: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "bencode error: {0}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.aedefd212c27",
+    "source": "bencode error: node limit exceeded: {value0} > max {value1}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "bencode error: node limit exceeded: {value0} > max {value1}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-bencode/src/error.rs",
+        "fragments": [
+          "node limit exceeded: {nodes} > max {max}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "bencode error: {0}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.d5448e29aef8",
+    "source": "bencode error: recursion depth exceeded: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "bencode error: recursion depth exceeded: {value0}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-bencode/src/error.rs",
+        "fragments": [
+          "recursion depth exceeded: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "bencode error: {0}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.911788cfa9c6",
+    "source": "bencode error: string too long: {value0} > max {value1}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "bencode error: string too long: {value0} > max {value1}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-bencode/src/error.rs",
+        "fragments": [
+          "string too long: {len} > max {max}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "bencode error: {0}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.2f4147a6d828",
+    "source": "bencode error: trailing data after value",
+    "parameters": [],
+    "patterns": [
+      "bencode error: trailing data after value"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-bencode/src/error.rs",
+        "fragments": [
+          "trailing data after value"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "bencode error: {0}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.1f0e568eeb9c",
+    "source": "bencode error: unexpected byte {value0} at offset {value1}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "bencode error: unexpected byte {value0} at offset {value1}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-bencode/src/error.rs",
+        "fragments": [
+          "unexpected byte {0:#04x} at offset {1}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "bencode error: {0}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.4f56e7d5fa34",
+    "source": "bencode error: unexpected end of input",
+    "parameters": [],
+    "patterns": [
+      "bencode error: unexpected end of input"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-bencode/src/error.rs",
+        "fragments": [
+          "unexpected end of input"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "bencode error: {0}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.3ea769c17f7b",
+    "source": "bencode error: unsorted dictionary keys",
+    "parameters": [],
+    "patterns": [
+      "bencode error: unsorted dictionary keys"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-bencode/src/error.rs",
+        "fragments": [
+          "unsorted dictionary keys"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "bencode error: {0}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.e0c52fc3216a",
+    "source": "categories updated",
+    "parameters": [],
+    "patterns": [
+      "categories updated"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "categories updated"
+        ]
+      },
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "categories updated"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.66c027a37f04",
+    "source": "crash-safety settings changed",
+    "parameters": [],
+    "patterns": [
+      "crash-safety settings changed"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "crash-safety settings changed"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.6a979a54ca89",
+    "source": "dormant torrents restored from database",
+    "parameters": [],
+    "patterns": [
+      "dormant torrents restored from database"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/restore.rs",
+        "fragments": [
+          "dormant torrents restored from database"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.5e2294839581",
+    "source": "engine command queue timed out",
+    "parameters": [],
+    "patterns": [
+      "engine command queue timed out"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/handle.rs",
+        "fragments": [
+          "engine command queue timed out"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.94f7f143da09",
+    "source": "engine command timed out",
+    "parameters": [],
+    "patterns": [
+      "engine command timed out"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "engine command timed out"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.144e021ea102",
+    "source": "engine dropped reply",
+    "parameters": [],
+    "patterns": [
+      "engine dropped reply"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "engine dropped reply"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.1e2859889763",
+    "source": "engine shut down",
+    "parameters": [],
+    "patterns": [
+      "engine shut down"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/handle.rs",
+        "fragments": [
+          "engine shut down"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.1a8092a9e17b",
+    "source": "inconsistent hybrid torrent layout: hybrid torrent contains no non-empty payload",
+    "parameters": [],
+    "patterns": [
+      "inconsistent hybrid torrent layout: hybrid torrent contains no non-empty payload"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "inconsistent hybrid torrent layout: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/parse.rs",
+        "fragments": [
+          "hybrid torrent contains no non-empty payload"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.b7ae21c44ff6",
+    "source": "inconsistent hybrid torrent layout: v1 and v2 payload file lengths differ",
+    "parameters": [],
+    "patterns": [
+      "inconsistent hybrid torrent layout: v1 and v2 payload file lengths differ"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "inconsistent hybrid torrent layout: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/parse.rs",
+        "fragments": [
+          "v1 and v2 payload file lengths differ"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.9326476242b3",
+    "source": "inconsistent hybrid torrent layout: v1 and v2 payload file paths differ",
+    "parameters": [],
+    "patterns": [
+      "inconsistent hybrid torrent layout: v1 and v2 payload file paths differ"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "inconsistent hybrid torrent layout: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/parse.rs",
+        "fragments": [
+          "v1 and v2 payload file paths differ"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.3f07f64f61cb",
+    "source": "inconsistent hybrid torrent layout: v1 and v2 piece lengths differ or are zero",
+    "parameters": [],
+    "patterns": [
+      "inconsistent hybrid torrent layout: v1 and v2 piece lengths differ or are zero"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "inconsistent hybrid torrent layout: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/parse.rs",
+        "fragments": [
+          "v1 and v2 piece lengths differ or are zero"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.f278a13a3376",
+    "source": "inconsistent hybrid torrent layout: v1 and v2 torrent names differ",
+    "parameters": [],
+    "patterns": [
+      "inconsistent hybrid torrent layout: v1 and v2 torrent names differ"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "inconsistent hybrid torrent layout: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/parse.rs",
+        "fragments": [
+          "v1 and v2 torrent names differ"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.b8304688e82f",
+    "source": "inconsistent hybrid torrent layout: v1 contains more payload files than v2",
+    "parameters": [],
+    "patterns": [
+      "inconsistent hybrid torrent layout: v1 contains more payload files than v2"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "inconsistent hybrid torrent layout: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/parse.rs",
+        "fragments": [
+          "v1 contains more payload files than v2"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.ea595086d698",
+    "source": "inconsistent hybrid torrent layout: v1 file indexes are not contiguous",
+    "parameters": [],
+    "patterns": [
+      "inconsistent hybrid torrent layout: v1 file indexes are not contiguous"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "inconsistent hybrid torrent layout: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/parse.rs",
+        "fragments": [
+          "v1 file indexes are not contiguous"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.e93477af17f9",
+    "source": "inconsistent hybrid torrent layout: v1 file offsets are not contiguous",
+    "parameters": [],
+    "patterns": [
+      "inconsistent hybrid torrent layout: v1 file offsets are not contiguous"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "inconsistent hybrid torrent layout: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/parse.rs",
+        "fragments": [
+          "v1 file offsets are not contiguous"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.f46f2d6bd4e1",
+    "source": "inconsistent hybrid torrent layout: v1 padding does not align payload files to v2 piece boundaries",
+    "parameters": [],
+    "patterns": [
+      "inconsistent hybrid torrent layout: v1 padding does not align payload files to v2 piece boundaries"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "inconsistent hybrid torrent layout: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/parse.rs",
+        "fragments": [
+          "v1 padding does not align payload files to v2 piece boundaries"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.9b4ad440ae84",
+    "source": "inconsistent hybrid torrent layout: v1 trailing padding does not match the v2 logical end",
+    "parameters": [],
+    "patterns": [
+      "inconsistent hybrid torrent layout: v1 trailing padding does not match the v2 logical end"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "inconsistent hybrid torrent layout: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/parse.rs",
+        "fragments": [
+          "v1 trailing padding does not match the v2 logical end"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.75fc4229108e",
+    "source": "inconsistent hybrid torrent layout: v2 contains more payload files than v1",
+    "parameters": [],
+    "patterns": [
+      "inconsistent hybrid torrent layout: v2 contains more payload files than v1"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "inconsistent hybrid torrent layout: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/parse.rs",
+        "fragments": [
+          "v2 contains more payload files than v1"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.6aca8535fb1a",
+    "source": "inconsistent hybrid torrent layout: v2 file indexes are not contiguous",
+    "parameters": [],
+    "patterns": [
+      "inconsistent hybrid torrent layout: v2 file indexes are not contiguous"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "inconsistent hybrid torrent layout: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/parse.rs",
+        "fragments": [
+          "v2 file indexes are not contiguous"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.00766a0d9e46",
+    "source": "inconsistent hybrid torrent layout: v2 file offsets are not contiguous",
+    "parameters": [],
+    "patterns": [
+      "inconsistent hybrid torrent layout: v2 file offsets are not contiguous"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "inconsistent hybrid torrent layout: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/parse.rs",
+        "fragments": [
+          "v2 file offsets are not contiguous"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.3fce715b1916",
+    "source": "inconsistent hybrid torrent layout: v2 file piece offsets are not correctly aligned",
+    "parameters": [],
+    "patterns": [
+      "inconsistent hybrid torrent layout: v2 file piece offsets are not correctly aligned"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "inconsistent hybrid torrent layout: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/parse.rs",
+        "fragments": [
+          "v2 file piece offsets are not correctly aligned"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.2e1b3585408b",
+    "source": "inconsistent hybrid torrent layout: v2 file tree contains an explicit padding file",
+    "parameters": [],
+    "patterns": [
+      "inconsistent hybrid torrent layout: v2 file tree contains an explicit padding file"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "inconsistent hybrid torrent layout: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/parse.rs",
+        "fragments": [
+          "v2 file tree contains an explicit padding file"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.c12092828a5a",
+    "source": "inconsistent hybrid torrent layout: v2 file tree mixes rooted and rootless paths",
+    "parameters": [],
+    "patterns": [
+      "inconsistent hybrid torrent layout: v2 file tree mixes rooted and rootless paths"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "inconsistent hybrid torrent layout: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/parse.rs",
+        "fragments": [
+          "v2 file tree mixes rooted and rootless paths"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.9b1dce69f841",
+    "source": "info hash contains {value0} bytes; maximum is {value1}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "info hash contains {value0} bytes; maximum is {value1}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-api-native/src/handlers.rs",
+        "fragments": [
+          "contains {} bytes; maximum is {maximum}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.c5495e6d66f9",
+    "source": "info hash must not be empty",
+    "parameters": [],
+    "patterns": [
+      "info hash must not be empty"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-api-native/src/handlers.rs",
+        "fragments": [
+          "info hash must not be empty"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.a674944c1f27",
+    "source": "integer overflow while parsing field: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "integer overflow while parsing field: {value0}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "integer overflow while parsing field: {0}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.18fb1444bf4a",
+    "source": "interrupted transfer-core cutovers were restored to the reference owner",
+    "parameters": [],
+    "patterns": [
+      "interrupted transfer-core cutovers were restored to the reference owner"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "interrupted transfer-core cutovers were restored to the reference owner"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.bf5899b3c604",
+    "source": "invalid BEP 52 piece layers: duplicate piece-layer key",
+    "parameters": [],
+    "patterns": [
+      "invalid BEP 52 piece layers: duplicate piece-layer key"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "invalid BEP 52 piece layers: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/parse.rs",
+        "fragments": [
+          "duplicate piece-layer key"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.b1e58c514b95",
+    "source": "invalid BEP 52 piece layers: missing piece layer for a layered file",
+    "parameters": [],
+    "patterns": [
+      "invalid BEP 52 piece layers: missing piece layer for a layered file"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "invalid BEP 52 piece layers: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/parse.rs",
+        "fragments": [
+          "missing piece layer for a layered file"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.09268e93424c",
+    "source": "invalid BEP 52 piece layers: piece-layer bytes are not a multiple of 32",
+    "parameters": [],
+    "patterns": [
+      "invalid BEP 52 piece layers: piece-layer bytes are not a multiple of 32"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "invalid BEP 52 piece layers: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/parse.rs",
+        "fragments": [
+          "piece-layer bytes are not a multiple of 32"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.879e51eab40d",
+    "source": "invalid BEP 52 piece layers: piece-layer key has no matching layered file",
+    "parameters": [],
+    "patterns": [
+      "invalid BEP 52 piece layers: piece-layer key has no matching layered file"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "invalid BEP 52 piece layers: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/parse.rs",
+        "fragments": [
+          "piece-layer key has no matching layered file"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.4d2d6ca5076e",
+    "source": "invalid BEP 52 piece layers: piece-layer key must be a 32-byte pieces root",
+    "parameters": [],
+    "patterns": [
+      "invalid BEP 52 piece layers: piece-layer key must be a 32-byte pieces root"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "invalid BEP 52 piece layers: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/parse.rs",
+        "fragments": [
+          "piece-layer key must be a 32-byte pieces root"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.e9728370788c",
+    "source": "invalid BEP 52 piece layers: same pieces root has conflicting file requirements",
+    "parameters": [],
+    "patterns": [
+      "invalid BEP 52 piece layers: same pieces root has conflicting file requirements"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "invalid BEP 52 piece layers: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/parse.rs",
+        "fragments": [
+          "same pieces root has conflicting file requirements"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.58e0d0bb52da",
+    "source": "invalid BEP 52 piece-layer count: expected {value0}, got {value1}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "invalid BEP 52 piece-layer count: expected {value0}, got {value1}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "invalid BEP 52 piece-layer count: expected {expected}, got {actual}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.18fadbe1759d",
+    "source": "invalid UTF-8 in field: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "invalid UTF-8 in field: {value0}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "invalid UTF-8 in field: {0}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.9aa369cf35cd",
+    "source": "invalid field type for: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "invalid field type for: {value0}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "invalid field type for: {0}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.d0886bb2fdb9",
+    "source": "invalid file path: NUL byte in path component",
+    "parameters": [],
+    "patterns": [
+      "invalid file path: NUL byte in path component"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "invalid file path: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-path/src/error.rs",
+        "fragments": [
+          "NUL byte in path component"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.10246cddf550",
+    "source": "invalid file path: Windows reserved name: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "invalid file path: Windows reserved name: {value0}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "invalid file path: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-path/src/error.rs",
+        "fragments": [
+          "Windows reserved name: {0}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.7e3ab46428e7",
+    "source": "invalid file path: absolute path not allowed: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "invalid file path: absolute path not allowed: {value0}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "invalid file path: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-path/src/error.rs",
+        "fragments": [
+          "absolute path not allowed: {0}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.8cbc980a805a",
+    "source": "invalid file path: empty path component",
+    "parameters": [],
+    "patterns": [
+      "invalid file path: empty path component"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "invalid file path: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-path/src/error.rs",
+        "fragments": [
+          "empty path component"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.9e0a8a1720b9",
+    "source": "invalid file path: parent traversal not allowed: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "invalid file path: parent traversal not allowed: {value0}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "invalid file path: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-path/src/error.rs",
+        "fragments": [
+          "parent traversal not allowed: {0}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.3da8fa3ede77",
+    "source": "invalid file path: path component contains illegal character: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "invalid file path: path component contains illegal character: {value0}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "invalid file path: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-path/src/error.rs",
+        "fragments": [
+          "path component contains illegal character: {0:?}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.1016f69140f2",
+    "source": "invalid file path: path component is too long: {value0} > max {value1}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "invalid file path: path component is too long: {value0} > max {value1}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "invalid file path: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-path/src/error.rs",
+        "fragments": [
+          "path component is too long: {len} > max {max}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.4eb5fa8e51d7",
+    "source": "invalid file path: path is empty",
+    "parameters": [],
+    "patterns": [
+      "invalid file path: path is empty"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "invalid file path: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-path/src/error.rs",
+        "fragments": [
+          "path is empty"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.0be1ae08ddf8",
+    "source": "invalid file path: path is too long: {value0} > max {value1}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "invalid file path: path is too long: {value0} > max {value1}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "invalid file path: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-path/src/error.rs",
+        "fragments": [
+          "path is too long: {len} > max {max}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.6bc49bf8fdd8",
+    "source": "invalid file path: too many path components: {value0} > max {value1}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "invalid file path: too many path components: {value0} > max {value1}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "invalid file path: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-path/src/error.rs",
+        "fragments": [
+          "too many path components: {count} > max {max}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.94f4fb7c1ced",
+    "source": "invalid integer value for {value0}: {value1}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "invalid integer value for {value0}: {value1}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "invalid integer value for {field}: {value}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.7a32102c05fc",
+    "source": "invalid piece count: expected {value0}, got {value1}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "invalid piece count: expected {value0}, got {value1}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "invalid piece count: expected {expected}, got {actual}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.1129424e6b2c",
+    "source": "invalid piece length: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "invalid piece length: {value0}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "invalid piece length: {0}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.8d62f6d80b71",
+    "source": "invalid pieces length: {value0} (must be multiple of 20)",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "invalid pieces length: {value0} (must be multiple of 20)"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "invalid pieces length: {0} (must be multiple of 20)"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.46d998236685",
+    "source": "metadata-pending torrent restored",
+    "parameters": [],
+    "patterns": [
+      "metadata-pending torrent restored"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/restore.rs",
+        "fragments": [
+          "metadata-pending torrent restored"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.9415d3513865",
+    "source": "metainfo limit exceeded for {value0}: limit {value1}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "metainfo limit exceeded for {value0}: limit {value1}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "metainfo limit exceeded for {field}: limit {limit}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.e220f7984688",
+    "source": "missing required field: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "missing required field: {value0}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "missing required field: {0}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.a7472f58df32",
+    "source": "private restore validation panicked",
+    "parameters": [],
+    "patterns": [
+      "private restore validation panicked"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "\"private restore validation\""
+        ]
+      },
+      {
+        "path": "crates/rt-engine/src/lib.rs",
+        "fragments": [
+          "format!(\"{task} {outcome}\")"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.06a6365e2bb2",
+    "source": "private restore validation was cancelled",
+    "parameters": [],
+    "patterns": [
+      "private restore validation was cancelled"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "\"private restore validation\""
+        ]
+      },
+      {
+        "path": "crates/rt-engine/src/lib.rs",
+        "fragments": [
+          "format!(\"{task} {outcome}\")"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.a23742a98d20",
+    "source": "private resume invalidation panicked",
+    "parameters": [],
+    "patterns": [
+      "private resume invalidation panicked"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "\"private resume invalidation\""
+        ]
+      },
+      {
+        "path": "crates/rt-engine/src/lib.rs",
+        "fragments": [
+          "format!(\"{task} {outcome}\")"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.30c0067905ad",
+    "source": "private resume invalidation was cancelled",
+    "parameters": [],
+    "patterns": [
+      "private resume invalidation was cancelled"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "\"private resume invalidation\""
+        ]
+      },
+      {
+        "path": "crates/rt-engine/src/lib.rs",
+        "fragments": [
+          "format!(\"{task} {outcome}\")"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.6d76a0210598",
+    "source": "public metainfo save panicked",
+    "parameters": [],
+    "patterns": [
+      "public metainfo save panicked"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "\"public metainfo save\""
+        ]
+      },
+      {
+        "path": "crates/rt-engine/src/lib.rs",
+        "fragments": [
+          "format!(\"{task} {outcome}\")"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.db36121486d5",
+    "source": "public metainfo save was cancelled",
+    "parameters": [],
+    "patterns": [
+      "public metainfo save was cancelled"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "\"public metainfo save\""
+        ]
+      },
+      {
+        "path": "crates/rt-engine/src/lib.rs",
+        "fragments": [
+          "format!(\"{task} {outcome}\")"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.0c119603fab8",
+    "source": "qBittorrent preference update could not apply backend user agent",
+    "parameters": [],
+    "patterns": [
+      "qBittorrent preference update could not apply backend user agent"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "qBittorrent preference update could not apply backend user agent"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.06ddc2329eb4",
+    "source": "qBittorrent preferences updated backend session feature",
+    "parameters": [],
+    "patterns": [
+      "qBittorrent preferences updated backend session feature"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "qBittorrent preferences updated backend session feature"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.0de8314257b6",
+    "source": "qBittorrent preferences updated backend user agent",
+    "parameters": [],
+    "patterns": [
+      "qBittorrent preferences updated backend user agent"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "qBittorrent preferences updated backend user agent"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.3a860c6b0715",
+    "source": "rTorrent log ingest failed for {value0}: {value1}",
+    "parameters": [
+      {
+        "name": "value0"
+      },
+      {
+        "name": "value1"
+      }
+    ],
+    "patterns": [
+      "rTorrent log ingest failed for {value0}: {value1}"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/rtorrent_logs.rs",
+        "fragments": [
+          "rTorrent log ingest failed for {source}: {redacted_error}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.8e4b4311d177",
+    "source": "rTorrent log ingest recovered for {value0}",
+    "parameters": [
+      {
+        "name": "value0"
+      }
+    ],
+    "patterns": [
+      "rTorrent log ingest recovered for {value0}"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/rtorrent_logs.rs",
+        "fragments": [
+          "rTorrent log ingest recovered for {source}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.f6c6bfcb4941",
+    "source": "rTorrent settings saved",
+    "parameters": [],
+    "patterns": [
+      "rTorrent settings saved"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "rTorrent settings saved"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.b82e28a2587f",
+    "source": "ratio groups updated",
+    "parameters": [],
+    "patterns": [
+      "ratio groups updated"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "ratio groups updated"
+        ]
+      },
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "ratio groups updated"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.d25cc140d395",
+    "source": "saved views updated",
+    "parameters": [],
+    "patterns": [
+      "saved views updated"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "saved views updated"
+        ]
+      },
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "saved views updated"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.8813e2f4e175",
+    "source": "storage move committed but durable job completion failed",
+    "parameters": [],
+    "patterns": [
+      "storage move committed but durable job completion failed"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/storage.rs",
+        "fragments": [
+          "storage move committed but durable job completion failed"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.58717b55ed5a",
+    "source": "storage move committed but task save path handoff failed",
+    "parameters": [],
+    "patterns": [
+      "storage move committed but task save path handoff failed"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/storage.rs",
+        "fragments": [
+          "storage move committed but task save path handoff failed"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.023ba6340afc",
+    "source": "storage move completed on disk but durable save path persistence failed",
+    "parameters": [],
+    "patterns": [
+      "storage move completed on disk but durable save path persistence failed"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/storage.rs",
+        "fragments": [
+          "storage move completed on disk but durable save path persistence failed"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.acf66cd5dceb",
+    "source": "storage move failed; save path unchanged",
+    "parameters": [],
+    "patterns": [
+      "storage move failed; save path unchanged"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/storage.rs",
+        "fragments": [
+          "storage move failed; save path unchanged"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.24a55724e481",
+    "source": "storage move requires manual recovery; torrent task stopped",
+    "parameters": [],
+    "patterns": [
+      "storage move requires manual recovery; torrent task stopped"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/storage.rs",
+        "fragments": [
+          "storage move requires manual recovery; torrent task stopped"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.6f23cb150158",
+    "source": "storage updated",
+    "parameters": [],
+    "patterns": [
+      "storage updated"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "storage updated"
+        ]
+      },
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "storage updated"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.c0dc0665064b",
+    "source": "swarm preparation panicked",
+    "parameters": [],
+    "patterns": [
+      "swarm preparation panicked"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "\"swarm preparation\""
+        ]
+      },
+      {
+        "path": "crates/rt-engine/src/lib.rs",
+        "fragments": [
+          "format!(\"{task} {outcome}\")"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.52245fa417bd",
+    "source": "swarm preparation was cancelled",
+    "parameters": [],
+    "patterns": [
+      "swarm preparation was cancelled"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "\"swarm preparation\""
+        ]
+      },
+      {
+        "path": "crates/rt-engine/src/lib.rs",
+        "fragments": [
+          "format!(\"{task} {outcome}\")"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.6de238cc2366",
+    "source": "the previous run did not shut down cleanly",
+    "parameters": [],
+    "patterns": [
+      "the previous run did not shut down cleanly"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "the previous run did not shut down cleanly"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.d5c3adf9e36d",
+    "source": "torrent added",
+    "parameters": [],
+    "patterns": [
+      "torrent added"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "torrent added"
+        ]
+      },
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "torrent added"
+        ]
+      },
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "torrent added"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.2273100911c7",
+    "source": "torrent fields updated after storage move",
+    "parameters": [],
+    "patterns": [
+      "torrent fields updated after storage move"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/storage.rs",
+        "fragments": [
+          "torrent fields updated after storage move"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.67739332b7ca",
+    "source": "torrent file paths collide on this platform: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "torrent file paths collide on this platform: {value0}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "torrent file paths collide on this platform: {0}"
+        ]
+      },
+      {
+        "path": "crates/rt-metainfo/src/parse.rs",
+        "fragments": [
+          "PathError::ConflictingPaths(path) => MetainfoError::ConflictingFilePaths(path)"
+        ]
+      },
+      {
+        "path": "crates/rt-path/src/error.rs",
+        "fragments": [
+          "torrent file paths collide on this platform: {0}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.4238913dfcec",
+    "source": "torrent has zero total length",
+    "parameters": [],
+    "patterns": [
+      "torrent has zero total length"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "torrent has zero total length"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.95ba1a88e407",
+    "source": "torrent paused",
+    "parameters": [],
+    "patterns": [
+      "torrent paused"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "torrent paused"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.8844a89f84cd",
+    "source": "torrent payload cleanup did not complete",
+    "parameters": [],
+    "patterns": [
+      "torrent payload cleanup did not complete"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/storage.rs",
+        "fragments": [
+          "torrent payload cleanup did not complete"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.0207c88aa93e",
+    "source": "torrent private restore allocation of {value0} bytes denied for {value1} input bytes",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "torrent private restore allocation of {value0} bytes denied for {value1} input bytes"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "torrent {phase} allocation of {bytes} bytes denied for {raw_len} input bytes"
+        ]
+      },
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "\"private restore\""
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.c855adee50c9",
+    "source": "torrent private restore input is {value0} bytes; maximum is {value1}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "torrent private restore input is {value0} bytes; maximum is {value1}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "torrent {phase} input is {raw_len} bytes; maximum is {MAX_TORRENT_BYTES}"
+        ]
+      },
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "\"private restore\""
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.ec54ae9a355e",
+    "source": "torrent private restore memory estimate does not fit in u64",
+    "parameters": [],
+    "patterns": [
+      "torrent private restore memory estimate does not fit in u64"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "torrent {phase} memory estimate does not fit in u64"
+        ]
+      },
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "\"private restore\""
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.85d80951967f",
+    "source": "torrent reannounce requested",
+    "parameters": [],
+    "patterns": [
+      "torrent reannounce requested"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "torrent reannounce requested"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.ff7a1bc3efea",
+    "source": "torrent recheck requested",
+    "parameters": [],
+    "patterns": [
+      "torrent recheck requested"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "torrent recheck requested"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.23c3f3f4d2f0",
+    "source": "torrent removal could not delete its metadata",
+    "parameters": [],
+    "patterns": [
+      "torrent removal could not delete its metadata"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/lifecycle.rs",
+        "fragments": [
+          "torrent removal could not delete its metadata"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.a8f8bed064e8",
+    "source": "torrent removal queued after payload cleanup",
+    "parameters": [],
+    "patterns": [
+      "torrent removal queued after payload cleanup"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/lifecycle.rs",
+        "fragments": [
+          "torrent removal queued after payload cleanup"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.4a256ac697a1",
+    "source": "torrent restored from database",
+    "parameters": [],
+    "patterns": [
+      "torrent restored from database"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/restore.rs",
+        "fragments": [
+          "torrent restored from database"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.d290024c20a4",
+    "source": "torrent resumed",
+    "parameters": [],
+    "patterns": [
+      "torrent resumed"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "torrent resumed"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.9a20d581a17d",
+    "source": "torrent swarm switch allocation of {value0} bytes denied for {value1} input bytes",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "torrent swarm switch allocation of {value0} bytes denied for {value1} input bytes"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "torrent {phase} allocation of {bytes} bytes denied for {raw_len} input bytes"
+        ]
+      },
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "\"swarm switch\""
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.39a2224e5c9c",
+    "source": "torrent swarm switch input is {value0} bytes; maximum is {value1}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "torrent swarm switch input is {value0} bytes; maximum is {value1}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "torrent {phase} input is {raw_len} bytes; maximum is {MAX_TORRENT_BYTES}"
+        ]
+      },
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "\"swarm switch\""
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.509698b18cdc",
+    "source": "torrent swarm switch memory estimate does not fit in u64",
+    "parameters": [],
+    "patterns": [
+      "torrent swarm switch memory estimate does not fit in u64"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "torrent {phase} memory estimate does not fit in u64"
+        ]
+      },
+      {
+        "path": "crates/rt-engine/src/engine/swarm_switch.rs",
+        "fragments": [
+          "\"swarm switch\""
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.9f6adf2fafe5",
+    "source": "torrent {value0} already has active {value1} job {value2}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value2",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "torrent {value0} already has active {value1} job {value2}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "torrent {info_hash} already has active {label} job {job_id}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.a6c739573725",
+    "source": "torrent {value0} has a storage move being prepared; retry later",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "torrent {value0} has a storage move being prepared; retry later"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine/storage.rs",
+        "fragments": [
+          "torrent {info_hash} has a storage move being prepared; retry later"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.255d79b52b70",
+    "source": "torrent {value0} is being removed; wait for payload cleanup",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "torrent {value0} is being removed; wait for payload cleanup"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "torrent {info_hash} is being removed; wait for payload cleanup"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.f5067e34aab6",
+    "source": "tracker reannounce requested",
+    "parameters": [],
+    "patterns": [
+      "tracker reannounce requested"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-engine/src/engine.rs",
+        "fragments": [
+          "tracker reannounce requested"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.4bacb86c142d",
+    "source": "unsupported metainfo version: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "unsupported metainfo version: {value0}"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "unsupported metainfo version: {0}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.2311b30b6530",
+    "source": "workflow runs updated",
+    "parameters": [],
+    "patterns": [
+      "workflow runs updated"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "workflow runs updated"
+        ]
+      },
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "workflow runs updated"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.e2ca9d13f5cb",
+    "source": "workflows updated",
+    "parameters": [],
+    "patterns": [
+      "workflows updated"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/api/handlers.rs",
+        "fragments": [
+          "workflows updated"
+        ]
+      },
+      {
+        "path": "sidecar/src/qbcompat/handlers.rs",
+        "fragments": [
+          "workflows updated"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.f8521f0f7ef0",
+    "source": "zero-length name",
+    "parameters": [],
+    "patterns": [
+      "zero-length name"
+    ],
+    "sources": [
+      {
+        "path": "crates/rt-metainfo/src/error.rs",
+        "fragments": [
+          "zero-length name"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.04c0ccbbbecc",
+    "source": "compatible-client service refused startup because rTorrent tracker identity was not applied",
+    "parameters": [],
+    "patterns": [
+      "compatible-client service refused startup because rTorrent tracker identity was not applied"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/main.rs",
+        "fragments": [
+          "compatible-client service refused startup because rTorrent tracker identity was not applied"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "server.message.a6d49e432fd3",
+    "source": "rTorrent tracker identity applied before compatible-client service became available",
+    "parameters": [],
+    "patterns": [
+      "rTorrent tracker identity applied before compatible-client service became available"
+    ],
+    "sources": [
+      {
+        "path": "sidecar/src/main.rs",
+        "fragments": [
+          "rTorrent tracker identity applied before compatible-client service became available"
+        ]
+      }
+    ]
+  }
+]

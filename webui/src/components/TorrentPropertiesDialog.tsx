@@ -1,6 +1,7 @@
 import { SwarmSwitchPanel } from './SwarmSwitchPanel'
 import { LocalizedErrorText, LocalizedText } from '../lib/LocalizedText'
 import { useInterfaceLanguage } from '../lib/interfaceLocale'
+import { formatRegionalNumber } from '../lib/localeFormat'
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type TorrentSummary, type TorrentFile, type Tracker } from '../api/client'
@@ -240,7 +241,16 @@ export function TorrentPropertiesDialog({ torrent, onClose }: Props) {
                       <div className="tng-action-grid-3" style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 7, alignItems: 'center' }}>
                         <div>
                           <div style={{ color: 'var(--text)', fontSize: 11, overflowWrap: 'anywhere' }}><TrackerUrl url={tracker.url} /></div>
-                          <div style={{ color: 'var(--faint)', fontSize: 11 }}><LocalizedText source="Tracker scrape: {seeds} seeds, {peers} peers" parameters={{ seeds: tracker.scrape_complete.toLocaleString(), peers: tracker.scrape_incomplete.toLocaleString() }} />{tracker.message ? ` — ${tracker.message}` : ''}</div>
+                          <div style={{ color: 'var(--faint)', fontSize: 11 }}>
+                            <LocalizedText
+                              source="Tracker scrape: {seeds} seeds, {peers} peers"
+                              parameters={{
+                                seeds: formatRegionalNumber(tracker.scrape_complete),
+                                peers: formatRegionalNumber(tracker.scrape_incomplete),
+                              }}
+                            />
+                            {tracker.message ? <> — <bdi dir="auto" lang="und">{tracker.message}</bdi></> : ''}
+                          </div>
                         </div>
                         <button type="button" disabled={busy} onClick={() => setEditingTracker(tracker)} style={smallButton('var(--muted)', busy)}><LocalizedText source="Edit" /></button>
                         <button type="button" disabled={busy} onClick={() => apply('Tracker removed', () => api.torrents.patchTrackers(torrent.hash, { remove: [tracker.url] }))} style={smallButton('#f87171', busy)}><LocalizedText source="Remove" /></button>
@@ -349,9 +359,9 @@ function FileRow({ file, torrentComplete, busy, renaming, name, onName, onRename
       ) : (
         <div className="tng-action-grid-3" style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 7, alignItems: 'center' }}>
           <div style={{ minWidth: 0 }}>
-            <div style={{ color: 'var(--text)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={file.path}>{file.path}</div>
+            <div style={{ color: 'var(--text)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={file.path} dir="ltr" lang="und"><bdi dir="ltr" lang="und">{file.path}</bdi></div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
-              <div role="progressbar" aria-label={t('File progress for {path}', { path: file.path })} {...textProps('File progress for {path}')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100, Math.max(0, pct))} style={{ flex: 1, height: 4, background: 'var(--surface-2)', borderRadius: 999, overflow: 'hidden' }}>
+              <div role="progressbar" aria-label={t('File progress for {path}', { path: `\u2068${file.path}\u2069` })} {...textProps('File progress for {path}')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100, Math.max(0, pct))} style={{ flex: 1, height: 4, background: 'var(--surface-2)', borderRadius: 999, overflow: 'hidden' }}>
                 <div style={{
                   width: `${Math.min(100, Math.max(0, pct))}%`, height: '100%',
                   background: pct >= 100 ? 'var(--success)' : 'var(--accent)',
@@ -365,7 +375,7 @@ function FileRow({ file, torrentComplete, busy, renaming, name, onName, onRename
               }}><LocalizedText source={priority.label} /></span>
             </div>
           </div>
-          <select aria-label={t('Priority for {path}', { path: file.path })} {...textProps('Priority for {path}')} value={file.priority} disabled={busy} onChange={e => onPriority(Number(e.target.value))} style={{ ...INPUT, width: 112 }}>
+          <select aria-label={t('Priority for {path}', { path: `\u2068${file.path}\u2069` })} {...textProps('Priority for {path}')} value={file.priority} disabled={busy} onChange={e => onPriority(Number(e.target.value))} style={{ ...INPUT, width: 112 }}>
             <option value={0}><LocalizedText source="Do not download" /></option>
             <option value={1} {...textProps("Normal")}>{t("Normal")}</option>
             <option value={2} {...textProps("High")}>{t("High")}</option>

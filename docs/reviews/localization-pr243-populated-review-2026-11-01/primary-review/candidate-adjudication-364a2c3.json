@@ -1,0 +1,841 @@
+{
+  "artifactVersion": 1,
+  "review": "Independent exact-cell adjudication of all 25 prior uncertainty candidates. No catalog or PR changes made by reviewer.",
+  "pr": {
+    "number": 243,
+    "repository": "snapetech-org/TorrentNG",
+    "state": "open",
+    "draft": true,
+    "headRef": "codex/torrentng-localization-audit-20261030",
+    "finalHeadSha": "364a2c3399daf59fa83714aaa10bcea7ebdfb80e",
+    "finalTreeSha": "8669f5a3657b79557123391eb612b9712627d4f3",
+    "finalParentSha": "ff4b3fbcf7a4de51ffc8c120ffaac3a76850f8c9",
+    "priorReviewHeadSha": "ff4b3fbcf7a4de51ffc8c120ffaac3a76850f8c9",
+    "priorReviewTreeSha": "27a26bb739d8ff505868d9201fce047b8a3fc532",
+    "headChangedDuringReview": true
+  },
+  "inputPins": {
+    "preparedInputBundle": "/mnt/disks/scratch/task-worktrees/localization-20261030/torrent-populated-review-ad256fee0e-v2-policy-20261101/",
+    "preparedInputManifestSha256": "d8ad8967e213c473e75ed1f3018054137a2672c2921730a3ea34a66b42b9f092",
+    "preparedBatchesSha256": "15b341b3acdc745cd4162e63b463247729258d24eaa9c8b1ec2b4261ef86d181e",
+    "uncertainCandidatesFile": "uncertain-candidates.jsonl",
+    "uncertainCandidatesSha256": "2e78a860669a8ce7763a7143f49ae7cb7c7b9f18911c96078d4c727eb7a12b9b"
+  },
+  "coverage": {
+    "reviewedCandidateRows": 25,
+    "uniqueCellIds": 25,
+    "dispositionCounts": {
+      "confirmed correction": 6,
+      "acceptable": 16,
+      "unresolved": 3
+    },
+    "cellsNotConfidentlyJudged": [
+      "fr:ui.2c366eda72badf17",
+      "fr:ui.e2f19f7c2f11f163",
+      "vi:ui.1d87e1c4de97aaa0"
+    ]
+  },
+  "catalogFiles": {
+    "ar": {
+      "path": "webui/src/lib/locale-catalogs/ar.ts",
+      "startBlobSha": "c8ac2852b1621cfa0280d4ba2eec0742865b806b",
+      "startSha256": "7287b6c6be8cbd890dc6ac555e496fb8572c8661711474b879734dcc510a43fd",
+      "finalBlobSha": "c8ac2852b1621cfa0280d4ba2eec0742865b806b",
+      "finalSha256": "7287b6c6be8cbd890dc6ac555e496fb8572c8661711474b879734dcc510a43fd"
+    },
+    "de": {
+      "path": "webui/src/lib/locale-catalogs/de.ts",
+      "startBlobSha": "9f3cf79b375d8fe3badeaa2acdff6e2952058af7",
+      "startSha256": "55349c6e56f8fcc6d93768e5e19dccb72a5f19fbe2986653cbc604272e8a1281",
+      "finalBlobSha": "9f3cf79b375d8fe3badeaa2acdff6e2952058af7",
+      "finalSha256": "55349c6e56f8fcc6d93768e5e19dccb72a5f19fbe2986653cbc604272e8a1281"
+    },
+    "es": {
+      "path": "webui/src/lib/locale-catalogs/es.ts",
+      "startBlobSha": "7d26bbeefdd6db4b0365d27b0bf45a39932cb8df",
+      "startSha256": "6b0c354b3bb2f26c587b313862a94bffd1bce783a3717e696d63271410b0f171",
+      "finalBlobSha": "7d26bbeefdd6db4b0365d27b0bf45a39932cb8df",
+      "finalSha256": "6b0c354b3bb2f26c587b313862a94bffd1bce783a3717e696d63271410b0f171"
+    },
+    "fr": {
+      "path": "webui/src/lib/locale-catalogs/fr.ts",
+      "startBlobSha": "4eb6a01a50420430f281756f2a9b29a28644fd8f",
+      "startSha256": "0a81fef9be27f99d02b8d676cee4d6f0e48572d2fad3206cd87d2ea5bef643cf",
+      "finalBlobSha": "4eb6a01a50420430f281756f2a9b29a28644fd8f",
+      "finalSha256": "0a81fef9be27f99d02b8d676cee4d6f0e48572d2fad3206cd87d2ea5bef643cf"
+    },
+    "hi": {
+      "path": "webui/src/lib/locale-catalogs/hi.ts",
+      "startBlobSha": "3eb73c38baaf81fcc0e419aba3e8e9ebb2589149",
+      "startSha256": "a859905b88d57ac355398edb9f4493fc789225a5cc7f1d377d0df337a8d7097d",
+      "finalBlobSha": "3eb73c38baaf81fcc0e419aba3e8e9ebb2589149",
+      "finalSha256": "a859905b88d57ac355398edb9f4493fc789225a5cc7f1d377d0df337a8d7097d"
+    },
+    "id": {
+      "path": "webui/src/lib/locale-catalogs/id.ts",
+      "startBlobSha": "9237a885bd2fa145af6cdc64d2fae06b2387877e",
+      "startSha256": "00af1e2a1b1a1d55953430860c4d98bfcbd272c5fe346ad499875e514041900c",
+      "finalBlobSha": "ae4c29f68abb2de3987ee64cd22a58c86e4032ca",
+      "finalSha256": "383a815eaef4027f19ca02138e9eeaf40e1e4855aedf11993f4897e044142740"
+    },
+    "ja": {
+      "path": "webui/src/lib/locale-catalogs/ja.ts",
+      "startBlobSha": "bc3f71e7c96781266af1972999bf09bc6ebe2a8f",
+      "startSha256": "05a819b117c67b69b47e1ec0b293d0e4d7a244284413879402f57f5b2044701b",
+      "finalBlobSha": "0aff40899a53fd805d8d01989ddeca00d8d11c9c",
+      "finalSha256": "16067a09758ebc933172b6786f23e852c2d1285b866c3a59412845fc01eabe4a"
+    },
+    "ko": {
+      "path": "webui/src/lib/locale-catalogs/ko.ts",
+      "startBlobSha": "0435f97a523347fd9bf2dc9bd336f65ef464b1c1",
+      "startSha256": "79af5be5085b6e7b3bd065e62851e01ca223d99a6b8d41d9ae5b48ab389ff8f8",
+      "finalBlobSha": "0435f97a523347fd9bf2dc9bd336f65ef464b1c1",
+      "finalSha256": "79af5be5085b6e7b3bd065e62851e01ca223d99a6b8d41d9ae5b48ab389ff8f8"
+    },
+    "pt-BR": {
+      "path": "webui/src/lib/locale-catalogs/pt-BR.ts",
+      "startBlobSha": "6a621ec2276b8927af399772cea36f2d5a96d631",
+      "startSha256": "bf29973c21455d933ccdfd0c88a4cbfa5a280e67ac5858480fe0853e9b2d11dd",
+      "finalBlobSha": "feaf65df3d389f502ba99f0e8e9776a2a152102a",
+      "finalSha256": "23ff8f7e51e13ba8acb2425e4fe50a9522277d50c1bdc9cad0decd9596bc4cec"
+    },
+    "vi": {
+      "path": "webui/src/lib/locale-catalogs/vi.ts",
+      "startBlobSha": "2cbdbd78f145099b32f4eccde4f18c06bade476b",
+      "startSha256": "dbf25077a997ff9cf39d258b2c2bd1bffb7ab87832f352795b398ec7948e162e",
+      "finalBlobSha": "2cbdbd78f145099b32f4eccde4f18c06bade476b",
+      "finalSha256": "dbf25077a997ff9cf39d258b2c2bd1bffb7ab87832f352795b398ec7948e162e"
+    },
+    "zh-Hans": {
+      "path": "webui/src/lib/locale-catalogs/zh-Hans.ts",
+      "startBlobSha": "59baf7712d5de1379f5822fc2cb109f5e992367b",
+      "startSha256": "c8b3bc8ddffbe9c3b367c3d1cb8a91c099d79a756e771c2dbc211183a608920d",
+      "finalBlobSha": "59baf7712d5de1379f5822fc2cb109f5e992367b",
+      "finalSha256": "c8b3bc8ddffbe9c3b367c3d1cb8a91c099d79a756e771c2dbc211183a608920d"
+    },
+    "zh-Hant": {
+      "path": "webui/src/lib/locale-catalogs/zh-Hant.ts",
+      "startBlobSha": "bae014fc7ead45bd301303501cefe8f8c56090d2",
+      "startSha256": "6c89c4b06ec70a3a7e6a4535f7ac88acc497f3e1c03c4af3042b77aa3fc55900",
+      "finalBlobSha": "bae014fc7ead45bd301303501cefe8f8c56090d2",
+      "finalSha256": "6c89c4b06ec70a3a7e6a4535f7ac88acc497f3e1c03c4af3042b77aa3fc55900"
+    }
+  },
+  "sourceFilesAtFinalHead": {
+    "webui/src/components/TorrentToolbar.tsx": {
+      "blobSha": "a7a62197651906bb4ced93e4b7013152ba651d73",
+      "sha256": "4e234f88ab19e3f3dcb42508da600a410a1b7c60e28cbff56f0dab3a0349f14f",
+      "sizeBytes": 7413
+    },
+    "webui/src/components/EnginePanel.tsx": {
+      "blobSha": "c4fdb6873bd92524f2474b925655e6115d842966",
+      "sha256": "432cf872db5065e1d80bf2527831a8833b2c2f1d2e59268760cb0ca962bb35f7",
+      "sizeBytes": 87010
+    },
+    "webui/src/components/DetailDockControls.tsx": {
+      "blobSha": "7ffdb0ea171ddf5ea11e5a8c47e7ab2823239f5d",
+      "sha256": "1eb4f5f5c557b3fbc3ab63528715feeb276c1a657dc0faf61bcc27bf550a26a0",
+      "sizeBytes": 1509
+    },
+    "webui/src/components/TrackerHealthPanel.tsx": {
+      "blobSha": "cab46d43b8210c502773a13b31ed6351e527fbc7",
+      "sha256": "d9147d2429ca8737326c61f4075105e26a02c7aa95557f8d589e2665adcdb909",
+      "sizeBytes": 10527
+    },
+    "webui/src/components/TorrentDetail.tsx": {
+      "blobSha": "075d1e9ee3976a9889c19493925354b05561eee0",
+      "sha256": "1b0cc6369a9d1899d5667b42542c53c4f51d8a73bacc7cb3a2b74cc254f7f160",
+      "sizeBytes": 28345
+    },
+    "webui/src/components/TorrentTable.tsx": {
+      "blobSha": "ec5318d8fc3b86f0e6ee579ed2c70cf17e2ab9aa",
+      "sha256": "6eb390017f19a9440cc53f6b1adb685ca4b02fae38fb87a43de85b5751e28f60",
+      "sizeBytes": 56753
+    },
+    "webui/src/components/TorrentPropertiesDialog.tsx": {
+      "blobSha": "2409b8045563a3d3faa11d931cb8f23afce73d30",
+      "sha256": "a01ebade22af0b6aac756ea2c4fbd3fbd5d8a8f3d0a6d6f921d5d6179632e3ef",
+      "sizeBytes": 28508
+    }
+  },
+  "sourceEvidence": {
+    "announce_action": {
+      "ref": "webui/src/components/TorrentToolbar.tsx:22",
+      "text": "{ key: 'reannounce', icon: '⇄', label: 'Announce', title: 'Reannounce to trackers', color: 'var(--accent)' },",
+      "relatedRef": "webui/src/components/EnginePanel.tsx:167",
+      "relatedText": "tracker_announce: 'Manual tracker announce',"
+    },
+    "pending_autosave_semantics": {
+      "ref": "webui/src/components/EnginePanel.tsx:481–505",
+      "text": [
+        "const restartDirtyCount = data ? dirtySettings.filter(setting => setting.restart_required).length : 0",
+        "const liveDirtyCount = dirtySettings.length - restartDirtyCount",
+        "source: 'Pending autosave · changes: {count} · live: {live} · restart: {restart} · custom lines edited.',",
+        "live: liveDirtyCount.toLocaleString(getRegionalLocale()),",
+        "restart: restartDirtyCount.toLocaleString(getRegionalLocale()),"
+      ],
+      "relatedRefs": [
+        "webui/src/components/EnginePanel.tsx:646",
+        "webui/src/components/EnginePanel.tsx:945"
+      ],
+      "relatedText": [
+        "Live-safe controls are applied immediately; controls marked restart are saved for the next daemon start.",
+        "Autosaves and applies live / Autosaves now; effective after restart"
+      ]
+    },
+    "tracker_context": {
+      "ref": "webui/src/components/TorrentDetail.tsx:404–416",
+      "text": [
+        "{/* Trackers */}",
+        "<Section title={<LocalizedText source=\"Trackers\" />}>",
+        "<LocalizedText source=\"Tracker\" /> (URL/endpoint heading)"
+      ],
+      "relatedRefs": [
+        "webui/src/components/TorrentTable.tsx:219",
+        "webui/src/components/TorrentPropertiesDialog.tsx:198"
+      ],
+      "relatedText": [
+        "{ key: 'tracker', label: 'Tracker', width: '140px' }",
+        "<LocalizedText source=\"Tracker\" />"
+      ]
+    },
+    "ja_empty_state": {
+      "ref": "webui/src/components/TrackerHealthPanel.tsx:64–69",
+      "text": [
+        "data && data.trackers.length === 0",
+        "<LocalizedText source=\"No tracker data cached yet\" />"
+      ]
+    },
+    "dock_position": {
+      "ref": "webui/src/components/DetailDockControls.tsx:3–10",
+      "text": [
+        "export type DetailPosition = 'right' | 'left' | 'bottom' | 'top'",
+        "{ value: 'right', label: 'Right' }",
+        "{ value: 'left', label: 'Left' }",
+        "{ value: 'bottom', label: 'Bottom' }",
+        "{ value: 'top', label: 'Top' }"
+      ]
+    }
+  },
+  "entries": [
+    {
+      "cellId": "ko:ui.2ab52f923e088d0b",
+      "locale": "ko",
+      "key": "Announce",
+      "source": "Announce",
+      "oldTargetAtPriorReviewHead": "알림",
+      "recommendedNewTarget": "알림",
+      "optionalAlternativeIfUnresolved": null,
+      "currentTargetAtFinalHead": "알림",
+      "finalTargetMatchesRecommendation": true,
+      "disposition": "acceptable",
+      "confidence": "high",
+      "rationale": "`알림` can mean notify/announce; the toolbar title and surrounding tracker context identify the protocol recipient, so the action is clear.",
+      "evidenceId": "announce_action",
+      "evidenceRefs": "webui/src/components/TorrentToolbar.tsx:22; webui/src/components/EnginePanel.tsx:167",
+      "localePeerTermsAtFinalHead": {
+        "Reannounce to trackers": "트래커에 다시 알림",
+        "Manual tracker announce": "트래커 수동 알림"
+      },
+      "sourceKeySha256": "2ab52f923e088d0b4600648681bc02ba7882976c53c6fd8ef086ff2af7251696",
+      "oldTargetSha256": "12ddd6ca69068faaae5ea07418efaef8c0806c47ecc8b2041d5dea311a174210",
+      "finalTargetSha256": "12ddd6ca69068faaae5ea07418efaef8c0806c47ecc8b2041d5dea311a174210",
+      "finalCatalogSha256": "79af5be5085b6e7b3bd065e62851e01ca223d99a6b8d41d9ae5b48ab389ff8f8"
+    },
+    {
+      "cellId": "vi:ui.2ab52f923e088d0b",
+      "locale": "vi",
+      "key": "Announce",
+      "source": "Announce",
+      "oldTargetAtPriorReviewHead": "Thông báo",
+      "recommendedNewTarget": "Thông báo",
+      "optionalAlternativeIfUnresolved": null,
+      "currentTargetAtFinalHead": "Thông báo",
+      "finalTargetMatchesRecommendation": true,
+      "disposition": "acceptable",
+      "confidence": "high",
+      "rationale": "`Thông báo` can mean notify/announce; the toolbar title and surrounding tracker context identify the protocol recipient, so the action is clear.",
+      "evidenceId": "announce_action",
+      "evidenceRefs": "webui/src/components/TorrentToolbar.tsx:22; webui/src/components/EnginePanel.tsx:167",
+      "localePeerTermsAtFinalHead": {
+        "Reannounce to trackers": "Thông báo lại cho tracker",
+        "Manual tracker announce": "Thông báo thủ công đến tracker"
+      },
+      "sourceKeySha256": "2ab52f923e088d0b4600648681bc02ba7882976c53c6fd8ef086ff2af7251696",
+      "oldTargetSha256": "a9b656f50b4edb647d37c4ce076024f0b369f67f38f522a5f0099a4f8fe3b09b",
+      "finalTargetSha256": "a9b656f50b4edb647d37c4ce076024f0b369f67f38f522a5f0099a4f8fe3b09b",
+      "finalCatalogSha256": "dbf25077a997ff9cf39d258b2c2bd1bffb7ab87832f352795b398ec7948e162e"
+    },
+    {
+      "cellId": "ko:ui.a7c6b0008f6cf8ca",
+      "locale": "ko",
+      "key": "Reannounce to trackers",
+      "source": "Reannounce to trackers",
+      "oldTargetAtPriorReviewHead": "트래커에 다시 알림",
+      "recommendedNewTarget": "트래커에 다시 알림",
+      "optionalAlternativeIfUnresolved": null,
+      "currentTargetAtFinalHead": "트래커에 다시 알림",
+      "finalTargetMatchesRecommendation": true,
+      "disposition": "acceptable",
+      "confidence": "high",
+      "rationale": "`트래커에 다시 알림` explicitly says to notify/announce the tracker again; the protocol sense is clear in the toolbar context.",
+      "evidenceId": "announce_action",
+      "evidenceRefs": "webui/src/components/TorrentToolbar.tsx:22; webui/src/components/EnginePanel.tsx:167",
+      "localePeerTermsAtFinalHead": {
+        "Reannounce to trackers": "트래커에 다시 알림",
+        "Manual tracker announce": "트래커 수동 알림"
+      },
+      "sourceKeySha256": "a7c6b0008f6cf8caf47fc4e0bd5994d44b99528289b4cc8fe713ee7538cf6f52",
+      "oldTargetSha256": "cc1564d0615f31d5c84d6d6a703cb850be0669ab9ffea646060597b43984b5c7",
+      "finalTargetSha256": "cc1564d0615f31d5c84d6d6a703cb850be0669ab9ffea646060597b43984b5c7",
+      "finalCatalogSha256": "79af5be5085b6e7b3bd065e62851e01ca223d99a6b8d41d9ae5b48ab389ff8f8"
+    },
+    {
+      "cellId": "vi:ui.a7c6b0008f6cf8ca",
+      "locale": "vi",
+      "key": "Reannounce to trackers",
+      "source": "Reannounce to trackers",
+      "oldTargetAtPriorReviewHead": "Thông báo lại cho tracker",
+      "recommendedNewTarget": "Thông báo lại cho tracker",
+      "optionalAlternativeIfUnresolved": null,
+      "currentTargetAtFinalHead": "Thông báo lại cho tracker",
+      "finalTargetMatchesRecommendation": true,
+      "disposition": "acceptable",
+      "confidence": "high",
+      "rationale": "`Thông báo lại cho tracker` explicitly says to notify/announce the tracker again; the protocol sense is clear in the toolbar context.",
+      "evidenceId": "announce_action",
+      "evidenceRefs": "webui/src/components/TorrentToolbar.tsx:22; webui/src/components/EnginePanel.tsx:167",
+      "localePeerTermsAtFinalHead": {
+        "Reannounce to trackers": "Thông báo lại cho tracker",
+        "Manual tracker announce": "Thông báo thủ công đến tracker"
+      },
+      "sourceKeySha256": "a7c6b0008f6cf8caf47fc4e0bd5994d44b99528289b4cc8fe713ee7538cf6f52",
+      "oldTargetSha256": "35ff5f641a90c7e80e796b251a2f6b45ed2847a767f3d30b1891c234da36f144",
+      "finalTargetSha256": "35ff5f641a90c7e80e796b251a2f6b45ed2847a767f3d30b1891c234da36f144",
+      "finalCatalogSha256": "dbf25077a997ff9cf39d258b2c2bd1bffb7ab87832f352795b398ec7948e162e"
+    },
+    {
+      "cellId": "ko:ui.d9d38a2a2fc7cc31",
+      "locale": "ko",
+      "key": "Manual tracker announce",
+      "source": "Manual tracker announce",
+      "oldTargetAtPriorReviewHead": "트래커 수동 알림",
+      "recommendedNewTarget": "트래커 수동 알림",
+      "optionalAlternativeIfUnresolved": null,
+      "currentTargetAtFinalHead": "트래커 수동 알림",
+      "finalTargetMatchesRecommendation": true,
+      "disposition": "acceptable",
+      "confidence": "high",
+      "rationale": "`트래커 수동 알림` identifies a manual announcement to the tracker; the recipient is explicit.",
+      "evidenceId": "announce_action",
+      "evidenceRefs": "webui/src/components/TorrentToolbar.tsx:22; webui/src/components/EnginePanel.tsx:167",
+      "localePeerTermsAtFinalHead": {
+        "Reannounce to trackers": "트래커에 다시 알림",
+        "Manual tracker announce": "트래커 수동 알림"
+      },
+      "sourceKeySha256": "d9d38a2a2fc7cc312c0229ab6fc3d648189866ca449ebf570cbf41650cee472a",
+      "oldTargetSha256": "039e65db8c2f7cdfabff9b05e6bafec3fccc991e3bd77fe330836f6c124366a0",
+      "finalTargetSha256": "039e65db8c2f7cdfabff9b05e6bafec3fccc991e3bd77fe330836f6c124366a0",
+      "finalCatalogSha256": "79af5be5085b6e7b3bd065e62851e01ca223d99a6b8d41d9ae5b48ab389ff8f8"
+    },
+    {
+      "cellId": "vi:ui.d9d38a2a2fc7cc31",
+      "locale": "vi",
+      "key": "Manual tracker announce",
+      "source": "Manual tracker announce",
+      "oldTargetAtPriorReviewHead": "Thông báo thủ công đến tracker",
+      "recommendedNewTarget": "Thông báo thủ công đến tracker",
+      "optionalAlternativeIfUnresolved": null,
+      "currentTargetAtFinalHead": "Thông báo thủ công đến tracker",
+      "finalTargetMatchesRecommendation": true,
+      "disposition": "acceptable",
+      "confidence": "high",
+      "rationale": "`Thông báo thủ công đến tracker` identifies a manual announcement to the tracker; the recipient and action are explicit.",
+      "evidenceId": "announce_action",
+      "evidenceRefs": "webui/src/components/TorrentToolbar.tsx:22; webui/src/components/EnginePanel.tsx:167",
+      "localePeerTermsAtFinalHead": {
+        "Reannounce to trackers": "Thông báo lại cho tracker",
+        "Manual tracker announce": "Thông báo thủ công đến tracker"
+      },
+      "sourceKeySha256": "d9d38a2a2fc7cc312c0229ab6fc3d648189866ca449ebf570cbf41650cee472a",
+      "oldTargetSha256": "6100963757f1331af4848179dd88188073698ad082c42da6e644476a7f5dd839",
+      "finalTargetSha256": "6100963757f1331af4848179dd88188073698ad082c42da6e644476a7f5dd839",
+      "finalCatalogSha256": "dbf25077a997ff9cf39d258b2c2bd1bffb7ab87832f352795b398ec7948e162e"
+    },
+    {
+      "cellId": "es:ui.2c366eda72badf17",
+      "locale": "es",
+      "key": "Pending autosave · changes: {count} · live: {live} · restart: {restart}.",
+      "source": "Pending autosave · changes: {count} · live: {live} · restart: {restart}.",
+      "oldTargetAtPriorReviewHead": "Autoguardado pendiente · cambios: {count} · en vivo: {live} · reinicio: {restart}.",
+      "recommendedNewTarget": "Autoguardado pendiente · cambios: {count} · en vivo: {live} · reinicio: {restart}.",
+      "optionalAlternativeIfUnresolved": null,
+      "currentTargetAtFinalHead": "Autoguardado pendiente · cambios: {count} · en vivo: {live} · reinicio: {restart}.",
+      "finalTargetMatchesRecommendation": true,
+      "disposition": "acceptable",
+      "confidence": "high",
+      "rationale": "`En vivo` can also describe a live broadcast, but this settings counter is paired with `reinicio`, and the locale uses `En vivo` for `Live: {count}`. The settings context resolves the runtime-application sense.",
+      "evidenceId": "pending_autosave_semantics",
+      "evidenceRefs": "webui/src/components/EnginePanel.tsx:481–505, 646, 945",
+      "localePeerTermsAtFinalHead": {
+        "Live: {count}": "En vivo: {count}",
+        "Show settings that can apply live": "Mostrar ajustes que pueden aplicarse sin reiniciar.",
+        "Saved and applied live when supported by rTorrent.": "Se guarda y se aplica inmediatamente si rTorrent lo admite."
+      },
+      "sourceKeySha256": "2c366eda72badf17dc316a8b1175e413d5c4885616a1862952fafebd540f0556",
+      "oldTargetSha256": "4953d024468d5d720538e7c06b645620cb0d40eb75487704a22ccbf75696365b",
+      "finalTargetSha256": "4953d024468d5d720538e7c06b645620cb0d40eb75487704a22ccbf75696365b",
+      "finalCatalogSha256": "6b0c354b3bb2f26c587b313862a94bffd1bce783a3717e696d63271410b0f171"
+    },
+    {
+      "cellId": "fr:ui.2c366eda72badf17",
+      "locale": "fr",
+      "key": "Pending autosave · changes: {count} · live: {live} · restart: {restart}.",
+      "source": "Pending autosave · changes: {count} · live: {live} · restart: {restart}.",
+      "oldTargetAtPriorReviewHead": "Sauvegarde automatique en attente · modifications : {count} · live : {live} · redémarrage : {restart}.",
+      "recommendedNewTarget": null,
+      "optionalAlternativeIfUnresolved": "Sauvegarde automatique en attente · modifications : {count} · sans redémarrage : {live} · redémarrage : {restart}.",
+      "currentTargetAtFinalHead": "Sauvegarde automatique en attente · modifications : {count} · live : {live} · redémarrage : {restart}.",
+      "finalTargetMatchesRecommendation": null,
+      "disposition": "unresolved",
+      "confidence": "moderate",
+      "rationale": "The English loanword `live` appears in a pending-autosave count. French peers use both `en direct` and explicit `sans redémarrage`/`à chaud` for this concept; whether to retain the loanword or choose clearer no-restart wording is a native terminology choice.",
+      "evidenceId": "pending_autosave_semantics",
+      "evidenceRefs": "webui/src/components/EnginePanel.tsx:481–505, 646, 945",
+      "localePeerTermsAtFinalHead": {
+        "Live: {count}": "En direct : {count}",
+        "Show settings that can apply live": "Afficher les paramètres applicables sans redémarrage",
+        "Saved and applied live when supported by rTorrent.": "Enregistré et appliqué immédiatement si rTorrent le prend en charge."
+      },
+      "sourceKeySha256": "2c366eda72badf17dc316a8b1175e413d5c4885616a1862952fafebd540f0556",
+      "oldTargetSha256": "c1a24f5294fae96b1fb4d32ce7eeffdaf84acb8a23625102a67923aee32f2454",
+      "finalTargetSha256": "c1a24f5294fae96b1fb4d32ce7eeffdaf84acb8a23625102a67923aee32f2454",
+      "finalCatalogSha256": "0a81fef9be27f99d02b8d676cee4d6f0e48572d2fad3206cd87d2ea5bef643cf"
+    },
+    {
+      "cellId": "de:ui.2c366eda72badf17",
+      "locale": "de",
+      "key": "Pending autosave · changes: {count} · live: {live} · restart: {restart}.",
+      "source": "Pending autosave · changes: {count} · live: {live} · restart: {restart}.",
+      "oldTargetAtPriorReviewHead": "Ausstehende automatische Speicherung · Änderungen: {count} · Live: {live} · Neustart: {restart}.",
+      "recommendedNewTarget": "Ausstehende automatische Speicherung · Änderungen: {count} · Live: {live} · Neustart: {restart}.",
+      "optionalAlternativeIfUnresolved": null,
+      "currentTargetAtFinalHead": "Ausstehende automatische Speicherung · Änderungen: {count} · Live: {live} · Neustart: {restart}.",
+      "finalTargetMatchesRecommendation": true,
+      "disposition": "acceptable",
+      "confidence": "high",
+      "rationale": "`Live` is a familiar software status term paired with `Neustart`; this locale uses the same term in `Live: {count}`. The settings context and “without restart” peer copy make the bucket understandable.",
+      "evidenceId": "pending_autosave_semantics",
+      "evidenceRefs": "webui/src/components/EnginePanel.tsx:481–505, 646, 945",
+      "localePeerTermsAtFinalHead": {
+        "Live: {count}": "Live: {count}",
+        "Show settings that can apply live": "Einstellungen anzeigen, die ohne Neustart angewendet werden können",
+        "Saved and applied live when supported by rTorrent.": "Wird bei Unterstützung durch rTorrent gespeichert und live angewendet."
+      },
+      "sourceKeySha256": "2c366eda72badf17dc316a8b1175e413d5c4885616a1862952fafebd540f0556",
+      "oldTargetSha256": "4497963785c9aeddd051efcad410802e4e1497fde61a559d4ec21daff015af4f",
+      "finalTargetSha256": "4497963785c9aeddd051efcad410802e4e1497fde61a559d4ec21daff015af4f",
+      "finalCatalogSha256": "55349c6e56f8fcc6d93768e5e19dccb72a5f19fbe2986653cbc604272e8a1281"
+    },
+    {
+      "cellId": "ja:ui.2c366eda72badf17",
+      "locale": "ja",
+      "key": "Pending autosave · changes: {count} · live: {live} · restart: {restart}.",
+      "source": "Pending autosave · changes: {count} · live: {live} · restart: {restart}.",
+      "oldTargetAtPriorReviewHead": "保留中の自動保存 · 変更: {count} · ライブ: {live} · 再起動: {restart}。",
+      "recommendedNewTarget": "保留中の自動保存 · 変更: {count} · 再起動せずに適用：{live} · 再起動: {restart}。",
+      "optionalAlternativeIfUnresolved": null,
+      "currentTargetAtFinalHead": "保留中の自動保存 · 変更: {count} · 再起動せずに適用：{live} · 再起動: {restart}。",
+      "finalTargetMatchesRecommendation": true,
+      "disposition": "confirmed correction",
+      "confidence": "high",
+      "rationale": "The source counter counts dirty settings that can take effect without restart. The same catalog translates this setting category as applicable without restarting; explicit peer wording removes the live-stream reading.",
+      "evidenceId": "pending_autosave_semantics",
+      "evidenceRefs": "webui/src/components/EnginePanel.tsx:481–505, 646, 945",
+      "localePeerTermsAtFinalHead": {
+        "Live: {count}": "ライブ: {count}",
+        "Show settings that can apply live": "再起動せずに適用できる設定を表示",
+        "Saved and applied live when supported by rTorrent.": "rTorrent が対応している場合は、保存されてすぐに適用されます。"
+      },
+      "sourceKeySha256": "2c366eda72badf17dc316a8b1175e413d5c4885616a1862952fafebd540f0556",
+      "oldTargetSha256": "b11f50e216572ebac7ae72f62c4aac5ad2b3c26e7adcc661b15eab48f41d91f6",
+      "finalTargetSha256": "a9ca980dc4e64bbfa8f3dfb7ffe8a6f5c48625b5612a4ee84e26a4c0c26a7544",
+      "finalCatalogSha256": "16067a09758ebc933172b6786f23e852c2d1285b866c3a59412845fc01eabe4a"
+    },
+    {
+      "cellId": "ko:ui.2c366eda72badf17",
+      "locale": "ko",
+      "key": "Pending autosave · changes: {count} · live: {live} · restart: {restart}.",
+      "source": "Pending autosave · changes: {count} · live: {live} · restart: {restart}.",
+      "oldTargetAtPriorReviewHead": "보류 중인 자동 저장 · 변경 사항: {count} · 실시간: {live} · 다시 시작: {restart}.",
+      "recommendedNewTarget": "보류 중인 자동 저장 · 변경 사항: {count} · 실시간: {live} · 다시 시작: {restart}.",
+      "optionalAlternativeIfUnresolved": null,
+      "currentTargetAtFinalHead": "보류 중인 자동 저장 · 변경 사항: {count} · 실시간: {live} · 다시 시작: {restart}.",
+      "finalTargetMatchesRecommendation": true,
+      "disposition": "acceptable",
+      "confidence": "high",
+      "rationale": "`실시간` means real-time and is a reasonable rendering for settings that can take effect while the daemon runs; the autosave/restart context is explicit.",
+      "evidenceId": "pending_autosave_semantics",
+      "evidenceRefs": "webui/src/components/EnginePanel.tsx:481–505, 646, 945",
+      "localePeerTermsAtFinalHead": {
+        "Live: {count}": "실시간: {count}",
+        "Show settings that can apply live": "재시작 없이 적용할 수 있는 설정 표시",
+        "Saved and applied live when supported by rTorrent.": "rTorrent에서 지원하는 경우 실시간으로 저장 및 적용됩니다."
+      },
+      "sourceKeySha256": "2c366eda72badf17dc316a8b1175e413d5c4885616a1862952fafebd540f0556",
+      "oldTargetSha256": "d02f82e27cafbc174ff910887b515b429cd51d2860369fbee9818e62289d29d5",
+      "finalTargetSha256": "d02f82e27cafbc174ff910887b515b429cd51d2860369fbee9818e62289d29d5",
+      "finalCatalogSha256": "79af5be5085b6e7b3bd065e62851e01ca223d99a6b8d41d9ae5b48ab389ff8f8"
+    },
+    {
+      "cellId": "pt-BR:ui.2c366eda72badf17",
+      "locale": "pt-BR",
+      "key": "Pending autosave · changes: {count} · live: {live} · restart: {restart}.",
+      "source": "Pending autosave · changes: {count} · live: {live} · restart: {restart}.",
+      "oldTargetAtPriorReviewHead": "Salvamento automático pendente · alterações: {count} · ativo: {live} · reinicialização: {restart}.",
+      "recommendedNewTarget": "Salvamento automático pendente · alterações: {count} · sem reinicialização: {live} · reinicialização: {restart}.",
+      "optionalAlternativeIfUnresolved": null,
+      "currentTargetAtFinalHead": "Salvamento automático pendente · alterações: {count} · sem reinicialização: {live} · reinicialização: {restart}.",
+      "finalTargetMatchesRecommendation": true,
+      "disposition": "confirmed correction",
+      "confidence": "high",
+      "rationale": "`ativo` describes an enabled/active state. This counter counts dirty settings that can take effect without a daemon restart; the same locale translates this category elsewhere as `sem reinicialização`.",
+      "evidenceId": "pending_autosave_semantics",
+      "evidenceRefs": "webui/src/components/EnginePanel.tsx:481–505, 646, 945",
+      "localePeerTermsAtFinalHead": {
+        "Live: {count}": "Ao vivo: {count}",
+        "Show settings that can apply live": "Mostrar configurações que podem ser aplicadas sem reinicialização",
+        "Saved and applied live when supported by rTorrent.": "É salvo e aplicado imediatamente quando há suporte no rTorrent."
+      },
+      "sourceKeySha256": "2c366eda72badf17dc316a8b1175e413d5c4885616a1862952fafebd540f0556",
+      "oldTargetSha256": "2be25e6a30295c0ced6fb3a744da6aadb40072252966602b4e122d7a8b557345",
+      "finalTargetSha256": "594a7a2c956d8d85fac05955ecd5ebe322d72633086ab9da074182f77803cd91",
+      "finalCatalogSha256": "23ff8f7e51e13ba8acb2425e4fe50a9522277d50c1bdc9cad0decd9596bc4cec"
+    },
+    {
+      "cellId": "vi:ui.2c366eda72badf17",
+      "locale": "vi",
+      "key": "Pending autosave · changes: {count} · live: {live} · restart: {restart}.",
+      "source": "Pending autosave · changes: {count} · live: {live} · restart: {restart}.",
+      "oldTargetAtPriorReviewHead": "Đang chờ tự động lưu · thay đổi: {count} · trực tiếp: {live} · khởi động lại: {restart}.",
+      "recommendedNewTarget": "Đang chờ tự động lưu · thay đổi: {count} · trực tiếp: {live} · khởi động lại: {restart}.",
+      "optionalAlternativeIfUnresolved": null,
+      "currentTargetAtFinalHead": "Đang chờ tự động lưu · thay đổi: {count} · trực tiếp: {live} · khởi động lại: {restart}.",
+      "finalTargetMatchesRecommendation": true,
+      "disposition": "acceptable",
+      "confidence": "high",
+      "rationale": "`trực tiếp` can mean directly, and this catalog uses it for “saved and applied live”; in the autosave/restart context the runtime-application sense is clear.",
+      "evidenceId": "pending_autosave_semantics",
+      "evidenceRefs": "webui/src/components/EnginePanel.tsx:481–505, 646, 945",
+      "localePeerTermsAtFinalHead": {
+        "Live: {count}": "Trực tiếp: {count}",
+        "Show settings that can apply live": "Hiển thị cài đặt có thể áp dụng mà không cần khởi động lại",
+        "Saved and applied live when supported by rTorrent.": "Được lưu và áp dụng trực tiếp khi được rTorrent hỗ trợ."
+      },
+      "sourceKeySha256": "2c366eda72badf17dc316a8b1175e413d5c4885616a1862952fafebd540f0556",
+      "oldTargetSha256": "9f8ec62b4239e8c2d46a22c585cd0cb33a543823fc74447d09a4aa7b00388434",
+      "finalTargetSha256": "9f8ec62b4239e8c2d46a22c585cd0cb33a543823fc74447d09a4aa7b00388434",
+      "finalCatalogSha256": "dbf25077a997ff9cf39d258b2c2bd1bffb7ab87832f352795b398ec7948e162e"
+    },
+    {
+      "cellId": "es:ui.e2f19f7c2f11f163",
+      "locale": "es",
+      "key": "Pending autosave · changes: {count} · live: {live} · restart: {restart} · custom lines edited.",
+      "source": "Pending autosave · changes: {count} · live: {live} · restart: {restart} · custom lines edited.",
+      "oldTargetAtPriorReviewHead": "Autoguardado pendiente · cambios: {count} · en vivo: {live} · reinicio: {restart} · líneas personalizadas editadas.",
+      "recommendedNewTarget": "Autoguardado pendiente · cambios: {count} · en vivo: {live} · reinicio: {restart} · líneas personalizadas editadas.",
+      "optionalAlternativeIfUnresolved": null,
+      "currentTargetAtFinalHead": "Autoguardado pendiente · cambios: {count} · en vivo: {live} · reinicio: {restart} · líneas personalizadas editadas.",
+      "finalTargetMatchesRecommendation": true,
+      "disposition": "acceptable",
+      "confidence": "high",
+      "rationale": "`En vivo` can also describe a live broadcast, but this settings counter is paired with `reinicio`, and the locale uses `En vivo` for `Live: {count}`. The settings context resolves the runtime-application sense.",
+      "evidenceId": "pending_autosave_semantics",
+      "evidenceRefs": "webui/src/components/EnginePanel.tsx:481–505, 646, 945",
+      "localePeerTermsAtFinalHead": {
+        "Live: {count}": "En vivo: {count}",
+        "Show settings that can apply live": "Mostrar ajustes que pueden aplicarse sin reiniciar.",
+        "Saved and applied live when supported by rTorrent.": "Se guarda y se aplica inmediatamente si rTorrent lo admite."
+      },
+      "sourceKeySha256": "e2f19f7c2f11f16374013a15885b2d005ff5a04245f1e9d9816dd2ca929a64c5",
+      "oldTargetSha256": "f7561ab373df456d1c5e00efc1812c4d9dbcdf54a46ee6d6d055b9ed4a5342f2",
+      "finalTargetSha256": "f7561ab373df456d1c5e00efc1812c4d9dbcdf54a46ee6d6d055b9ed4a5342f2",
+      "finalCatalogSha256": "6b0c354b3bb2f26c587b313862a94bffd1bce783a3717e696d63271410b0f171"
+    },
+    {
+      "cellId": "de:ui.e2f19f7c2f11f163",
+      "locale": "de",
+      "key": "Pending autosave · changes: {count} · live: {live} · restart: {restart} · custom lines edited.",
+      "source": "Pending autosave · changes: {count} · live: {live} · restart: {restart} · custom lines edited.",
+      "oldTargetAtPriorReviewHead": "Ausstehende automatische Speicherung · Änderungen: {count} · Live: {live} · Neustart: {restart} · Benutzerdefinierte Zeilen bearbeitet.",
+      "recommendedNewTarget": "Ausstehende automatische Speicherung · Änderungen: {count} · Live: {live} · Neustart: {restart} · Benutzerdefinierte Zeilen bearbeitet.",
+      "optionalAlternativeIfUnresolved": null,
+      "currentTargetAtFinalHead": "Ausstehende automatische Speicherung · Änderungen: {count} · Live: {live} · Neustart: {restart} · Benutzerdefinierte Zeilen bearbeitet.",
+      "finalTargetMatchesRecommendation": true,
+      "disposition": "acceptable",
+      "confidence": "high",
+      "rationale": "`Live` is a familiar software status term paired with `Neustart`; this locale uses the same term in `Live: {count}`. The settings context and “without restart” peer copy make the bucket understandable.",
+      "evidenceId": "pending_autosave_semantics",
+      "evidenceRefs": "webui/src/components/EnginePanel.tsx:481–505, 646, 945",
+      "localePeerTermsAtFinalHead": {
+        "Live: {count}": "Live: {count}",
+        "Show settings that can apply live": "Einstellungen anzeigen, die ohne Neustart angewendet werden können",
+        "Saved and applied live when supported by rTorrent.": "Wird bei Unterstützung durch rTorrent gespeichert und live angewendet."
+      },
+      "sourceKeySha256": "e2f19f7c2f11f16374013a15885b2d005ff5a04245f1e9d9816dd2ca929a64c5",
+      "oldTargetSha256": "2f11647f219476903159019c0f77feb5156a90b3af58a35856215832943e7066",
+      "finalTargetSha256": "2f11647f219476903159019c0f77feb5156a90b3af58a35856215832943e7066",
+      "finalCatalogSha256": "55349c6e56f8fcc6d93768e5e19dccb72a5f19fbe2986653cbc604272e8a1281"
+    },
+    {
+      "cellId": "fr:ui.e2f19f7c2f11f163",
+      "locale": "fr",
+      "key": "Pending autosave · changes: {count} · live: {live} · restart: {restart} · custom lines edited.",
+      "source": "Pending autosave · changes: {count} · live: {live} · restart: {restart} · custom lines edited.",
+      "oldTargetAtPriorReviewHead": "Sauvegarde automatique en attente · modifications : {count} · live : {live} · redémarrage : {restart} · lignes personnalisées modifiées.",
+      "recommendedNewTarget": null,
+      "optionalAlternativeIfUnresolved": "Sauvegarde automatique en attente · modifications : {count} · sans redémarrage : {live} · redémarrage : {restart} · lignes personnalisées modifiées.",
+      "currentTargetAtFinalHead": "Sauvegarde automatique en attente · modifications : {count} · live : {live} · redémarrage : {restart} · lignes personnalisées modifiées.",
+      "finalTargetMatchesRecommendation": null,
+      "disposition": "unresolved",
+      "confidence": "moderate",
+      "rationale": "The English loanword `live` appears in a pending-autosave count. French peers use both `en direct` and explicit `sans redémarrage`/`à chaud` for this concept; whether to retain the loanword or choose clearer no-restart wording is a native terminology choice.",
+      "evidenceId": "pending_autosave_semantics",
+      "evidenceRefs": "webui/src/components/EnginePanel.tsx:481–505, 646, 945",
+      "localePeerTermsAtFinalHead": {
+        "Live: {count}": "En direct : {count}",
+        "Show settings that can apply live": "Afficher les paramètres applicables sans redémarrage",
+        "Saved and applied live when supported by rTorrent.": "Enregistré et appliqué immédiatement si rTorrent le prend en charge."
+      },
+      "sourceKeySha256": "e2f19f7c2f11f16374013a15885b2d005ff5a04245f1e9d9816dd2ca929a64c5",
+      "oldTargetSha256": "1c600b56db53b7509cd533df0e5f6be152719edcad2ca2520b29c031a25b0418",
+      "finalTargetSha256": "1c600b56db53b7509cd533df0e5f6be152719edcad2ca2520b29c031a25b0418",
+      "finalCatalogSha256": "0a81fef9be27f99d02b8d676cee4d6f0e48572d2fad3206cd87d2ea5bef643cf"
+    },
+    {
+      "cellId": "hi:ui.e2f19f7c2f11f163",
+      "locale": "hi",
+      "key": "Pending autosave · changes: {count} · live: {live} · restart: {restart} · custom lines edited.",
+      "source": "Pending autosave · changes: {count} · live: {live} · restart: {restart} · custom lines edited.",
+      "oldTargetAtPriorReviewHead": "लंबित ऑटोसेव · परिवर्तन: {count} · लाइव: {live} · पुनरारंभ: {restart} · कस्टम लाइनें संपादित।",
+      "recommendedNewTarget": "लंबित ऑटोसेव · परिवर्तन: {count} · लाइव: {live} · पुनरारंभ: {restart} · कस्टम लाइनें संपादित।",
+      "optionalAlternativeIfUnresolved": null,
+      "currentTargetAtFinalHead": "लंबित ऑटोसेव · परिवर्तन: {count} · लाइव: {live} · पुनरारंभ: {restart} · कस्टम लाइनें संपादित।",
+      "finalTargetMatchesRecommendation": true,
+      "disposition": "acceptable",
+      "confidence": "high",
+      "rationale": "`लाइव` is a widely understood technical loanword in this settings UI. The short sibling is more explicit (`तुरंत लागू`), but the pending-autosave/restart contrast makes the long version understandable; this is a consistency preference, not a confirmed semantic error.",
+      "evidenceId": "pending_autosave_semantics",
+      "evidenceRefs": "webui/src/components/EnginePanel.tsx:481–505, 646, 945",
+      "localePeerTermsAtFinalHead": {
+        "Live: {count}": "लाइव: {count}",
+        "Show settings that can apply live": "बिना पुनः आरंभ किए लागू की जा सकने वाली सेटिंग दिखाएँ",
+        "Saved and applied live when supported by rTorrent.": "rTorrent द्वारा समर्थित होने पर इसे सहेजा और तुरंत लागू किया जाता है।"
+      },
+      "sourceKeySha256": "e2f19f7c2f11f16374013a15885b2d005ff5a04245f1e9d9816dd2ca929a64c5",
+      "oldTargetSha256": "64bff63f17d190fff3709a3a061b643b8157fc509b4b4a1f626decec429cae2e",
+      "finalTargetSha256": "64bff63f17d190fff3709a3a061b643b8157fc509b4b4a1f626decec429cae2e",
+      "finalCatalogSha256": "a859905b88d57ac355398edb9f4493fc789225a5cc7f1d377d0df337a8d7097d"
+    },
+    {
+      "cellId": "id:ui.e2f19f7c2f11f163",
+      "locale": "id",
+      "key": "Pending autosave · changes: {count} · live: {live} · restart: {restart} · custom lines edited.",
+      "source": "Pending autosave · changes: {count} · live: {live} · restart: {restart} · custom lines edited.",
+      "oldTargetAtPriorReviewHead": "Penyimpanan otomatis tertunda · perubahan: {count} · siaran langsung: {live} · mulai ulang: {restart} · baris khusus diedit.",
+      "recommendedNewTarget": "Penyimpanan otomatis tertunda · perubahan: {count} · tanpa memulai ulang: {live} · mulai ulang: {restart} · baris khusus diedit.",
+      "optionalAlternativeIfUnresolved": null,
+      "currentTargetAtFinalHead": "Penyimpanan otomatis tertunda · perubahan: {count} · tanpa memulai ulang: {live} · mulai ulang: {restart} · baris khusus diedit.",
+      "finalTargetMatchesRecommendation": true,
+      "disposition": "confirmed correction",
+      "confidence": "high",
+      "rationale": "`siaran langsung` means live broadcast. The short sibling says `langsung diterapkan`, while the same locale’s settings filter explicitly uses `tanpa memulai ulang`.",
+      "evidenceId": "pending_autosave_semantics",
+      "evidenceRefs": "webui/src/components/EnginePanel.tsx:481–505, 646, 945",
+      "localePeerTermsAtFinalHead": {
+        "Live: {count}": "Langsung: {count}",
+        "Show settings that can apply live": "Tampilkan pengaturan yang dapat diterapkan tanpa memulai ulang",
+        "Saved and applied live when supported by rTorrent.": "Disimpan dan diterapkan secara langsung ketika didukung oleh rTorrent."
+      },
+      "sourceKeySha256": "e2f19f7c2f11f16374013a15885b2d005ff5a04245f1e9d9816dd2ca929a64c5",
+      "oldTargetSha256": "6482a06362d3cfb0fb15308a6aa9a94a92337d123f073c96dfbc0c858470f54b",
+      "finalTargetSha256": "94bc252080a4d9f4797c550d0e044d3fe1b4ba0510c049150ce94445b0ce8cfe",
+      "finalCatalogSha256": "383a815eaef4027f19ca02138e9eeaf40e1e4855aedf11993f4897e044142740"
+    },
+    {
+      "cellId": "ja:ui.e2f19f7c2f11f163",
+      "locale": "ja",
+      "key": "Pending autosave · changes: {count} · live: {live} · restart: {restart} · custom lines edited.",
+      "source": "Pending autosave · changes: {count} · live: {live} · restart: {restart} · custom lines edited.",
+      "oldTargetAtPriorReviewHead": "保留中の自動保存 · 変更: {count} · ライブ: {live} · 再起動: {restart} · カスタム行が編集されました。",
+      "recommendedNewTarget": "保留中の自動保存 · 変更: {count} · 再起動せずに適用：{live} · 再起動: {restart} · カスタム行が編集されました。",
+      "optionalAlternativeIfUnresolved": null,
+      "currentTargetAtFinalHead": "保留中の自動保存 · 変更: {count} · 再起動せずに適用：{live} · 再起動: {restart} · カスタム行が編集されました。",
+      "finalTargetMatchesRecommendation": true,
+      "disposition": "confirmed correction",
+      "confidence": "high",
+      "rationale": "`ライブ` can read as a live stream here; the source count is the no-restart settings bucket, and this catalog already uses `再起動せずに適用できる設定` for that category.",
+      "evidenceId": "pending_autosave_semantics",
+      "evidenceRefs": "webui/src/components/EnginePanel.tsx:481–505, 646, 945",
+      "localePeerTermsAtFinalHead": {
+        "Live: {count}": "ライブ: {count}",
+        "Show settings that can apply live": "再起動せずに適用できる設定を表示",
+        "Saved and applied live when supported by rTorrent.": "rTorrent が対応している場合は、保存されてすぐに適用されます。"
+      },
+      "sourceKeySha256": "e2f19f7c2f11f16374013a15885b2d005ff5a04245f1e9d9816dd2ca929a64c5",
+      "oldTargetSha256": "607226a6a648055308c41964eddc689005e64b1f8f06323ad6231267a4b0a293",
+      "finalTargetSha256": "22fce46cce058ade725470e8d414ff81a459dd1c485b804df74c1d0a3bc855ca",
+      "finalCatalogSha256": "16067a09758ebc933172b6786f23e852c2d1285b866c3a59412845fc01eabe4a"
+    },
+    {
+      "cellId": "ko:ui.e2f19f7c2f11f163",
+      "locale": "ko",
+      "key": "Pending autosave · changes: {count} · live: {live} · restart: {restart} · custom lines edited.",
+      "source": "Pending autosave · changes: {count} · live: {live} · restart: {restart} · custom lines edited.",
+      "oldTargetAtPriorReviewHead": "보류 중인 자동 저장 · 변경 사항: {count} · 라이브: {live} · 다시 시작: {restart} · 사용자 정의 라인이 편집되었습니다.",
+      "recommendedNewTarget": "보류 중인 자동 저장 · 변경 사항: {count} · 라이브: {live} · 다시 시작: {restart} · 사용자 정의 라인이 편집되었습니다.",
+      "optionalAlternativeIfUnresolved": null,
+      "currentTargetAtFinalHead": "보류 중인 자동 저장 · 변경 사항: {count} · 라이브: {live} · 다시 시작: {restart} · 사용자 정의 라인이 편집되었습니다.",
+      "finalTargetMatchesRecommendation": true,
+      "disposition": "acceptable",
+      "confidence": "high",
+      "rationale": "`라이브` is a common technical loanword for a live/runtime state. The count is in the settings autosave status and paired with the restart bucket; it is understandable, though less explicit than the short sibling.",
+      "evidenceId": "pending_autosave_semantics",
+      "evidenceRefs": "webui/src/components/EnginePanel.tsx:481–505, 646, 945",
+      "localePeerTermsAtFinalHead": {
+        "Live: {count}": "실시간: {count}",
+        "Show settings that can apply live": "재시작 없이 적용할 수 있는 설정 표시",
+        "Saved and applied live when supported by rTorrent.": "rTorrent에서 지원하는 경우 실시간으로 저장 및 적용됩니다."
+      },
+      "sourceKeySha256": "e2f19f7c2f11f16374013a15885b2d005ff5a04245f1e9d9816dd2ca929a64c5",
+      "oldTargetSha256": "c3da20ead4a6d3b1549634581947d9485dc5e51714499ca71e827c21fd55f776",
+      "finalTargetSha256": "c3da20ead4a6d3b1549634581947d9485dc5e51714499ca71e827c21fd55f776",
+      "finalCatalogSha256": "79af5be5085b6e7b3bd065e62851e01ca223d99a6b8d41d9ae5b48ab389ff8f8"
+    },
+    {
+      "cellId": "pt-BR:ui.e2f19f7c2f11f163",
+      "locale": "pt-BR",
+      "key": "Pending autosave · changes: {count} · live: {live} · restart: {restart} · custom lines edited.",
+      "source": "Pending autosave · changes: {count} · live: {live} · restart: {restart} · custom lines edited.",
+      "oldTargetAtPriorReviewHead": "Salvamento automático pendente · alterações: {count} · ativo: {live} · reinicialização: {restart} · linhas personalizadas editadas.",
+      "recommendedNewTarget": "Salvamento automático pendente · alterações: {count} · sem reinicialização: {live} · reinicialização: {restart} · linhas personalizadas editadas.",
+      "optionalAlternativeIfUnresolved": null,
+      "currentTargetAtFinalHead": "Salvamento automático pendente · alterações: {count} · sem reinicialização: {live} · reinicialização: {restart} · linhas personalizadas editadas.",
+      "finalTargetMatchesRecommendation": true,
+      "disposition": "confirmed correction",
+      "confidence": "high",
+      "rationale": "`ativo` describes an enabled/active state. This counter counts dirty settings that can take effect without a daemon restart; the same locale translates this category elsewhere as `sem reinicialização`.",
+      "evidenceId": "pending_autosave_semantics",
+      "evidenceRefs": "webui/src/components/EnginePanel.tsx:481–505, 646, 945",
+      "localePeerTermsAtFinalHead": {
+        "Live: {count}": "Ao vivo: {count}",
+        "Show settings that can apply live": "Mostrar configurações que podem ser aplicadas sem reinicialização",
+        "Saved and applied live when supported by rTorrent.": "É salvo e aplicado imediatamente quando há suporte no rTorrent."
+      },
+      "sourceKeySha256": "e2f19f7c2f11f16374013a15885b2d005ff5a04245f1e9d9816dd2ca929a64c5",
+      "oldTargetSha256": "3b2567c80be964eae4f93e5316a2a75115e9b48c5a2731ab63fe4ac613d29248",
+      "finalTargetSha256": "77ec936020f3cf084aaae75148662977c95c14a6ffafcf49ea51bb03ab98acc1",
+      "finalCatalogSha256": "23ff8f7e51e13ba8acb2425e4fe50a9522277d50c1bdc9cad0decd9596bc4cec"
+    },
+    {
+      "cellId": "vi:ui.e2f19f7c2f11f163",
+      "locale": "vi",
+      "key": "Pending autosave · changes: {count} · live: {live} · restart: {restart} · custom lines edited.",
+      "source": "Pending autosave · changes: {count} · live: {live} · restart: {restart} · custom lines edited.",
+      "oldTargetAtPriorReviewHead": "Đang chờ tự động lưu · thay đổi: {count} · trực tiếp: {live} · khởi động lại: {restart} · đã chỉnh sửa các dòng tùy chỉnh.",
+      "recommendedNewTarget": "Đang chờ tự động lưu · thay đổi: {count} · trực tiếp: {live} · khởi động lại: {restart} · đã chỉnh sửa các dòng tùy chỉnh.",
+      "optionalAlternativeIfUnresolved": null,
+      "currentTargetAtFinalHead": "Đang chờ tự động lưu · thay đổi: {count} · trực tiếp: {live} · khởi động lại: {restart} · đã chỉnh sửa các dòng tùy chỉnh.",
+      "finalTargetMatchesRecommendation": true,
+      "disposition": "acceptable",
+      "confidence": "high",
+      "rationale": "`trực tiếp` can mean directly, and this catalog uses it for “saved and applied live”; in the autosave/restart context the runtime-application sense is clear.",
+      "evidenceId": "pending_autosave_semantics",
+      "evidenceRefs": "webui/src/components/EnginePanel.tsx:481–505, 646, 945",
+      "localePeerTermsAtFinalHead": {
+        "Live: {count}": "Trực tiếp: {count}",
+        "Show settings that can apply live": "Hiển thị cài đặt có thể áp dụng mà không cần khởi động lại",
+        "Saved and applied live when supported by rTorrent.": "Được lưu và áp dụng trực tiếp khi được rTorrent hỗ trợ."
+      },
+      "sourceKeySha256": "e2f19f7c2f11f16374013a15885b2d005ff5a04245f1e9d9816dd2ca929a64c5",
+      "oldTargetSha256": "41893752105aec3eea6852557939bf588ffeec33878679dcc3ba54005ba1482e",
+      "finalTargetSha256": "41893752105aec3eea6852557939bf588ffeec33878679dcc3ba54005ba1482e",
+      "finalCatalogSha256": "dbf25077a997ff9cf39d258b2c2bd1bffb7ab87832f352795b398ec7948e162e"
+    },
+    {
+      "cellId": "vi:ui.1d87e1c4de97aaa0",
+      "locale": "vi",
+      "key": "Tracker",
+      "source": "Tracker",
+      "oldTargetAtPriorReviewHead": "Trình theo dõi",
+      "recommendedNewTarget": null,
+      "optionalAlternativeIfUnresolved": "Tracker",
+      "currentTargetAtFinalHead": "Trình theo dõi",
+      "finalTargetMatchesRecommendation": null,
+      "disposition": "unresolved",
+      "confidence": "moderate",
+      "rationale": "The callsite is a BitTorrent tracker section, but the Vietnamese catalog alternates among `tracker`, `trình theo dõi`, and `bộ theo dõi`. A settled glossary/native preference is needed before changing this heading.",
+      "evidenceId": "tracker_context",
+      "evidenceRefs": "webui/src/components/TorrentDetail.tsx:404–416; webui/src/components/TorrentTable.tsx:219; webui/src/components/TorrentPropertiesDialog.tsx:198",
+      "localePeerTermsAtFinalHead": {
+        "Trackers": "Các tracker",
+        "Tracker URL": "URL của tracker",
+        "All trackers": "Tất cả trình theo dõi",
+        "No trackers configured.": "Không có bộ theo dõi nào được cấu hình."
+      },
+      "sourceKeySha256": "1d87e1c4de97aaa0a711fbec00cbc5289be757d97b742ba60e9ed57ca184f85b",
+      "oldTargetSha256": "4dc48135ff92d248d1e2f2865025e4d59b245825645e3be05fe08f6e8caab7e9",
+      "finalTargetSha256": "4dc48135ff92d248d1e2f2865025e4d59b245825645e3be05fe08f6e8caab7e9",
+      "finalCatalogSha256": "dbf25077a997ff9cf39d258b2c2bd1bffb7ab87832f352795b398ec7948e162e"
+    },
+    {
+      "cellId": "ja:ui.00594419409ea711",
+      "locale": "ja",
+      "key": "No tracker data cached yet",
+      "source": "No tracker data cached yet",
+      "oldTargetAtPriorReviewHead": "トラッカーのデータがまだキャッシュされていない",
+      "recommendedNewTarget": "トラッカーのデータがまだキャッシュされていない",
+      "optionalAlternativeIfUnresolved": null,
+      "currentTargetAtFinalHead": "トラッカーのデータがまだキャッシュされていない",
+      "finalTargetMatchesRecommendation": true,
+      "disposition": "acceptable",
+      "confidence": "high",
+      "rationale": "The plain negative predicate `まだキャッシュされていない` is grammatical as a terse Japanese empty-state/status sentence. A polite full sentence is stylistic, not a required grammar correction.",
+      "evidenceId": "ja_empty_state",
+      "evidenceRefs": "webui/src/components/TrackerHealthPanel.tsx:64–69",
+      "localePeerTermsAtFinalHead": {},
+      "sourceKeySha256": "00594419409ea711c14528b379b3bf094271a2516cc845ace032ccf14cc83ca0",
+      "oldTargetSha256": "a6f33c52012aa0ae84be9807de1739fd3c0fa5fe671bd1356c6378956c66baea",
+      "finalTargetSha256": "a6f33c52012aa0ae84be9807de1739fd3c0fa5fe671bd1356c6378956c66baea",
+      "finalCatalogSha256": "16067a09758ebc933172b6786f23e852c2d1285b866c3a59412845fc01eabe4a"
+    },
+    {
+      "cellId": "pt-BR:ui.d5cdfcf7ff75338f",
+      "locale": "pt-BR",
+      "key": "Top",
+      "source": "Top",
+      "oldTargetAtPriorReviewHead": "Principal",
+      "recommendedNewTarget": "Topo",
+      "optionalAlternativeIfUnresolved": null,
+      "currentTargetAtFinalHead": "Topo",
+      "finalTargetMatchesRecommendation": true,
+      "disposition": "confirmed correction",
+      "confidence": "high",
+      "rationale": "The callsite is one of four dock-position options (`right`, `left`, `bottom`, `top`), so `Top` is positional. `Principal` means main/primary and changes the meaning; `Topo` is positional.",
+      "evidenceId": "dock_position",
+      "evidenceRefs": "webui/src/components/DetailDockControls.tsx:3–10",
+      "localePeerTermsAtFinalHead": {},
+      "sourceKeySha256": "d5cdfcf7ff75338fa974145a13378ee35f7ea04cfabd74b8f5fb6df350cfbcca",
+      "oldTargetSha256": "afc19f1734c1d195bd8ba741b795a57120beb0a837ceddc2654ed7c486a6ea72",
+      "finalTargetSha256": "a8621da1e2dc65e897a8852a5013360ae2373abcfd9ab0af21c326db4f08b7a1",
+      "finalCatalogSha256": "23ff8f7e51e13ba8acb2425e4fe50a9522277d50c1bdc9cad0decd9596bc4cec"
+    }
+  ],
+  "attestation": {
+    "all25OldTargetsMatchPriorReviewHead": true,
+    "all25SourceKeysAndFinalTargetsVerified": true,
+    "allSixConfirmedCorrectionsPresentAtFinalHead": true,
+    "finalCatalogHashesReattestedAtFinalHead": true,
+    "method": "Read-only GitHub Contents API reads at the prior and final immutable PR commits. Compared each of the 25 source/target cells, then inspected cited callsites and same-locale peers. No tests, builds, scans, branch writes, or model calls."
+  }
+}

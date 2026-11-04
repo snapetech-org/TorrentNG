@@ -1,6 +1,7 @@
-import { LocalizedText } from '../lib/LocalizedText'
+import { LocalizedServerEventKind, LocalizedServerMessage, LocalizedText } from '../lib/LocalizedText'
 import { interfaceTextProps, translateInterface } from '../lib/interfaceLocale'
 import { getRegionalLocale } from '../lib/localeFormat'
+import { SERVER_EVENT_KIND_LABELS } from '../lib/serverEventKinds'
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, type AppLogEvent } from '../api/client'
@@ -90,12 +91,14 @@ export function LogsPanel() {
 
 function LogRow({ event }: { event: AppLogEvent }) {
   const level = normalizeLevel(event.level)
+  const levelLabel = level === 'warn' ? 'Warnings' : level === 'error' ? 'Error' : 'Info'
   const color = level === 'error' ? 'var(--danger)' : level === 'warn' ? 'var(--warning)' : 'var(--accent)'
   const payload = parsePayload(event.payload)
+  const knownEventKind = Object.hasOwn(SERVER_EVENT_KIND_LABELS, event.kind)
   return (
     <article style={{
       display: 'grid',
-      gridTemplateColumns: '86px minmax(120px, 180px) 1fr',
+      gridTemplateColumns: '86px minmax(120px, 250px) 1fr',
       gap: 10,
       alignItems: 'start',
       border: `1px solid color-mix(in srgb, ${color} 40%, var(--border))`,
@@ -115,19 +118,34 @@ function LogRow({ event }: { event: AppLogEvent }) {
           fontWeight: 800,
           textTransform: 'uppercase',
         }}>
-          {level}
+          <LocalizedText source={levelLabel} />
         </span>
-        <span style={{ color: 'var(--faint)', fontSize: 11 }}>{event.event_id ?? '-'}</span>
+        <span style={{ color: 'var(--faint)', fontSize: 11 }}><bdi dir="ltr" lang="und">{event.event_id ?? '-'}</bdi></span>
       </div>
       <div style={{ minWidth: 0 }}>
-        <div style={{ color: 'var(--text)', fontWeight: 800, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={event.kind}>
-          {event.kind}
+        <div
+          style={{ color: 'var(--text)', fontWeight: 800, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          title={knownEventKind ? undefined : event.kind}
+          dir={knownEventKind ? undefined : 'auto'}
+          lang={knownEventKind ? undefined : 'und'}
+        >
+          {knownEventKind
+            ? <LocalizedServerEventKind kind={event.kind} />
+            : <bdi dir="auto" lang="und">{event.kind}</bdi>}
         </div>
-        <div style={{ color: 'var(--faint)', fontSize: 11 }}>{formatTime(event.occurred_at)}</div>
+        <div style={{ color: 'var(--faint)', fontSize: 11 }}>
+          {event.occurred_at
+            ? <bdi dir="auto" lang={getRegionalLocale() ?? 'und'}>{formatTime(event.occurred_at)}</bdi>
+            : <LocalizedText source="Unknown" />}
+        </div>
       </div>
       <div style={{ minWidth: 0 }}>
         <div style={{ color: 'var(--text)', fontSize: 12, lineHeight: 1.4, overflowWrap: 'anywhere' }}>
-          {event.message || event.kind}
+          {event.message
+            ? <bdi dir="auto" lang="und"><LocalizedServerMessage message={event.message} kind={event.kind} /></bdi>
+            : knownEventKind
+              ? <LocalizedServerEventKind kind={event.kind} />
+              : <bdi dir="auto" lang="und">{event.kind}</bdi>}
         </div>
         {payload && (
           <div style={{
@@ -138,8 +156,8 @@ function LogRow({ event }: { event: AppLogEvent }) {
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
-          }} title={payload}>
-            {payload}
+          }} title={payload} dir="auto" lang="und">
+            <bdi dir="auto" lang="und">{payload}</bdi>
           </div>
         )}
       </div>
@@ -155,7 +173,6 @@ function normalizeLevel(level: string): 'info' | 'warn' | 'error' {
 }
 
 function formatTime(timestamp: number): string {
-  if (!timestamp) return 'unknown'
   return new Date(timestamp * 1000).toLocaleString(getRegionalLocale())
 }
 

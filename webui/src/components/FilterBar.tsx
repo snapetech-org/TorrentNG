@@ -1,6 +1,7 @@
 import { getRegionalLocale } from '../lib/localeFormat'
 import { useInterfaceLanguage } from '../lib/interfaceLocale'
-import { useEffect, useState } from 'react'
+import { LocalizedText } from '../lib/LocalizedText'
+import { useEffect, useId, useState } from 'react'
 import type { ListParams } from '../api/client'
 import { maskAnnounceUrl } from '../lib/maskUrl'
 
@@ -20,6 +21,10 @@ const MEDIA_TYPE_LABELS: Record<string, string> = {
   software: 'Software/Archive', other: 'Other',
 }
 
+function ownLabel(labels: Record<string, string>, value: string): string | undefined {
+  return Object.prototype.hasOwnProperty.call(labels, value) ? labels[value] : undefined
+}
+
 interface Props {
   params: ListParams
   onChange: (p: Partial<ListParams>) => void
@@ -27,6 +32,7 @@ interface Props {
 
 export function FilterBar({ params, onChange }: Props) {
   const { language, t, textProps } = useInterfaceLanguage()
+  const sortDescriptionId = useId()
   const localized = (source: string, parameters?: Record<string, string | number>) => (
     <span {...textProps(source)}>{t(source, parameters)}</span>
   )
@@ -34,14 +40,17 @@ export function FilterBar({ params, onChange }: Props) {
   const hasSidebarFilters = Boolean(params.status || params.category || params.tag || params.tracker || params.media_type)
   const activeCount = [params.filter || search, params.status, params.category, params.tag, params.tracker, params.media_type].filter(Boolean).length
   const sortColumnSource = params.sort ?? 'name'
-  const sortColumn = params.sort ? SORT_COLUMNS[params.sort] : 'Name'
+  const sortColumn = params.sort ? ownLabel(SORT_COLUMNS, params.sort) : 'Name'
+  const knownSortColumn = !params.sort || sortColumn !== undefined
   const sortColumnText = sortColumn ? t(sortColumn) : params.sort ?? t('Name')
   const sortDirection = params.dir === 'desc' ? 'Descending' : 'Ascending'
-  const sortLabel = t('Sort {column} {direction}', {
-    column: language === 'en' ? sortColumnSource : sortColumnText,
-    direction: language === 'en' ? (params.dir === 'desc' ? 'desc' : 'asc') : t(sortDirection),
-  })
-  const sortDescription = t('Sorted by {column}, {direction}', { column: sortColumnText, direction: t(sortDirection) })
+  const sortLabelSource = 'Sort {column} {direction}'
+  const sortLabelColumn = language === 'en' ? sortColumnSource : sortColumnText
+  const sortLabelDirection = language === 'en' ? (params.dir === 'desc' ? 'desc' : 'asc') : t(sortDirection)
+  const sortDescriptionSource = 'Sorted by {column}, {direction}'
+  const sortDescriptionColumn = knownSortColumn ? sortColumnText : `\u2068${params.sort}\u2069`
+  const sortDescriptionDirection = t(sortDirection)
+  const sortDescription = t(sortDescriptionSource, { column: sortDescriptionColumn, direction: sortDescriptionDirection })
   const chips = [
     (params.filter || search) && ['Search', params.filter || search, 'filter'],
     params.status && ['State', params.status, 'status'],
@@ -167,43 +176,77 @@ export function FilterBar({ params, onChange }: Props) {
       )}
       {(chips.length > 0 || params.sort) && (
         <div className="tng-filterbar-chips" style={{ display: 'flex', gap: 5, flexWrap: 'wrap', minWidth: 0 }}>
-          <span className="tng-filter-chip tng-filter-chip-muted" aria-label={sortDescription} title={sortDescription} {...textProps('Sorted by {column}, {direction}')} style={{
+          <span className="tng-filter-chip tng-filter-chip-muted" aria-describedby={!knownSortColumn ? sortDescriptionId : undefined} title={sortDescription} {...textProps(sortDescriptionSource)} style={{
             display: 'inline-flex', alignItems: 'center', gap: 4,
             maxWidth: 190, border: '1px solid var(--border)', borderRadius: 999,
             background: 'var(--surface)', color: 'var(--muted)', padding: '2px 7px',
             fontSize: 11,
           }}>
-            <span {...textProps('Sort {column} {direction}')} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sortLabel}</span>
-          </span>
-          {chips.map(([label, value, key]) => (
-            <span key={`${label}:${value}`} className="tng-filter-chip" title={key === 'tracker' ? maskAnnounceUrl(value) : value} style={{
-              display: 'inline-flex', alignItems: 'center', gap: 4,
-              maxWidth: 190, border: '1px solid var(--border)', borderRadius: 999,
-              background: 'var(--surface)', color: 'var(--muted)', padding: '2px 7px',
-              fontSize: 11,
-            }}>
-              <span style={{ color: 'var(--faint)' }}>{localized(label)}</span>
-              <span {...textProps(key === 'status' ? STATUS_LABELS[value] ?? value : key === 'media_type' ? MEDIA_TYPE_LABELS[value] ?? value : value)} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {key === 'tracker' ? maskAnnounceUrl(value)
-                  : key === 'status' ? t(STATUS_LABELS[value] ?? value)
-                    : key === 'media_type' ? t(MEDIA_TYPE_LABELS[value] ?? value) : value}
-              </span>
-              <button
-                type="button"
-                aria-label={t('Clear {label} filter', { label: t(label) })}
-                onClick={() => {
-                  if (key === 'filter') setSearch('')
-                  onChange({ [key]: undefined, offset: 0 })
-                }}
-                style={{
-                  background: 'transparent', border: 0, color: 'var(--faint)', padding: '0 0 0 2px',
-                  fontSize: 12, lineHeight: 1, cursor: 'pointer',
-                }}
-              >
-                ×
-              </button>
+            <span {...textProps(sortLabelSource)} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <LocalizedText
+                source={sortLabelSource}
+                parameters={{ column: sortLabelColumn, direction: sortLabelDirection }}
+                undParameters={knownSortColumn ? [] : ['column']}
+                parameterDirections={{ column: 'auto' }}
+              />
             </span>
-          ))}
+          </span>
+          {!knownSortColumn && (
+            <span id={sortDescriptionId} className="tng-visually-hidden">
+              <LocalizedText
+                source={sortDescriptionSource}
+                parameters={{ column: params.sort ?? '', direction: sortDescriptionDirection }}
+                undParameters={['column']}
+                parameterDirections={{ column: 'auto' }}
+              />
+            </span>
+          )}
+          {chips.map(([label, value, key]) => {
+            const statusSource = key === 'status' ? ownLabel(STATUS_LABELS, value) : undefined
+            const mediaTypeSource = key === 'media_type' ? ownLabel(MEDIA_TYPE_LABELS, value) : undefined
+            return (
+              <span
+                key={`${label}:${value}`}
+                className="tng-filter-chip"
+                title={key === 'tracker' ? maskAnnounceUrl(value) : key === 'filter' || key === 'category' || key === 'tag' ? value : undefined}
+                dir={key === 'tracker' ? 'ltr' : key === 'filter' || key === 'category' || key === 'tag' ? 'auto' : undefined}
+                lang={key === 'tracker' || key === 'filter' || key === 'category' || key === 'tag' ? 'und' : undefined}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  maxWidth: 190, border: '1px solid var(--border)', borderRadius: 999,
+                  background: 'var(--surface)', color: 'var(--muted)', padding: '2px 7px',
+                  fontSize: 11,
+                }}>
+                <span style={{ color: 'var(--faint)' }}>{localized(label)}</span>
+                <span {...(statusSource
+                  ? textProps(statusSource)
+                  : mediaTypeSource
+                    ? textProps(mediaTypeSource)
+                    : key === 'status' || key === 'media_type' ? {} : textProps(value))} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {key === 'tracker' ? <bdi dir="ltr" lang="und">{maskAnnounceUrl(value)}</bdi>
+                    : key === 'status' ? statusSource
+                      ? t(statusSource) : <bdi dir="auto" lang="und">{value}</bdi>
+                      : key === 'media_type' ? mediaTypeSource
+                        ? t(mediaTypeSource) : <bdi dir="auto" lang="und">{value}</bdi>
+                        : <bdi dir="auto" lang="und">{value}</bdi>}
+                </span>
+                <button
+                  type="button"
+                  aria-label={t('Clear {label} filter', { label: t(label) })}
+                  onClick={() => {
+                    if (key === 'filter') setSearch('')
+                    onChange({ [key]: undefined, offset: 0 })
+                  }}
+                  style={{
+                    background: 'transparent', border: 0, color: 'var(--faint)', padding: '0 0 0 2px',
+                    fontSize: 12, lineHeight: 1, cursor: 'pointer',
+                  }}
+                >
+                  ×
+                </button>
+              </span>
+            )
+          })}
         </div>
       )}
     </div>

@@ -1,0 +1,127 @@
+{
+  "artifact_kind": "torrentng-independent-populated-translation-review-manifest-v1",
+  "current_catalog_sha256": {
+    "webui/src/lib/locale-catalogs/ar.ts": "a1cef764db6d8b2ad07a9da672d86dde34a2d80806a965d85e247a34e870b61c",
+    "webui/src/lib/locale-catalogs/de.ts": "60f99a2e4a4e6acbdd1a435cf6ed1d045a19fd21a900e3154e1ddf39807a3b78",
+    "webui/src/lib/locale-catalogs/es.ts": "631bbb88b99839babc71603d6a4d926d22780be11540bab4a7327a2bc669f22a",
+    "webui/src/lib/locale-catalogs/fr.ts": "4385044a57792773b8ee0b3c7cf4aebf68e0254691d1b3f970942e27cb0d8315",
+    "webui/src/lib/locale-catalogs/hi.ts": "6aff1d2456ba08cbb319b483977b86e408a8e320bf5eaf289257b5a0eb1bef9c",
+    "webui/src/lib/locale-catalogs/id.ts": "940fb077f6fa7360c26b2a0d7b60a847ca9cf80e572b06143ce114ca50b65fa5",
+    "webui/src/lib/locale-catalogs/ja.ts": "728f13c1c37ad0cb45c608a6f98ecbbf82950eb6caeff39803751e2fed7c0f11",
+    "webui/src/lib/locale-catalogs/ko.ts": "30d7627ad6b6ef4de19d1b47a0451a41ce0e4c483c3192c0b8ff43d4df88bde7",
+    "webui/src/lib/locale-catalogs/pt-BR.ts": "5771ddd7c7da4a11ecb2855978c4c63f894ed80e9aa3428dc5a57d70ad284f7d",
+    "webui/src/lib/locale-catalogs/vi.ts": "bc3b43324a57e47a23fcef16a5038c175f2be39dffd9f192cb09ae085d3768ff",
+    "webui/src/lib/locale-catalogs/zh-Hans.ts": "2f84d92e7cf4729a59cfd63a034a5f77c7a8c6005de81806bee70b84caadbeb4",
+    "webui/src/lib/locale-catalogs/zh-Hant.ts": "097c208b3c9d4a7646fea0ed311cd45a20a39cb93d34eb876e93da2a417e71ef"
+  },
+  "decision_count": 5,
+  "decision_counts": {
+    "accepted": 4,
+    "correction": 1
+  },
+  "eligibility_reconciliation": {
+    "candidate_adjudication_artifact": "candidate-adjudication-364a2c3.json",
+    "candidate_adjudication_exact_changed_targets": [
+      "id:ui.e2f19f7c2f11f163",
+      "ja:ui.2c366eda72badf17",
+      "ja:ui.e2f19f7c2f11f163",
+      "pt-BR:ui.2c366eda72badf17",
+      "pt-BR:ui.d5cdfcf7ff75338f",
+      "pt-BR:ui.e2f19f7c2f11f163"
+    ],
+    "newer_corpus": {
+      "cells": 3372,
+      "current_target_exactly_matches_independent_crossreview_final": 109,
+      "current_target_exactly_matches_root_primary_review": 3263,
+      "unreviewed_current_targets": 0
+    },
+    "older_corpus": {
+      "cells": 13704,
+      "changed_targets_eligible_without_exact_terminal_disposition": 44,
+      "changed_targets_with_exact_candidate_adjudication_excluded": 6,
+      "current_target_exactly_matches_primary_review": 13654,
+      "current_target_hash_changed_after_primary_review": 50,
+      "eligible_outside_this_range": 39,
+      "selected_in_this_range": 5
+    },
+    "prior_findings_suggested_targets_matching_current_are_not_treated_as_terminal_decisions": true,
+    "total_carried_exact_terminal_decisions": 17032,
+    "total_eligible_current_targets_before_this_slice": 44,
+    "total_populated_current_cells": 17076
+  },
+  "evidence_directory": "/mnt/disks/scratch/task-worktrees/localization-20261030/torrentng-independent-review-57f2d6a-20261101",
+  "held_count": 0,
+  "input_pins": {
+    "/mnt/disks/scratch/task-worktrees/localization-20261030/torrent-populated-review-ad256fee0e-v2-policy-20261101/protected-literal-policy-audit.jsonl": {
+      "bytes": 56058,
+      "sha256": "7d23b0defc042c473787d70014046c1566ff86e61edb2ab9a2d4091f5e4a6bcf"
+    },
+    "/mnt/disks/scratch/task-worktrees/localization-20261030/torrent-semantic-review-ad256fee0e-20261101/candidate-adjudication-364a2c3.json": {
+      "bytes": 55721,
+      "sha256": "c5d59a323ab62085933df83bdfd24be527cfaa2effdc81998649e596052aa7ed"
+    },
+    "/mnt/disks/scratch/task-worktrees/localization-20261030/torrent-semantic-review-ad256fee0e-20261101/findings.jsonl": {
+      "bytes": 20058,
+      "sha256": "282de1e0fbcbee43fc072fea4141fe4766e40ae11f8e6041674053a9af0e53a1"
+    },
+    "/mnt/disks/scratch/task-worktrees/localization-20261030/torrent-semantic-review-ad256fee0e-20261101/grouped.jsonl": {
+      "bytes": 826572,
+      "sha256": "178c8a7d43fb8c58f2839c345b9e693a047e0816bf593bfd31934c657f7d0338"
+    },
+    "/mnt/disks/scratch/task-worktrees/localization-20261030/torrent-semantic-review-ad256fee0e-20261101/literal-policy-deviations.jsonl": {
+      "bytes": 12744,
+      "sha256": "c107996ba687544fc27d7b31063dd455cdac22ae90fc2e234e686e95b32dd0c5"
+    },
+    "/mnt/disks/scratch/task-worktrees/localization-20261030/torrent-semantic-review-ad256fee0e-20261101/reviewed-cells.jsonl": {
+      "bytes": 4605133,
+      "sha256": "cf46ba64e7659b49c22cfc6fba2bac8b3ac92fc80e17c826a1975217a7ba6612"
+    },
+    "/mnt/disks/scratch/task-worktrees/localization-20261030/torrentng-semantic-crossreview-364a2c3-20261101/independent-correction-crossreview-109.jsonl": {
+      "bytes": 178399,
+      "sha256": "475f06700fa6b92e69aaa8c31e92f8b304cf7c495eec73347d9bcbd79b7743a6"
+    },
+    "/mnt/disks/scratch/task-worktrees/localization-20261030/torrentng-translation-364a2c3-20261101/drafts/root-semantic-review-2026-11-01.jsonl": {
+      "bytes": 2528412,
+      "sha256": "ff5e1c340754d4d00eecbc81d39bfbaba4926251c5852f7074f63904ddcd2f20"
+    }
+  },
+  "limitations": [
+    "Machine semantic review is not native-speaker approval.",
+    "No tests, builds, browser review, or Qwen calls were performed.",
+    "The 39 eligible current-target cells outside this range remain for later review."
+  ],
+  "live_pr_url": "https://github.com/snapetech-org/TorrentNG/pull/243",
+  "pull_request": 243,
+  "range": {
+    "end_inclusive": 579,
+    "indexing": "zero-based line index in grouped.jsonl",
+    "source_index_file": "/mnt/disks/scratch/task-worktrees/localization-20261030/torrent-semantic-review-ad256fee0e-20261101/grouped.jsonl",
+    "start_inclusive": 450
+  },
+  "repository": "snapetech-org/TorrentNG",
+  "repository_state": {
+    "catalogs_modified": false,
+    "clean_before_and_after_evidence_write": true,
+    "shared_ledgers_modified": false,
+    "tests_builds_browser_work_performed": false
+  },
+  "review_scope": "Independent semantic review of five current populated cells whose current target hashes lack terminal exact-hash review dispositions. Catalogs and shared ledgers were not edited.",
+  "reviewed_head": "57f2d6ae2f01f322ca2c9e7e49607d199912a3bd",
+  "reviewed_source_context_file_sha256": {
+    "webui/src/App.tsx": "3eaada0f91756f284e166682c40acbc7b44f1247012733ec12929a1f6b623bbc",
+    "webui/src/components/AuthPanel.tsx": "d6272eb927f9d1b37aeea0774efb790c18b82368e9b12733f1ade82d1728841e",
+    "webui/src/components/EnginePanel.tsx": "432cf872db5065e1d80bf2527831a8833b2c2f1d2e59268760cb0ca962bb35f7",
+    "webui/src/components/LogsPanel.tsx": "970904935cbb0c9ff881b54e2d9508f06a537fa2429c88be6aba860e5ac1e903",
+    "webui/src/components/RatioGroupsPanel.tsx": "401c5dfc2d5180701b653e6b7d645cd99fb62a6924d49f955232f11fb2c9d1bf"
+  },
+  "reviewed_tree": "498f38fac00ff999135f0aadb1a0eaeabf2d54f5",
+  "scratch_host": "kspld0",
+  "selected_cell_ids": [
+    "hi:ui.674d6510aabb8a07",
+    "hi:ui.70f8cdcff391025c",
+    "ar:ui.7c0192318cf76593",
+    "hi:ui.7edd6763647818b3",
+    "vi:ui.7f7912287aa3ec31"
+  ],
+  "selection_count": 5
+}

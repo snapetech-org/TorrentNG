@@ -1,0 +1,60 @@
+{
+  "artifactKind": "current-head semantic and headed-browser review attestation",
+  "repository": "snapetech-org/TorrentNG",
+  "pullRequest": 243,
+  "reviewedHead": "ad256fee0e65449d0b01062ff7e87e05bd0f6dc8",
+  "reviewedTree": "2df9a688fbae93e4627cd0e96ba02cbbf6e3d944",
+  "currentHead": "ff4b3fbcf7a4de51ffc8c120ffaac3a76850f8c9",
+  "currentTree": "27a26bb739d8ff505868d9201fce047b8a3fc532",
+  "reviewedHeadIsAncestor": true,
+  "reviewInputManifestSha256": "9281582cd9fae12fec1f4d2d0c58cc9168153cf20bf350b5e171d03a6569a713",
+  "reviewedCells": 13704,
+  "reviewedSourceRows": 1142,
+  "localeCount": 12,
+  "sourceFileHashesReattested": 34,
+  "sourceFileHashesMatch": true,
+  "currentCatalogHashes": {
+    "webui/src/lib/locale-catalogs/ar.ts": "7287b6c6be8cbd890dc6ac555e496fb8572c8661711474b879734dcc510a43fd",
+    "webui/src/lib/locale-catalogs/de.ts": "55349c6e56f8fcc6d93768e5e19dccb72a5f19fbe2986653cbc604272e8a1281",
+    "webui/src/lib/locale-catalogs/es.ts": "6b0c354b3bb2f26c587b313862a94bffd1bce783a3717e696d63271410b0f171",
+    "webui/src/lib/locale-catalogs/fr.ts": "0a81fef9be27f99d02b8d676cee4d6f0e48572d2fad3206cd87d2ea5bef643cf",
+    "webui/src/lib/locale-catalogs/hi.ts": "a859905b88d57ac355398edb9f4493fc789225a5cc7f1d377d0df337a8d7097d",
+    "webui/src/lib/locale-catalogs/id.ts": "00af1e2a1b1a1d55953430860c4d98bfcbd272c5fe346ad499875e514041900c",
+    "webui/src/lib/locale-catalogs/ja.ts": "05a819b117c67b69b47e1ec0b293d0e4d7a244284413879402f57f5b2044701b",
+    "webui/src/lib/locale-catalogs/ko.ts": "79af5be5085b6e7b3bd065e62851e01ca223d99a6b8d41d9ae5b48ab389ff8f8",
+    "webui/src/lib/locale-catalogs/pt-BR.ts": "bf29973c21455d933ccdfd0c88a4cbfa5a280e67ac5858480fe0853e9b2d11dd",
+    "webui/src/lib/locale-catalogs/vi.ts": "dbf25077a997ff9cf39d258b2c2bd1bffb7ab87832f352795b398ec7948e162e",
+    "webui/src/lib/locale-catalogs/zh-Hans.ts": "c8b3bc8ddffbe9c3b367c3d1cb8a91c099d79a756e771c2dbc211183a608920d",
+    "webui/src/lib/locale-catalogs/zh-Hant.ts": "6c89c4b06ec70a3a7e6a4535f7ac88acc497f3e1c03c4af3042b77aa3fc55900"
+  },
+  "catalogFileHashesReattested": 12,
+  "changedPathsSinceReviewedHead": [
+    "webui/src/lib/locale-catalogs/ar.ts",
+    "webui/src/lib/locale-catalogs/de.ts",
+    "webui/src/lib/locale-catalogs/es.ts",
+    "webui/src/lib/locale-catalogs/fr.ts",
+    "webui/src/lib/locale-catalogs/hi.ts",
+    "webui/src/lib/locale-catalogs/id.ts",
+    "webui/src/lib/locale-catalogs/ja.ts",
+    "webui/src/lib/locale-catalogs/ko.ts",
+    "webui/src/lib/locale-catalogs/vi.ts",
+    "webui/src/lib/locale-catalogs/zh-Hans.ts",
+    "webui/src/lib/locale-catalogs/zh-Hant.ts"
+  ],
+  "highConfidenceCorrectionsApplied": 23,
+  "protectedLiteralSignals": 21,
+  "protectedLiteralMismatchesRemaining": 0,
+  "uncertainCandidatesAwaitingIndependentDisposition": 25,
+  "headedBrowserEvidencePath": "/mnt/disks/scratch/task-worktrees/localization-20261030/torrentng-browser-review-ff4b3fb-20261101.md",
+  "headedBrowserEvidenceSha256": "3237eaa70fa9bae031820e84eb36766d844d96e1c14f6bc98d7bb77d010684b6",
+  "headedBrowserLocalesReviewed": [
+    "es",
+    "ar"
+  ],
+  "headedBrowserScope": "Support → Appearance screen; exact-head app source; empty task-scoped mock API; no real credentials/data/backend",
+  "limitations": [
+    "Native-speaker review not performed.",
+    "Browser review covers the Support/Appearance screen and empty-library shell, not all workflows or data screens.",
+    "Catalog parity remains incomplete: 3,372 untranslated target cells remain from the exact reviewed parent; these source/copy corrections did not fill missing target cells."
+  ]
+}
