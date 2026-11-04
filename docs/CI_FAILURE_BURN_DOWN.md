@@ -1,5 +1,21 @@
 # TorrentNG CI Failure Burn-down
 
+## 2026-10-31 private-JIT visual baseline correction
+
+The historical recommendation below to route WebUI certification through
+GitHub-hosted Ubuntu is superseded by the 2026-10-26 owner directive: all CI,
+test, scan, package, and release jobs must use compatible private ephemeral JIT
+runners. The current `webui` job runs on `ng-shared-main-jit`.
+
+Private-JIT run `41169356206` on `040896a07fe17994723ce53227cacf5ad151fb43`
+failed only three visual comparisons while its unit tests, build, lint,
+accessibility checks, and other browser cases passed. The desktop workspace and
+settings screenshots from that run match the existing private-JIT baselines
+byte-for-byte; the mobile workspace differs by one pixel. The test was still
+hard-coded to the obsolete `hosted` snapshot profile. The profile and baseline
+correction is isolated in the candidate change; its exact-head private-JIT CI
+result is required before this failure is considered closed.
+
 Status: **not green** as of 2026-10-26. CodeQL (`40252195029`), Trivy
 (`40252194955`), and Semgrep (`40252195011`) are pending or queued for
 `30fe11b6afdbad34d0191001c221ebd073edf103`; there is no CI run for that SHA.

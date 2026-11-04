@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 
-// CI uses one hosted font baseline across pull requests and main pushes.
-const snapshotProfile = 'hosted'
+// CI uses one private JIT font baseline across pull requests and main pushes.
+const snapshotProfile = 'private-jit'
 
 const torrents = Array.from({ length: 80 }, (_, i) => {
   const n = i + 1
