@@ -12,7 +12,15 @@ Review date: 2026-11-04
 
 The static review found that Arabic RTL direction was enabled while several mixed or numeric status values rendered without bidi isolation. `StatusBar.tsx` now sets `opaqueValue` on the four torrent counts, download and upload speeds, downloaded and uploaded totals, disk summary, and connection summary. The existing `Badge` renderer wraps those dynamic values in `<bdi dir="auto" lang="und">`; firewall and DHT/PEX values already used that path.
 
-An independent code review of the exact diff confirmed that all ten value callsites are covered and that the change closes the identified metric-isolation gap. No screenshot or headed-browser result is claimed for this remediation.
+An independent code review of the exact diff confirmed that all ten value callsites are covered and that the change closes the identified metric-isolation gap.
+
+## Limited headed-browser review
+
+On 2026-11-04, the exact remediation source commit `a41887bf6d5d09a328fcf5bcddc9cfb8e888a968` was reviewed in an isolated headed Chrome session on the Agent GUI VM at 1440×1000. The Support → Appearance setting was changed to Arabic and the catalog was allowed to finish loading before inspection. Arabic labels rendered, the application shell and settings sidebar mirrored to RTL, and the status footer remained readable. Dynamic values shown in the accessible snapshot included `1.6 MB/s`, `524 KB/s`, `9.9 GB`, `1.2 GB`, `600 GB / 1 TB`, `42 +3`, and `:51413`; the screenshot preserves their visual context.
+
+The footer spans wider than this viewport and uses its horizontal scrollbar, so the full status row is not visible at once. The preview used a task-owned mock API with synthetic values (`1,234` total torrents, `0` rendered, `17` cached); it did not connect to a live backend, display populated torrent rows, or perform torrent actions. This visual review is limited to Arabic shell direction and status-value readability. It does not establish full workflow acceptance, native-speaker approval, mobile coverage, or overall PR acceptance.
+
+Screenshot: [`statusbar-arabic-rtl.png`](statusbar-arabic-rtl.png), SHA-256 `df07f019775a22e4c6c6ec8dae61231fb09301695a2b01b58d52793e0d289a8a`.
 
 ## Review limits
 

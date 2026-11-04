@@ -1,1 +1,2 @@
-ec6c98b677ce1b7f68a77371c4bf66b236a171b630bd37228a1b3b0f1d130e90  docs/pr-evidence/pr243-localization-2026-11-04/statusbar-rtl-isolation/README.md
+5b1067bb89f3295e7354f08ff608508650fe464ba25b3ac93e00e5ea8f3fcb22  docs/pr-evidence/pr243-localization-2026-11-04/statusbar-rtl-isolation/README.md
+df07f019775a22e4c6c6ec8dae61231fb09301695a2b01b58d52793e0d289a8a  docs/pr-evidence/pr243-localization-2026-11-04/statusbar-rtl-isolation/statusbar-arabic-rtl.png
