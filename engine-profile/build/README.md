@@ -45,3 +45,16 @@ The former patch reproduces the already-open exception in 63 of 72 cases;
 the corrected patch passes all 72. This checks task selection and rejected
 connection accounting; real network and full runtime qualification remain
 separate gates.
+
+The started-view range handler shares the result of a sole
+`scheduler.simple.update=` command within each batch. In the pinned engine that
+command ignores its download target and scans the complete started list.
+Repeating the global pass for every row causes excessive startup work when
+some downloads cannot open. Other views, mixed commands, and per-download
+mutations retain their per-row behavior. The native regression compiles the
+actual patched range handler: 1,037 rows require two global passes across two
+pages, with identical response shapes and scheduling results.
+
+```sh
+python3 engine-profile/build/check-scheduler-range-regression.py --source /path/to/pinned/src/command_events.cc
+```

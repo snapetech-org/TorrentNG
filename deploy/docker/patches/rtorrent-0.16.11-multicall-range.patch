@@ -1,19 +1,21 @@
-diff --git a/src/command_events.cc b/src/command_events.cc
-index 23e262c..ebb3674 100644
 --- a/src/command_events.cc
 +++ b/src/command_events.cc
 @@ -1,6 +1,7 @@
  #include "config.h"
- 
+-
++
 +#include <algorithm>
  #include <functional>
  #include <cstdio>
  #include <torrent/rate.h>
  #include <torrent/hash_string.h>
-@@ -285,6 +286,181 @@ d_multicall_filtered(const torrent::Object::list_type& args) {
+@@ -284,8 +285,202 @@
+-
++
    return resultRaw;
  }
- 
+-
++
 +static constexpr int64_t tng_multicall_max_limit = 1000;
 +
 +torrent::Object
@@ -64,12 +66,31 @@ index 23e262c..ebb3674 100644
 +
 +  ++arg; // skip to first command
 +
++  // In the pinned 0.16.11 engine scheduler.simple.update ignores its download
++  // target and scans the whole started view. Repeating it for every row makes
++  // startup quadratic, particularly when some downloads cannot be opened.
++  // Only the sole global command on this exact view can share its result.
++  const bool global_scheduler_update = args.size() == 4 &&
++    args.front().as_string() == "started" &&
++    args.back().as_string() == "scheduler.simple.update=";
++  bool scheduler_ran = false;
++  torrent::Object scheduler_result;
++
 +  for (int64_t emitted = 0; itr != view_end && emitted < bounded_limit; ++itr, ++emitted) {
 +    torrent::Object::list_type& row = result.insert(result.end(), torrent::Object::create_list())->as_list();
 +
 +    for (auto command = arg; command != args.end(); ++command) {
++      if (global_scheduler_update && scheduler_ran) {
++        row.push_back(scheduler_result);
++        continue;
++      }
 +      auto& cmdstr = command->as_string();
-+      row.push_back(rpc::parse_command(rpc::make_target(*itr), cmdstr.c_str(), cmdstr.c_str() + cmdstr.size()).first);
++      auto value = rpc::parse_command(rpc::make_target(*itr), cmdstr.c_str(), cmdstr.c_str() + cmdstr.size()).first;
++      if (global_scheduler_update) {
++        scheduler_result = value;
++        scheduler_ran = true;
++      }
++      row.push_back(value);
 +    }
 +  }
 +
@@ -192,21 +213,29 @@ index 23e262c..ebb3674 100644
  static void
  call_watch_command(const std::string& command, const std::string& path) {
    rpc::commands.call_catch(command.c_str(), rpc::make_target(), path);
-@@ -342,6 +517,9 @@ initialize_command_events() {
+ }
+@@ -341,8 +536,11 @@
+-
++
    CMD2_ANY_LIST    ("download_list",       std::bind(&apply_download_list, std::placeholders::_2));
    CMD2_ANY_LIST    ("d.multicall2",        std::bind(&d_multicall, std::placeholders::_2));
    CMD2_ANY_LIST    ("d.multicall.filtered", std::bind(&d_multicall_filtered, std::placeholders::_2));
 +  CMD2_ANY_LIST    ("d.multicall.range",   std::bind(&d_multicall_range, std::placeholders::_2));
 +  CMD2_ANY_LIST    ("d.multicall.nonzero_rate", std::bind(&d_multicall_nonzero_rate, std::placeholders::_2));
 +  CMD2_ANY_LIST    ("tng.live_summary", std::bind(&tng_live_summary, std::placeholders::_2));
- 
+-
++
    CMD2_ANY_LIST    ("directory.watch.added", std::bind(&directory_watch_added, std::placeholders::_2));
- 
-@@ -355,4 +533,7 @@ initialize_command_events() {
+-
++
+   rpc::rpc.mark_safe("start_tied");
+@@ -354,5 +552,8 @@
+   rpc::rpc.mark_safe("close_low_diskspace.normal");
    rpc::rpc.mark_safe("download_list");
    rpc::rpc.mark_safe("d.multicall2");
    rpc::rpc.mark_safe("d.multicall.filtered");
+-}
 +  rpc::rpc.mark_safe("d.multicall.range");
 +  rpc::rpc.mark_safe("d.multicall.nonzero_rate");
 +  rpc::rpc.mark_safe("tng.live_summary");
- }
++}
