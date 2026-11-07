@@ -1,22 +1,28 @@
-## Runner policy — owner directive, 2026-11-03
+## Runner policy — current owner directive, 2026-11-06
 
-GitHub-hosted runner minutes are available again. Use compatible GitHub-hosted
-runners for build, test, scan, packaging and release jobs when their operating
-system and architecture requirements are met. Preserve native OS and
-architecture. Use private ephemeral JIT runners when a job needs private
-network access, special hardware or storage, or explicit JIT validation. Do not
-require private JIT solely because of the former organization-wide policy, and
-do not treat missing private capacity as a blocker when a compatible hosted
-runner is available.
+All build, test, scan, package, and release jobs require compatible private
+ephemeral JIT runners. Preserve the required native operating system and
+architecture. There are no GitHub-hosted fallbacks. Missing private capacity
+is a provisioning blocker; jobs remain queued or blocked until it is fixed.
+This supersedes the earlier hosted-first instructions.
 
-Keep untrusted pull-request code isolated in a disposable environment without
-secrets, with minimal permissions and restricted egress. Do not widen trusted
-runner-group access to make untrusted code run. Preserve active builds and other
-agents' work. Do not restart the broker while it owns running guests. Select a
-runner route that fits the workload and trust requirements; rerunning an old
-run uses its original workflow revision.
+Keep public-fork code in disposable VM-backed JIT environments without secrets,
+with minimal read access and restricted egress. Never widen trusted runner
+access to admit untrusted code. Preserve active builds and other agents' work.
+Do not restart the broker while it owns guests. Validate new workflow revisions
+on private JIT; rerunning an old run uses its original workflow revision.
 
-The shared inventory continues to govern private JIT jobs. For a private route,
-verify source routing, broker policy, runner-group access and live capacity
-before relying on it.
+The shared policy and inventory live in
+`snapetech-org/packer/scripts/shared-jit-runner-pool/`. Completion requires
+source routing, deployed broker policy, runner-group access, and live capacity
+to align; workflow YAML alone is insufficient.
 
+CodeQL remains disabled by explicit owner directive. Do not restore or reroute
+CodeQL unless the owner explicitly reverses that instruction.
+
+## Git delivery
+
+Standing authorization applies to task commits and pushes. Commit focused
+milestones and push promptly to the remote default main/master branch, following
+applicable review rules. Stage only task-owned changes, preserve unrelated work,
+omit secrets, and never rewrite published history or make empty commits.
