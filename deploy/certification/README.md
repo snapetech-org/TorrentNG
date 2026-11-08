@@ -12,6 +12,12 @@ TorrentNG WebUI/API service and its qBittorrent-compatible API are reachable
 from the same Docker network and writes a markdown report under
 `certification/reports/`.
 
+The three Servarr services use locally qualified `snape/certification-*-cve`
+images. The host security guard builds those images from the exact deployed
+LinuxServer application images, applies available Alpine security updates,
+and requires zero CRITICAL findings with no new HIGH/CRITICAL identities
+before Compose recreation. Do not replace them with unscanned floating tags.
+
 ## Run
 
 ```sh

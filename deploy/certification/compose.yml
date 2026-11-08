@@ -56,7 +56,7 @@ services:
       retries: 8
 
   sonarr:
-    image: lscr.io/linuxserver/sonarr:latest
+    image: snape/certification-sonarr-cve:latest
     restart: unless-stopped
     ports:
       - "127.0.0.1:${SONARR_HOST_PORT:-18989}:8989"
@@ -72,7 +72,7 @@ services:
       - torrentng
 
   radarr:
-    image: lscr.io/linuxserver/radarr:latest
+    image: snape/certification-radarr-cve:latest
     restart: unless-stopped
     ports:
       - "127.0.0.1:${RADARR_HOST_PORT:-17878}:7878"
@@ -88,7 +88,7 @@ services:
       - torrentng
 
   prowlarr:
-    image: lscr.io/linuxserver/prowlarr:latest
+    image: snape/certification-prowlarr-cve:latest
     restart: unless-stopped
     ports:
       - "127.0.0.1:${PROWLARR_HOST_PORT:-19696}:9696"
