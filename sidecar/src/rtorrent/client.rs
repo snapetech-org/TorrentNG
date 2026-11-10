@@ -20,10 +20,10 @@ const BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration = std::time::Duration::f
 pub(crate) const MAX_PRESSURE_SCALED_RPC_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(3600);
 pub(crate) const MAX_PRESSURE_SCALED_POLL_INTERVAL: std::time::Duration =
-    std::time::Duration::from_secs(900);
-const MAX_BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration = std::time::Duration::from_secs(900);
+    std::time::Duration::from_secs(90);
+const MAX_BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration = std::time::Duration::from_secs(120);
 const BACKGROUND_RPC_MIN_SPACING: std::time::Duration = std::time::Duration::from_secs(2);
-const MAX_BACKGROUND_RPC_MIN_SPACING: std::time::Duration = std::time::Duration::from_secs(300);
+const MAX_BACKGROUND_RPC_MIN_SPACING: std::time::Duration = std::time::Duration::from_secs(30);
 const RPC_PRESSURE_RECHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 const MODERATE_IO_PRESSURE_PERCENT: f64 = 5.0;
 const HIGH_IO_PRESSURE_PERCENT: f64 = 15.0;
@@ -78,12 +78,26 @@ pub(crate) fn io_pressure_multiplier(io_pressure_percent: Option<f64>) -> u32 {
     }
 }
 
+/// Keep polling progress under sustained disk pressure. RPC deadlines use a
+/// much larger scale so slow calls can finish, while this separate curve caps
+/// the delay between bounded background pages and samples.
+fn io_pressure_pacing_multiplier(io_pressure_percent: Option<f64>) -> u32 {
+    match io_pressure_percent {
+        Some(percent) if percent >= CRITICAL_IO_PRESSURE_PERCENT => 12,
+        Some(percent) if percent >= EXTREME_IO_PRESSURE_PERCENT => 8,
+        Some(percent) if percent >= SEVERE_IO_PRESSURE_PERCENT => 6,
+        Some(percent) if percent >= HIGH_IO_PRESSURE_PERCENT => 4,
+        Some(percent) if percent >= MODERATE_IO_PRESSURE_PERCENT => 2,
+        _ => 1,
+    }
+}
+
 pub(crate) fn pressure_scaled_poll_interval(
     base: std::time::Duration,
     io_pressure_percent: Option<f64>,
 ) -> std::time::Duration {
     let ceiling = base.max(MAX_PRESSURE_SCALED_POLL_INTERVAL);
-    base.saturating_mul(io_pressure_multiplier(io_pressure_percent))
+    base.saturating_mul(io_pressure_pacing_multiplier(io_pressure_percent))
         .min(ceiling)
 }
 
@@ -142,7 +156,7 @@ where
 
 fn background_rpc_circuit_delay(io_pressure_percent: Option<f64>) -> std::time::Duration {
     BACKGROUND_RPC_CIRCUIT_DELAY
-        .saturating_mul(io_pressure_multiplier(io_pressure_percent))
+        .saturating_mul(io_pressure_pacing_multiplier(io_pressure_percent))
         .min(MAX_BACKGROUND_RPC_CIRCUIT_DELAY)
 }
 
@@ -150,7 +164,7 @@ fn background_rpc_circuit_delay(io_pressure_percent: Option<f64>) -> std::time::
 /// semaphore prevents parallel SCGI calls, but without pacing a burst of fast
 /// responses can still keep rTorrent's storage-facing work continuously busy.
 fn background_rpc_minimum_spacing(io_pressure_percent: Option<f64>) -> std::time::Duration {
-    let multiplier = io_pressure_multiplier(io_pressure_percent);
+    let multiplier = io_pressure_pacing_multiplier(io_pressure_percent);
     if multiplier == 1 {
         return std::time::Duration::ZERO;
     }
