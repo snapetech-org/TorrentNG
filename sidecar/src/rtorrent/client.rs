@@ -216,7 +216,8 @@ impl Client {
             .await
             .context("rTorrent RPC gate closed")?;
         let request_timeout = pressure_scaled_rpc_timeout(self.timeout, read_io_pressure_percent());
-        self.call_xml_with_timeout(method, args, request_timeout).await
+        self.call_xml_with_timeout(method, args, request_timeout)
+            .await
     }
 
     /// Execute a startup/control XML-RPC call with an operation-specific
@@ -306,11 +307,7 @@ impl Client {
             let queue_timeout = background_rpc_queue_timeout(read_io_pressure_percent());
             tokio::time::timeout(queue_timeout, self.rpc_gate.acquire())
                 .await
-                .map_err(|_| {
-                    anyhow::Error::new(RpcBackpressure::QueueWaitTimedOut(
-                        queue_timeout,
-                    ))
-                })?
+                .map_err(|_| anyhow::Error::new(RpcBackpressure::QueueWaitTimedOut(queue_timeout)))?
                 .context("rTorrent RPC gate closed")?
         } else {
             self.rpc_gate
@@ -486,7 +483,14 @@ impl Client {
             .map(|i| i + 4)
             .unwrap_or(0);
 
-        Ok(response[body_start..].to_vec())
+        let body = &response[body_start..];
+        if body.iter().all(|byte| byte.is_ascii_whitespace()) {
+            return Err(unexpected_scgi_eof(
+                "SCGI response body was empty or whitespace-only",
+            ));
+        }
+
+        Ok(body.to_vec())
     }
 }
 
@@ -966,22 +970,32 @@ fn is_transient_transport_error(error: &anyhow::Error) -> bool {
 
     error.chain().any(|cause| {
         cause
-            .downcast_ref::<std::io::Error>()
-            .is_some_and(|io_error| {
-                matches!(
-                    io_error.kind(),
-                    std::io::ErrorKind::BrokenPipe
-                        | std::io::ErrorKind::ConnectionAborted
-                        | std::io::ErrorKind::ConnectionRefused
-                        | std::io::ErrorKind::ConnectionReset
-                        | std::io::ErrorKind::NotConnected
-                        | std::io::ErrorKind::NotFound
-                        | std::io::ErrorKind::TimedOut
-                        | std::io::ErrorKind::UnexpectedEof
-                        | std::io::ErrorKind::WouldBlock
-                )
-            })
+            .downcast_ref::<serde_json::Error>()
+            .is_some_and(|json_error| json_error.is_eof())
+            || cause
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io_error| {
+                    matches!(
+                        io_error.kind(),
+                        std::io::ErrorKind::BrokenPipe
+                            | std::io::ErrorKind::ConnectionAborted
+                            | std::io::ErrorKind::ConnectionRefused
+                            | std::io::ErrorKind::ConnectionReset
+                            | std::io::ErrorKind::NotConnected
+                            | std::io::ErrorKind::NotFound
+                            | std::io::ErrorKind::TimedOut
+                            | std::io::ErrorKind::UnexpectedEof
+                            | std::io::ErrorKind::WouldBlock
+                    )
+                })
     })
+}
+
+fn unexpected_scgi_eof(message: &'static str) -> anyhow::Error {
+    anyhow::Error::new(std::io::Error::new(
+        std::io::ErrorKind::UnexpectedEof,
+        message,
+    ))
 }
 
 // --- XMLRPC builder ---
@@ -1152,7 +1166,11 @@ fn parse_xmlrpc_response(xml: &[u8]) -> Result<XmlValue> {
     loop {
         match reader.read_event()? {
             Event::Start(e) if e.name().into_inner() == "methodResponse" => break,
-            Event::Eof => bail!("XMLRPC response missing <methodResponse>"),
+            Event::Eof => {
+                return Err(unexpected_scgi_eof(
+                    "XMLRPC response missing <methodResponse>",
+                ))
+            }
             _ => {}
         }
     }
@@ -1171,7 +1189,7 @@ fn parse_xmlrpc_response(xml: &[u8]) -> Result<XmlValue> {
                 "params" => break,
                 _ => {}
             },
-            Event::Eof => bail!("unexpected EOF in XMLRPC response"),
+            Event::Eof => return Err(unexpected_scgi_eof("unexpected EOF in XMLRPC response")),
             _ => {}
         }
     }
@@ -1224,7 +1242,9 @@ fn validate_xmlrpc_shape(xml: &str) -> Result<()> {
         }
     }
     if depth != 0 {
-        bail!("XML-RPC response has an unterminated element");
+        return Err(unexpected_scgi_eof(
+            "XML-RPC response has an unterminated element",
+        ));
     }
     Ok(())
 }
@@ -1235,7 +1255,7 @@ fn parse_value(reader: &mut Reader<&[u8]>) -> Result<XmlValue> {
         match reader.read_event()? {
             Event::Start(e) if e.name().into_inner() == "value" => break,
             Event::End(_) => return Err(anyhow!("XML-RPC response missing <value>")),
-            Event::Eof => return Err(anyhow!("XML-RPC response ended before <value>")),
+            Event::Eof => return Err(unexpected_scgi_eof("XML-RPC response ended before <value>")),
             _ => {}
         }
     }
