@@ -169,6 +169,7 @@ pub async fn run(
         let io_pressure_percent = crate::rtorrent::client::read_io_pressure_percent();
         let io_pressure_delay = io_pressure_delay_floor(interval, io_pressure_percent);
         let cycle_started = tokio::time::Instant::now();
+        metrics.begin_sync_attempt();
         let result = if range_supported {
             tick_bounded(backend.as_ref(), &db, &tx, &mut bounded).await
         } else {

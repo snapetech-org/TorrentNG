@@ -343,13 +343,18 @@ fallback transfer-rate SCGI probes when no live-speed snapshot is configured;
 request-driven API operations remain available and use pressure-scaled RPC
 deadlines.
 
-The rTorrent health endpoints use the most recently completed backend sync
-instead of sending a second SCGI health probe. A successful sync remains fresh
-for twice the pressure-scaled sync interval, with a one-minute minimum; a
-failed or stale sync reports the backend as unreachable. This keeps frequent
-health checks from adding SCGI work or cancelling a slow request at the old
-three-second HTTP deadline. Other backend adapters retain their direct health
-probe.
+The rTorrent health endpoints use the latest successful sync and current sync
+state instead of sending a second SCGI health probe. A successful snapshot
+remains fresh for twice the pressure-scaled sync interval, with a one-minute
+minimum; a transient failed attempt does not discard that known-good state. If
+the snapshot expires while another sync pass is in flight, health remains
+connected for up to the maximum pressure-scaled SCGI deadline of one hour. Once
+that deadline expires, a stale snapshot reports the backend as unreachable.
+If the pass ends without success, the latest successful snapshot remains
+usable only through its normal freshness window. This keeps health checks from
+adding SCGI work, triggering a restart solely because a large pass is slow, or
+cancelling a slow request at the old three-second HTTP deadline. Other backend
+adapters retain their direct health probe.
 
 The service must keep rTorrent's leading XMLRPC target argument on patched
 calls; for global calls that argument is the empty string, followed by the

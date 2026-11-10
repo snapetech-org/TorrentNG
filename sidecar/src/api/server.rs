@@ -104,7 +104,10 @@ impl AppState {
             let max_age = pressure_interval
                 .saturating_mul(2)
                 .max(Duration::from_secs(60));
-            return if self.metrics.sync_is_healthy_and_fresh(max_age) {
+            return if self.metrics.sync_is_healthy_or_in_progress(
+                max_age,
+                crate::rtorrent::client::MAX_PRESSURE_SCALED_RPC_TIMEOUT,
+            ) {
                 BackendStatus::Connected
             } else {
                 BackendStatus::Unreachable

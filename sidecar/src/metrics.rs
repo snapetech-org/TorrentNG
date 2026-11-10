@@ -15,10 +15,16 @@ pub struct Metrics {
     pub sync_cycles_total: AtomicU64,
     pub sync_errors_total: AtomicU64,
     /// Result of the most recently completed backend sync: 0 unknown,
-    /// 1 connected, 2 unreachable. Health endpoints read this instead of
-    /// adding a second SCGI probe while rTorrent is under storage pressure.
+    /// 1 connected, 2 unreachable. Health endpoints also consult the latest
+    /// successful sync and bounded in-flight state without adding SCGI probes.
     pub sync_health_state: AtomicU64,
     pub sync_last_completed_at_unix_secs: AtomicU64,
+    /// Timestamp of the latest successful sync. A later transient failure
+    /// does not erase a recent known-good backend observation.
+    pub sync_last_success_at_unix_secs: AtomicU64,
+    /// Whether a backend sync pass is currently in flight and when it began.
+    pub sync_in_progress: AtomicU64,
+    pub sync_started_at_unix_secs: AtomicU64,
 }
 
 pub type SharedMetrics = Arc<Metrics>;
@@ -35,25 +41,46 @@ impl Metrics {
             .as_secs();
         self.sync_last_completed_at_unix_secs
             .store(completed_at, Ordering::Relaxed);
+        if healthy {
+            self.sync_last_success_at_unix_secs
+                .store(completed_at, Ordering::Relaxed);
+        }
         self.sync_health_state
             .store(if healthy { 1 } else { 2 }, Ordering::Release);
+        self.sync_in_progress.store(0, Ordering::Release);
     }
 
-    pub fn sync_is_healthy_and_fresh(&self, max_age: std::time::Duration) -> bool {
-        if self.sync_health_state.load(Ordering::Acquire) != 1 {
-            return false;
-        }
-        let last_completed = self
-            .sync_last_completed_at_unix_secs
-            .load(Ordering::Relaxed);
-        if last_completed == 0 {
+    pub fn begin_sync_attempt(&self) {
+        let started_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.sync_started_at_unix_secs
+            .store(started_at, Ordering::Relaxed);
+        self.sync_in_progress.store(1, Ordering::Release);
+    }
+
+    pub fn sync_is_healthy_or_in_progress(
+        &self,
+        max_age: std::time::Duration,
+        max_in_progress_age: std::time::Duration,
+    ) -> bool {
+        let last_success = self.sync_last_success_at_unix_secs.load(Ordering::Relaxed);
+        if last_success == 0 {
             return false;
         }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        now.saturating_sub(last_completed) <= max_age.as_secs()
+        if now.saturating_sub(last_success) <= max_age.as_secs() {
+            return true;
+        }
+        if self.sync_in_progress.load(Ordering::Acquire) != 1 {
+            return false;
+        }
+        let started_at = self.sync_started_at_unix_secs.load(Ordering::Relaxed);
+        started_at != 0 && now.saturating_sub(started_at) <= max_in_progress_age.as_secs()
     }
 
     /// Render Prometheus text exposition format.
