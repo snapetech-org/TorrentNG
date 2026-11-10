@@ -50,7 +50,7 @@ const MAX_SYNC_TAGS_BYTES: usize = 512 * 1024;
 const MAX_SYNC_CACHE_ENTRIES: usize = 100_000;
 const MAX_SYNC_RETRY_DELAY: Duration = Duration::from_secs(300);
 const MAX_SLOW_SYNC_DELAY: Duration = Duration::from_secs(60);
-const MAX_IO_PRESSURE_SYNC_DELAY: Duration = Duration::from_secs(120);
+const MAX_IO_PRESSURE_SYNC_DELAY: Duration = Duration::from_secs(900);
 const SLOW_SYNC_CYCLE_THRESHOLD: Duration = Duration::from_secs(2);
 const FAST_SYNC_CYCLE_THRESHOLD: Duration = Duration::from_secs(1);
 

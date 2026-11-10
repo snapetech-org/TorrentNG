@@ -18,7 +18,8 @@ const MAX_SCGI_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 const BACKGROUND_RPC_QUEUE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration = std::time::Duration::from_secs(15);
 const MAX_PRESSURE_SCALED_RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3600);
-const MAX_BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration = std::time::Duration::from_secs(300);
+const MAX_BACKGROUND_RPC_QUEUE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+const MAX_BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration = std::time::Duration::from_secs(900);
 const MODERATE_IO_PRESSURE_PERCENT: f64 = 5.0;
 const HIGH_IO_PRESSURE_PERCENT: f64 = 15.0;
 const SEVERE_IO_PRESSURE_PERCENT: f64 = 30.0;
@@ -85,6 +86,12 @@ fn background_rpc_circuit_delay(io_pressure_percent: Option<f64>) -> std::time::
     BACKGROUND_RPC_CIRCUIT_DELAY
         .saturating_mul(io_pressure_multiplier(io_pressure_percent))
         .min(MAX_BACKGROUND_RPC_CIRCUIT_DELAY)
+}
+
+fn background_rpc_queue_timeout(io_pressure_percent: Option<f64>) -> std::time::Duration {
+    BACKGROUND_RPC_QUEUE_TIMEOUT
+        .saturating_mul(io_pressure_multiplier(io_pressure_percent))
+        .min(MAX_BACKGROUND_RPC_QUEUE_TIMEOUT)
 }
 
 #[derive(Debug)]
@@ -208,7 +215,8 @@ impl Client {
             .acquire()
             .await
             .context("rTorrent RPC gate closed")?;
-        self.call_xml(method, args).await
+        let request_timeout = pressure_scaled_rpc_timeout(self.timeout, read_io_pressure_percent());
+        self.call_xml_with_timeout(method, args, request_timeout).await
     }
 
     /// Execute a startup/control XML-RPC call with an operation-specific
@@ -224,7 +232,9 @@ impl Client {
             .acquire()
             .await
             .context("rTorrent RPC gate closed")?;
-        self.call_xml_with_timeout(method, args, self.identity_timeout)
+        let request_timeout =
+            pressure_scaled_rpc_timeout(self.identity_timeout, read_io_pressure_percent());
+        self.call_xml_with_timeout(method, args, request_timeout)
             .await
     }
 
@@ -293,11 +303,12 @@ impl Client {
         }
 
         let _permit = if priority == RpcPriority::Background {
-            tokio::time::timeout(BACKGROUND_RPC_QUEUE_TIMEOUT, self.rpc_gate.acquire())
+            let queue_timeout = background_rpc_queue_timeout(read_io_pressure_percent());
+            tokio::time::timeout(queue_timeout, self.rpc_gate.acquire())
                 .await
                 .map_err(|_| {
                     anyhow::Error::new(RpcBackpressure::QueueWaitTimedOut(
-                        BACKGROUND_RPC_QUEUE_TIMEOUT,
+                        queue_timeout,
                     ))
                 })?
                 .context("rTorrent RPC gate closed")?
@@ -396,10 +407,6 @@ impl Client {
             .await
             .with_context(|| format!("JSON-RPC call {method}"))?;
         parse_jsonrpc_response(&response)
-    }
-
-    async fn call_xml(&self, method: &str, args: &[XmlValue]) -> Result<XmlValue> {
-        self.call_xml_with_timeout(method, args, self.timeout).await
     }
 
     async fn call_xml_with_timeout(

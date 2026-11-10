@@ -25,7 +25,7 @@ use crate::{
 
 const LIVE_SPEEDS_MAX_AGE: Duration = Duration::from_secs(60);
 const LIVE_FEATURE_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
-const MAX_PRESSURE_SCALED_STATS_INTERVAL: Duration = Duration::from_secs(300);
+const MAX_PRESSURE_SCALED_STATS_INTERVAL: Duration = Duration::from_secs(900);
 const LIVE_SPEEDS_MAX_FUTURE_SKEW_SECS: i64 = 5;
 const MAX_LIVE_SPEEDS_BYTES: u64 = 64 * 1024;
 const MAX_RTORRENT_CONFIG_PROBE_BYTES: u64 = 256 * 1024;

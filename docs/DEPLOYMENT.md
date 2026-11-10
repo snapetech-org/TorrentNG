@@ -297,30 +297,33 @@ The compatible-client image also carries
 SCGI accept loop when a nonblocking `accept()` has no queued connection and
 checks the current task slot when wrapping the 100-slot task ring.
 It backports two later upstream SCGI fixes to the pinned rTorrent `0.16.11`
-source: `rtorrent-0.16.11-scgi-task-timeout-1800s` adapts upstream commit
+source: `rtorrent-0.16.11-scgi-task-timeout-3600s` adapts upstream commit
 `af6d8a10ada22458cbb1744490fccfabd238b82b` from a 60-second timeout to a
-1800-second no-progress timeout, refreshed as SCGI data is read or written;
+3600-second no-progress timeout, refreshed as SCGI data is read or written;
 `rtorrent-0.16.11-scgi-task-buffer-release` backports upstream commit
 `988aca1281c2173f1913344cdaa07883f3a9ec18` so pooled SCGI tasks release their
 peak request buffer when closed. The longer timeout lets a slow, bounded RPC
 finish under sustained storage pressure while still reclaiming stalled SCGI
 slots.
 
-The sidecar scales RPC timeouts and low-priority circuit delays using the
-maximum host I/O PSI average across the `some` and `full` windows. The scale
-steps are 4x/8x/16x/32x/64x at 5%/15%/30%/60%/80%; total RPC deadlines scale
-up to one hour. With the deployed 15-second base interval, background polling
-waits at most two minutes between bounded pages and retries transient failures
-within five minutes. Only one SCGI RPC is allowed at a time, so elevated
-pressure lengthens individual deadlines without stacking requests or waiting
-for PSI to clear. Missing PSI data uses normal pacing and does not disable
-RPCs.
+The sidecar scales direct XML-RPC, multicall, and JSON-RPC request deadlines
+using the maximum host I/O PSI average across the `some` and `full` windows.
+The scale steps are 4x/8x/16x/32x/64x at 5%/15%/30%/60%/80%; RPC deadlines
+scale up to one hour. Background RPC gate waits scale from five seconds up to
+five minutes, and repeated transient failures open the low-priority circuit
+for up to fifteen minutes. With the deployed 15-second base sync interval,
+background polling backs off to one, two, four, eight, and at most fifteen
+minutes at those pressure thresholds. Only one SCGI RPC is allowed at a time,
+so pressure lengthens individual deadlines and spaces background work without
+stacking requests or waiting for PSI to clear. Missing PSI data uses normal
+pacing and does not disable RPCs.
 
 Periodic stats sampling uses the same pressure scale. It waits for each sample
-to finish before scheduling the next one, scales the interval up to five
+to finish before scheduling the next one, scales the interval up to fifteen
 minutes, and continues sampling under sustained pressure. This also slows the
 fallback transfer-rate SCGI probes when no live-speed snapshot is configured;
-request-driven API operations remain available.
+request-driven API operations remain available and use pressure-scaled RPC
+deadlines.
 
 The service must keep rTorrent's leading XMLRPC target argument on patched
 calls; for global calls that argument is the empty string, followed by the
