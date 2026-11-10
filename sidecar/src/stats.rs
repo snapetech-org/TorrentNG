@@ -16,12 +16,16 @@ use crate::{
     api::ws::Event,
     backend::{BackendType, TorrentBackend},
     cache::{AppEventRow, Db},
-    rtorrent::TransferRates,
+    rtorrent::{
+        client::{io_pressure_multiplier, read_io_pressure_percent},
+        TransferRates,
+    },
     safe_file::open_regular_read,
 };
 
 const LIVE_SPEEDS_MAX_AGE: Duration = Duration::from_secs(60);
 const LIVE_FEATURE_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+const MAX_PRESSURE_SCALED_STATS_INTERVAL: Duration = Duration::from_secs(300);
 const LIVE_SPEEDS_MAX_FUTURE_SKEW_SECS: i64 = 5;
 const MAX_LIVE_SPEEDS_BYTES: u64 = 64 * 1024;
 const MAX_RTORRENT_CONFIG_PROBE_BYTES: u64 = 256 * 1024;
@@ -42,8 +46,12 @@ pub async fn run(
     interval: Duration,
     event_retention: usize,
 ) {
-    let mut ticker = tokio::time::interval(interval);
-    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // The stats task is background work too: a fixed ticker would keep
+    // touching the snapshot file or probing SCGI at the base rate even while
+    // the host remains under sustained I/O pressure. Sleep after each
+    // completed sample and scale that delay, with a five-minute cap so the
+    // task keeps making observations instead of waiting for PSI to clear.
+    let mut next_delay = Duration::ZERO;
     let mut last_tick = tokio::time::Instant::now();
     let mut upload_total = 0_i64;
     let mut download_total = 0_i64;
@@ -52,14 +60,16 @@ pub async fn run(
     let mut last_feature_status_at = None;
 
     loop {
-        ticker.tick().await;
+        if !next_delay.is_zero() {
+            tokio::time::sleep(next_delay).await;
+        }
         let now = tokio::time::Instant::now();
         let elapsed = now.duration_since(last_tick).as_secs_f64();
         last_tick = now;
         let rates_result = match live_speeds_file() {
-            Some(path) => read_live_speeds_async(path)
-                .await
-                .ok_or_else(|| anyhow::anyhow!("configured live speed snapshot is missing or stale")),
+            Some(path) => read_live_speeds_async(path).await.ok_or_else(|| {
+                anyhow::anyhow!("configured live speed snapshot is missing or stale")
+            }),
             None => probe_transfer_rates_result(backend.as_ref()).await,
         };
         let rates = match rates_result {
@@ -99,9 +109,9 @@ pub async fn run(
             download_total.saturating_add((rates.download.max(0) as f64 * elapsed) as i64);
         SESSION_UPLOAD_TOTAL.store(upload_total, Ordering::Relaxed);
         SESSION_DOWNLOAD_TOTAL.store(download_total, Ordering::Relaxed);
-        if last_feature_status_at.is_none_or(|last| {
-            now.duration_since(last) >= LIVE_FEATURE_STATUS_REFRESH_INTERVAL
-        }) {
+        if last_feature_status_at
+            .is_none_or(|last| now.duration_since(last) >= LIVE_FEATURE_STATUS_REFRESH_INTERVAL)
+        {
             cached_feature_status = Some(sample_feature_status(backend.as_ref()).await);
             last_feature_status_at = Some(tokio::time::Instant::now());
         }
@@ -118,6 +128,10 @@ pub async fn run(
             dht: live.dht,
             pex: live.pex,
         });
+        let pressure_interval = interval
+            .saturating_mul(io_pressure_multiplier(read_io_pressure_percent()))
+            .min(interval.max(MAX_PRESSURE_SCALED_STATS_INTERVAL));
+        next_delay = pressure_interval;
     }
 }
 

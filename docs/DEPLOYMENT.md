@@ -313,6 +313,12 @@ only one SCGI RPC is allowed at a time, so elevated pressure lengthens bounded
 work and retry intervals instead of adding concurrent RPC load. Missing PSI
 data uses normal pacing and does not disable RPCs.
 
+Periodic stats sampling uses the same pressure scale. It waits for each sample
+to finish before scheduling the next one, scales the interval up to five
+minutes, and continues sampling under sustained pressure. This also slows the
+fallback transfer-rate SCGI probes when no live-speed snapshot is configured;
+request-driven API operations remain available.
+
 The service must keep rTorrent's leading XMLRPC target argument on patched
 calls; for global calls that argument is the empty string, followed by the
 view/range parameters.
