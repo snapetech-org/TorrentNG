@@ -1,0 +1,13 @@
+From 49625ab5e510c62aff0186d644f60233756916b0 Mon Sep 17 00:00:00 2001
+Subject: [PATCH] rpc: close SCGI task on EPIPE to stop event_write() busy-loop
+
+Close an SCGI task after a broken-pipe write.
+
+diff --git a/src/rpc/scgi_task.cc b/src/rpc/scgi_task.cc
+--- a/src/rpc/scgi_task.cc
++++ b/src/rpc/scgi_task.cc
+@@ -178,3 +178,3 @@ SCgiTask::event_write() {
+   if (bytes == -1) {
+-    if (!(errno == EAGAIN || errno == EINTR || errno == EPIPE))
++    if (!(errno == EAGAIN || errno == EINTR))
+       close();

@@ -1,0 +1,24 @@
+From 988aca1281c2173f1913344cdaa07883f3a9ec18 Mon Sep 17 00:00:00 2001
+From: noctuum <25441068+noctuum@users.noreply.github.com>
+Date: Fri, 18 Sep 2026 12:36:58 +0500
+Subject: [PATCH] Release the scgi task buffer on close
+
+clear() keeps the capacity, and the task is pooled until exit.
+---
+ src/rpc/scgi_task.cc | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/rpc/scgi_task.cc b/src/rpc/scgi_task.cc
+index ed7a5e2d5..f6dc8afab 100644
+--- a/src/rpc/scgi_task.cc
++++ b/src/rpc/scgi_task.cc
+@@ -93,7 +93,8 @@ SCgiTask::close() {
+   // The callbacks are guaranteed to be finished/canceled at this point.
+   auto lock = std::lock_guard<std::mutex>(m_result_mutex);
+ 
+-  m_buffer.clear();
++  // clear() would keep the capacity, and the task is pooled for the lifetime of the process.
++  std::vector<char>().swap(m_buffer);
+ }
+ 
+ void

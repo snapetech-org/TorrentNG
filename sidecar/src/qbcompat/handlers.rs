@@ -4784,11 +4784,7 @@ async fn sync_maindata(
             return metadata_read_status(&e).into_response();
         }
     };
-    let backend_status =
-        match tokio::time::timeout(Duration::from_secs(3), s.backend.health()).await {
-            Ok(status) => status,
-            Err(_) => BackendStatus::Unreachable,
-        };
+    let backend_status = s.backend_health().await;
     let rates = match crate::stats::current_rates_result(s.backend.clone()).await {
         Ok(rates) => rates,
         Err(error) if backend_status == BackendStatus::Connected => {
@@ -5034,11 +5030,7 @@ async fn sync_metadata(
 }
 
 async fn transfer_info(State(s): State<AppState>) -> impl IntoResponse {
-    let backend_status =
-        match tokio::time::timeout(Duration::from_secs(3), s.backend.health()).await {
-            Ok(status) => status,
-            Err(_) => BackendStatus::Unreachable,
-        };
+    let backend_status = s.backend_health().await;
     if backend_status != BackendStatus::Connected {
         return (
             StatusCode::SERVICE_UNAVAILABLE,

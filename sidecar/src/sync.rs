@@ -48,6 +48,32 @@ const MAX_SYNC_TRACKER_URL_BYTES: usize = 8 * 1024;
 const MAX_SYNC_MESSAGE_BYTES: usize = 8 * 1024;
 const MAX_SYNC_TAGS_BYTES: usize = 512 * 1024;
 const MAX_SYNC_CACHE_ENTRIES: usize = 100_000;
+const MAX_SYNC_RETRY_DELAY: Duration = Duration::from_secs(300);
+const MAX_SLOW_SYNC_DELAY: Duration = Duration::from_secs(60);
+const SLOW_SYNC_CYCLE_THRESHOLD: Duration = Duration::from_secs(2);
+const FAST_SYNC_CYCLE_THRESHOLD: Duration = Duration::from_secs(1);
+
+/// Pace successful polling by measured work time. This is deliberately a
+/// soft throttle: it keeps taking bounded pages under sustained load and does
+/// not wait for a host pressure metric to return to zero.
+fn adapt_success_delay(current: Duration, base: Duration, cycle_time: Duration) -> Duration {
+    let ceiling = base.max(MAX_SLOW_SYNC_DELAY);
+    let current = current.max(base).min(ceiling);
+    if cycle_time >= SLOW_SYNC_CYCLE_THRESHOLD {
+        current.saturating_mul(2).min(ceiling)
+    } else if cycle_time < FAST_SYNC_CYCLE_THRESHOLD && current > base {
+        (current.saturating_mul(3) / 4).max(base)
+    } else {
+        current
+    }
+}
+
+/// Convert PSI into a bounded minimum interval. This only lowers polling
+/// frequency; it never waits for pressure to clear, and latency-based pacing
+/// remains active when PSI is unavailable.
+fn io_pressure_delay_floor(base: Duration, io_pressure_percent: Option<f64>) -> Duration {
+    crate::rtorrent::client::pressure_scaled_poll_interval(base, io_pressure_percent)
+}
 
 fn validate_torrent_projection(torrent: &RawTorrent) -> anyhow::Result<()> {
     fn check_field(name: &str, value: &str, maximum: usize) -> anyhow::Result<()> {
@@ -120,9 +146,6 @@ pub async fn run(
         result = "started",
         "sync loop started"
     );
-    let mut ticker = tokio::time::interval(interval);
-    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    ticker.tick().await;
     let range_supported = backend.has_bounded_sync().await;
     info!(
         component = backend.backend_type().as_str(),
@@ -134,16 +157,46 @@ pub async fn run(
     );
     let mut bounded = BoundedSyncState::default();
     let mut sync_error_active = false;
+    let mut next_delay = interval;
+    let mut retry_delay = interval;
+    let mut adaptive_delay = interval;
+    let max_retry_delay = interval.max(MAX_SYNC_RETRY_DELAY);
 
     loop {
-        ticker.tick().await;
+        // Wait after each completed pass so a slow SCGI cycle does not get an
+        // immediate catch-up poll when it finally returns.
+        tokio::time::sleep(next_delay).await;
+        let io_pressure_percent = crate::rtorrent::client::read_io_pressure_percent();
+        let io_pressure_delay = io_pressure_delay_floor(interval, io_pressure_percent);
+        let cycle_started = tokio::time::Instant::now();
+        metrics.begin_sync_attempt();
         let result = if range_supported {
             tick_bounded(backend.as_ref(), &db, &tx, &mut bounded).await
         } else {
             tick_full(backend.as_ref(), &db, &tx).await
         };
+        let cycle_time = cycle_started.elapsed();
+        metrics.record_sync_result(result.is_ok());
         match result {
             Ok(counts) => {
+                let previous_delay = adaptive_delay;
+                adaptive_delay = adapt_success_delay(adaptive_delay, interval, cycle_time);
+                next_delay = adaptive_delay.max(io_pressure_delay);
+                retry_delay = next_delay;
+                if next_delay != previous_delay {
+                    info!(
+                        component = backend.backend_type().as_str(),
+                        operation = "sync_loop_pacing",
+                        cycle_ms = cycle_time.as_millis() as u64,
+                        previous_delay_secs = previous_delay.as_secs(),
+                        adaptive_delay_secs = adaptive_delay.as_secs(),
+                        io_pressure_delay_secs = io_pressure_delay.as_secs(),
+                        io_pressure_signal_percent = ?io_pressure_percent,
+                        next_delay_secs = next_delay.as_secs(),
+                        result = "adjusted",
+                        "adjusted sync pacing from measured work and I/O pressure"
+                    );
+                }
                 if sync_error_active {
                     append_app_event_async(
                         &db,
@@ -178,6 +231,11 @@ pub async fn run(
                     .store(counts.peers, Ordering::Relaxed);
             }
             Err(e) => {
+                let server_backpressure_delay =
+                    crate::rtorrent::client::rpc_backpressure_retry_after(&e)
+                        .unwrap_or(retry_delay);
+                next_delay = server_backpressure_delay.max(io_pressure_delay);
+                retry_delay = next_delay.saturating_mul(2).min(max_retry_delay);
                 metrics.sync_errors_total.fetch_add(1, Ordering::Relaxed);
                 // `e.to_string()`/`%e` only print the outermost `.context()`
                 // layer (e.g. "bounded_torrent_sync main offset=200 limit=100")
@@ -190,6 +248,9 @@ pub async fn run(
                     operation = "sync",
                     result = "error",
                     error = %chain,
+                    cycle_ms = cycle_time.as_millis() as u64,
+                    io_pressure_signal_percent = ?io_pressure_percent,
+                    retry_delay_secs = next_delay.as_secs(),
                     "backend sync failed"
                 );
                 if !sync_error_active {
@@ -439,6 +500,7 @@ async fn tick_bounded(
             }
         }
         Err(e) => {
+            let backpressured = crate::rtorrent::client::is_rpc_unavailable_or_backpressured(&e);
             let chain = error_chain(&e);
             warn!(
                 component = backend.backend_type().as_str(),
@@ -448,6 +510,12 @@ async fn tick_bounded(
                 "live summary sync failed"
             );
             record_live_summary_error(bounded, &mut sync_error, chain);
+            if backpressured {
+                // The current bounded page must remain untouched while SCGI is
+                // unavailable. Retrying it later avoids a burst of doomed
+                // range calls and preserves the checkpoint offset.
+                return sync_error.map_or(Ok(counts), Err);
+            }
         }
     }
 
@@ -456,6 +524,15 @@ async fn tick_bounded(
         fetch_range_resilient(backend, offset, MULTICALL_RANGE_PAGE_SIZE, bounded.snapshot).await;
     let page_len = fetched.torrents.len() as i64;
     bounded.full_cycle_had_errors |= fetched.had_errors;
+    if fetched.retry_later {
+        sync_error.get_or_insert_with(|| {
+            anyhow::anyhow!(
+                "bounded torrent range deferred during SCGI backpressure at offset {offset}"
+            )
+        });
+        bounded.snapshot = fetched.snapshot.or(bounded.snapshot);
+        return sync_error.map_or(Ok(counts), Err);
+    }
     if fetched.had_errors {
         sync_error.get_or_insert_with(|| {
             anyhow::anyhow!("bounded torrent range returned an incomplete page at offset {offset}")
@@ -654,6 +731,9 @@ struct ResilientFetch {
     /// after bisecting down to a single torrent. The caller must not treat
     /// a short result as "end of list" when this is set.
     had_errors: bool,
+    /// True when transport or SCGI backpressure means the range should be
+    /// retried from the same offset instead of bisected or skipped.
+    retry_later: bool,
 }
 
 /// Fetches `[offset, offset+limit)` via the backend's bounded range API, and on failure
@@ -680,6 +760,7 @@ fn fetch_range_resilient(
                     torrents,
                     snapshot: observed_snapshot,
                     had_errors: false,
+                    retry_later: false,
                 }
             }
             Ok((_, observed_snapshot)) => {
@@ -696,6 +777,23 @@ fn fetch_range_resilient(
                     torrents: Vec::new(),
                     snapshot: observed_snapshot,
                     had_errors: true,
+                    retry_later: false,
+                }
+            }
+            Err(e) if crate::rtorrent::client::is_rpc_unavailable_or_backpressured(&e) => {
+                warn!(
+                    component = backend.backend_type().as_str(),
+                    operation = "list_torrents_range_backpressure",
+                    offset,
+                    limit,
+                    error = %error_chain(&e),
+                    "deferring range fetch until SCGI transport recovers"
+                );
+                ResilientFetch {
+                    torrents: Vec::new(),
+                    snapshot,
+                    had_errors: true,
+                    retry_later: true,
                 }
             }
             Err(e) if limit > 1 => {
@@ -710,6 +808,9 @@ fn fetch_range_resilient(
                 let left_limit = limit / 2;
                 let right_limit = limit - left_limit;
                 let mut left = fetch_range_resilient(backend, offset, left_limit, snapshot).await;
+                if left.retry_later {
+                    return left;
+                }
                 let right_snapshot = left.snapshot.or(snapshot);
                 let Some(right_offset) = offset.checked_add(left_limit) else {
                     warn!(
@@ -724,6 +825,7 @@ fn fetch_range_resilient(
                         torrents: left.torrents,
                         snapshot: left.snapshot.or(snapshot),
                         had_errors: true,
+                        retry_later: false,
                     };
                 };
                 let right =
@@ -737,6 +839,7 @@ fn fetch_range_resilient(
                     torrents: left.torrents,
                     snapshot: left.snapshot.or(right.snapshot),
                     had_errors: left.had_errors || right.had_errors || snapshot_mismatch,
+                    retry_later: right.retry_later,
                 }
             }
             Err(e) => {
@@ -751,6 +854,7 @@ fn fetch_range_resilient(
                     torrents: Vec::new(),
                     snapshot,
                     had_errors: true,
+                    retry_later: false,
                 }
             }
         }

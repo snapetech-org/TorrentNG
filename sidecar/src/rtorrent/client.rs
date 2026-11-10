@@ -4,6 +4,7 @@ use quick_xml::{events::Event, name::QName, Reader};
 use serde::de::{self, DeserializeSeed, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde_json::{json, Value};
 use std::fmt;
+use std::future::Future;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -15,6 +16,211 @@ use tokio::time::Instant;
 use crate::config::RtorrentConfig;
 
 const MAX_SCGI_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
+const BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration = std::time::Duration::from_secs(15);
+pub(crate) const MAX_PRESSURE_SCALED_RPC_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(3600);
+pub(crate) const MAX_PRESSURE_SCALED_POLL_INTERVAL: std::time::Duration =
+    std::time::Duration::from_secs(90);
+const MAX_BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration = std::time::Duration::from_secs(120);
+const BACKGROUND_RPC_MIN_SPACING: std::time::Duration = std::time::Duration::from_secs(2);
+const MAX_BACKGROUND_RPC_MIN_SPACING: std::time::Duration = std::time::Duration::from_secs(30);
+const RPC_PRESSURE_RECHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+const MODERATE_IO_PRESSURE_PERCENT: f64 = 5.0;
+const HIGH_IO_PRESSURE_PERCENT: f64 = 15.0;
+const SEVERE_IO_PRESSURE_PERCENT: f64 = 30.0;
+const EXTREME_IO_PRESSURE_PERCENT: f64 = 60.0;
+const CRITICAL_IO_PRESSURE_PERCENT: f64 = 80.0;
+
+/// Read the maximum host I/O PSI average across `some`/`full` and the
+/// 10/60/300-second windows. Longer windows keep background work damped across
+/// short pressure dips; missing or malformed PSI falls back to normal pacing.
+pub(crate) fn read_io_pressure_percent() -> Option<f64> {
+    let pressure = std::fs::read_to_string("/proc/pressure/io").ok()?;
+    let mut maximum = None;
+
+    for line in pressure.lines() {
+        let mut fields = line.split_whitespace();
+        let Some(kind) = fields.next() else {
+            continue;
+        };
+        if kind != "some" && kind != "full" {
+            continue;
+        }
+
+        for field in fields {
+            let Some((key, raw_value)) = field.split_once('=') else {
+                continue;
+            };
+            if !matches!(key, "avg10" | "avg60" | "avg300") {
+                continue;
+            }
+            if let Ok(percent) = raw_value.parse::<f64>() {
+                if percent.is_finite() && percent >= 0.0 {
+                    maximum = Some(maximum.map_or(percent, |current: f64| current.max(percent)));
+                }
+            }
+        }
+    }
+
+    maximum
+}
+
+/// Scale advisory background work with sustained I/O pressure. This never
+/// disables requests or waits for pressure to clear.
+pub(crate) fn io_pressure_multiplier(io_pressure_percent: Option<f64>) -> u32 {
+    match io_pressure_percent {
+        Some(percent) if percent >= CRITICAL_IO_PRESSURE_PERCENT => 64,
+        Some(percent) if percent >= EXTREME_IO_PRESSURE_PERCENT => 32,
+        Some(percent) if percent >= SEVERE_IO_PRESSURE_PERCENT => 16,
+        Some(percent) if percent >= HIGH_IO_PRESSURE_PERCENT => 8,
+        Some(percent) if percent >= MODERATE_IO_PRESSURE_PERCENT => 4,
+        _ => 1,
+    }
+}
+
+/// Keep polling progress under sustained disk pressure. RPC deadlines use a
+/// much larger scale so slow calls can finish, while this separate curve caps
+/// the delay between bounded background pages and samples.
+fn io_pressure_pacing_multiplier(io_pressure_percent: Option<f64>) -> u32 {
+    match io_pressure_percent {
+        Some(percent) if percent >= CRITICAL_IO_PRESSURE_PERCENT => 12,
+        Some(percent) if percent >= EXTREME_IO_PRESSURE_PERCENT => 8,
+        Some(percent) if percent >= SEVERE_IO_PRESSURE_PERCENT => 6,
+        Some(percent) if percent >= HIGH_IO_PRESSURE_PERCENT => 4,
+        Some(percent) if percent >= MODERATE_IO_PRESSURE_PERCENT => 2,
+        _ => 1,
+    }
+}
+
+pub(crate) fn pressure_scaled_poll_interval(
+    base: std::time::Duration,
+    io_pressure_percent: Option<f64>,
+) -> std::time::Duration {
+    let ceiling = base.max(MAX_PRESSURE_SCALED_POLL_INTERVAL);
+    base.saturating_mul(io_pressure_pacing_multiplier(io_pressure_percent))
+        .min(ceiling)
+}
+
+fn pressure_scaled_rpc_timeout(
+    base: std::time::Duration,
+    io_pressure_percent: Option<f64>,
+) -> std::time::Duration {
+    let ceiling = base.max(MAX_PRESSURE_SCALED_RPC_TIMEOUT);
+    base.saturating_mul(io_pressure_multiplier(io_pressure_percent))
+        .min(ceiling)
+}
+
+/// Keep an in-flight SCGI request alive when pressure rises after it starts.
+/// The pinned future is never cancelled and replayed, so this remains safe for
+/// mutating RPC methods as well as reads. Pressure sampling only extends the
+/// original deadline, up to the same bounded timeout used for initial pacing.
+async fn with_pressure_scaled_deadline<T, F>(
+    initial_timeout: std::time::Duration,
+    future: F,
+) -> std::result::Result<Result<T>, ()>
+where
+    F: Future<Output = Result<T>>,
+{
+    let started = Instant::now();
+    let mut deadline = started + initial_timeout;
+    let mut next_pressure_sample = started + RPC_PRESSURE_RECHECK_INTERVAL;
+    tokio::pin!(future);
+
+    loop {
+        tokio::select! {
+            biased;
+            result = &mut future => return Ok(result),
+            _ = tokio::time::sleep_until(deadline) => {
+                let extended_timeout = pressure_scaled_rpc_timeout(
+                    initial_timeout,
+                    read_io_pressure_percent(),
+                );
+                let extended_deadline = started + extended_timeout;
+                if extended_deadline > deadline {
+                    deadline = extended_deadline;
+                } else {
+                    return Err(());
+                }
+            }
+            _ = tokio::time::sleep_until(next_pressure_sample) => {
+                let extended_timeout = pressure_scaled_rpc_timeout(
+                    initial_timeout,
+                    read_io_pressure_percent(),
+                );
+                deadline = deadline.max(started + extended_timeout);
+                next_pressure_sample = Instant::now() + RPC_PRESSURE_RECHECK_INTERVAL;
+            }
+        }
+    }
+}
+
+fn background_rpc_circuit_delay(io_pressure_percent: Option<f64>) -> std::time::Duration {
+    BACKGROUND_RPC_CIRCUIT_DELAY
+        .saturating_mul(io_pressure_pacing_multiplier(io_pressure_percent))
+        .min(MAX_BACKGROUND_RPC_CIRCUIT_DELAY)
+}
+
+/// Space successful background reads under sustained I/O pressure. A single
+/// semaphore prevents parallel SCGI calls, but without pacing a burst of fast
+/// responses can still keep rTorrent's storage-facing work continuously busy.
+fn background_rpc_minimum_spacing(io_pressure_percent: Option<f64>) -> std::time::Duration {
+    let multiplier = io_pressure_pacing_multiplier(io_pressure_percent);
+    if multiplier == 1 {
+        return std::time::Duration::ZERO;
+    }
+
+    BACKGROUND_RPC_MIN_SPACING
+        .saturating_mul(multiplier)
+        .min(MAX_BACKGROUND_RPC_MIN_SPACING)
+}
+
+fn background_rpc_busy_retry_delay(io_pressure_percent: Option<f64>) -> std::time::Duration {
+    background_rpc_minimum_spacing(io_pressure_percent).max(std::time::Duration::from_secs(1))
+}
+
+#[derive(Debug)]
+pub(crate) enum RpcBackpressure {
+    CircuitOpen(std::time::Duration),
+    BackgroundLaneBusy(std::time::Duration),
+    RpcGateBusy(std::time::Duration),
+}
+
+impl fmt::Display for RpcBackpressure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CircuitOpen(retry_after) => write!(
+                f,
+                "rTorrent RPC circuit breaker is open for another {} ms",
+                retry_after.as_millis()
+            ),
+            Self::BackgroundLaneBusy(retry_after) => write!(
+                f,
+                "rTorrent background RPC lane is busy; retry after {} ms",
+                retry_after.as_millis()
+            ),
+            Self::RpcGateBusy(retry_after) => write!(
+                f,
+                "rTorrent RPC gate is busy; background call deferred for {} ms",
+                retry_after.as_millis()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RpcBackpressure {}
+
+pub(crate) fn is_rpc_unavailable_or_backpressured(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<RpcBackpressure>().is_some() || is_transient_transport_error(error)
+}
+
+pub(crate) fn rpc_backpressure_retry_after(error: &anyhow::Error) -> Option<std::time::Duration> {
+    match error.downcast_ref::<RpcBackpressure>()? {
+        RpcBackpressure::CircuitOpen(retry_after)
+        | RpcBackpressure::BackgroundLaneBusy(retry_after)
+        | RpcBackpressure::RpcGateBusy(retry_after) => Some(*retry_after),
+    }
+}
+
 // XML-RPC responses can be large for a raw metainfo load, but their decoded
 // shape must stay bounded independently of the wire size.  These limits also
 // protect the JSON-RPC compatibility path, which is converted into XmlValue
@@ -42,7 +248,10 @@ pub struct Client {
     timeout: std::time::Duration,
     identity_timeout: std::time::Duration,
     rpc_gate: Arc<Semaphore>,
+    low_priority_gate: Arc<Mutex<()>>,
+    low_priority_next_allowed_at: Arc<Mutex<Option<Instant>>>,
     low_priority_pause_until: Arc<Mutex<Option<Instant>>>,
+    low_priority_failures: Arc<Mutex<u8>>,
     tracker_peer_id: Option<String>,
 }
 
@@ -58,7 +267,10 @@ impl Client {
             timeout: std::time::Duration::from_secs(cfg.timeout_secs),
             identity_timeout: std::time::Duration::from_secs(cfg.identity_timeout_secs),
             rpc_gate: Arc::new(Semaphore::new(1)),
+            low_priority_gate: Arc::new(Mutex::new(())),
+            low_priority_next_allowed_at: Arc::new(Mutex::new(None)),
             low_priority_pause_until: Arc::new(Mutex::new(None)),
+            low_priority_failures: Arc::new(Mutex::new(0)),
             tracker_peer_id: Some(cfg.peer_id.clone()),
         })
     }
@@ -70,7 +282,10 @@ impl Client {
             timeout: std::time::Duration::from_secs(timeout_secs),
             identity_timeout: std::time::Duration::from_secs(timeout_secs),
             rpc_gate: Arc::new(Semaphore::new(1)),
+            low_priority_gate: Arc::new(Mutex::new(())),
+            low_priority_next_allowed_at: Arc::new(Mutex::new(None)),
             low_priority_pause_until: Arc::new(Mutex::new(None)),
+            low_priority_failures: Arc::new(Mutex::new(0)),
             tracker_peer_id: None,
         }
     }
@@ -97,7 +312,9 @@ impl Client {
             .acquire()
             .await
             .context("rTorrent RPC gate closed")?;
-        self.call_xml(method, args).await
+        let request_timeout = pressure_scaled_rpc_timeout(self.timeout, read_io_pressure_percent());
+        self.call_xml_with_timeout(method, args, request_timeout)
+            .await
     }
 
     /// Execute a startup/control XML-RPC call with an operation-specific
@@ -113,7 +330,9 @@ impl Client {
             .acquire()
             .await
             .context("rTorrent RPC gate closed")?;
-        self.call_xml_with_timeout(method, args, self.identity_timeout)
+        let request_timeout =
+            pressure_scaled_rpc_timeout(self.identity_timeout, read_io_pressure_percent());
+        self.call_xml_with_timeout(method, args, request_timeout)
             .await
     }
 
@@ -158,8 +377,13 @@ impl Client {
             .acquire()
             .await
             .context("rTorrent RPC gate closed")?;
+        let request_timeout = pressure_scaled_rpc_timeout(self.timeout, read_io_pressure_percent());
         let response = self
-            .call_xml("system.multicall", &[XmlValue::Array(entries)])
+            .call_xml_with_timeout(
+                "system.multicall",
+                &[XmlValue::Array(entries)],
+                request_timeout,
+            )
             .await
             .with_context(|| format!("system.multicall({method})"))?;
 
@@ -172,44 +396,136 @@ impl Client {
         args: &[XmlValue],
         priority: RpcPriority,
     ) -> Result<XmlValue> {
+        // Keep low-priority calls out of unbounded mutex and semaphore
+        // queues. Under contention, defer them with a retry hint instead of
+        // letting many pollers line up and run back-to-back after slow I/O.
+        let _background_gate = if priority == RpcPriority::Background {
+            let retry_after = background_rpc_busy_retry_delay(read_io_pressure_percent());
+            Some(self.low_priority_gate.try_lock().map_err(|_| {
+                anyhow::Error::new(RpcBackpressure::BackgroundLaneBusy(retry_after))
+            })?)
+        } else {
+            None
+        };
+
         if priority == RpcPriority::Background {
-            let mut pause = self.low_priority_pause_until.lock().await;
-            if let Some(until) = *pause {
-                if until > Instant::now() {
-                    bail!("rTorrent RPC circuit breaker is open");
-                }
-                *pause = None;
-            }
+            self.check_background_pause().await?;
+            self.pace_background_rpc().await;
         }
 
-        let _permit = self
-            .rpc_gate
-            .acquire()
-            .await
-            .context("rTorrent RPC gate closed")?;
+        let _permit = if priority == RpcPriority::Background {
+            let retry_after = background_rpc_busy_retry_delay(read_io_pressure_percent());
+            self.rpc_gate
+                .try_acquire()
+                .map_err(|_| anyhow::Error::new(RpcBackpressure::RpcGateBusy(retry_after)))?
+        } else {
+            self.rpc_gate
+                .acquire()
+                .await
+                .context("rTorrent RPC gate closed")?
+        };
 
-        let result = match self.call_json(method, args).await {
+        // A request can time out and open the circuit while this one waits on
+        // the single SCGI permit. Re-checking here prevents queued work from
+        // bypassing that backpressure signal.
+        if priority == RpcPriority::Background {
+            self.check_background_pause().await?;
+        }
+
+        let io_pressure_percent = read_io_pressure_percent();
+        let request_timeout = pressure_scaled_rpc_timeout(self.timeout, io_pressure_percent);
+        let call_started = Instant::now();
+
+        let result = match self.call_json(method, args, request_timeout).await {
             Ok(value) => Ok(value),
             Err(json_err) => {
                 if is_jsonrpc_unavailable(&json_err) {
-                    self.call_xml(method, args).await
+                    self.call_xml_with_timeout(method, args, request_timeout)
+                        .await
                 } else {
                     Err(json_err)
                 }
             }
         };
         if priority == RpcPriority::Background {
-            if let Err(error) = &result {
-                if is_transient_transport_error(error) {
-                    *self.low_priority_pause_until.lock().await =
-                        Some(Instant::now() + std::time::Duration::from_secs(15));
+            let settle_pressure = read_io_pressure_percent()
+                .into_iter()
+                .chain(io_pressure_percent)
+                .reduce(f64::max);
+            self.schedule_background_rpc_after(settle_pressure, call_started.elapsed())
+                .await;
+
+            match &result {
+                Ok(_) => {
+                    *self.low_priority_failures.lock().await = 0;
+                    *self.low_priority_pause_until.lock().await = None;
                 }
+                Err(error) if is_transient_transport_error(error) => {
+                    let mut failures = self.low_priority_failures.lock().await;
+                    let failure_count = (*failures).saturating_add(1);
+                    *failures = failure_count;
+                    let exponent = failure_count.saturating_sub(1).min(8);
+                    let multiplier = 1_u32 << exponent;
+                    // A slow failed call can observe more pressure while it
+                    // is in flight; use the worst sample across the call for
+                    // the retry cooldown rather than the stale start value.
+                    let delay = background_rpc_circuit_delay(settle_pressure)
+                        .saturating_mul(multiplier)
+                        .min(MAX_BACKGROUND_RPC_CIRCUIT_DELAY);
+                    *self.low_priority_pause_until.lock().await = Some(Instant::now() + delay);
+                }
+                Err(_) => {}
             }
         }
         result
     }
 
-    async fn call_json(&self, method: &str, args: &[XmlValue]) -> Result<XmlValue> {
+    async fn pace_background_rpc(&self) {
+        let mut next_allowed_at = self.low_priority_next_allowed_at.lock().await;
+        if let Some(next) = *next_allowed_at {
+            if next > Instant::now() {
+                tokio::time::sleep_until(next).await;
+            }
+        }
+        *next_allowed_at = None;
+    }
+
+    async fn schedule_background_rpc_after(
+        &self,
+        io_pressure_percent: Option<f64>,
+        call_duration: std::time::Duration,
+    ) {
+        let pressure_spacing = background_rpc_minimum_spacing(io_pressure_percent);
+        // Long-running RPCs are evidence that the backend is already slow.
+        // Give it a full bounded settle period after completion instead of
+        // measuring the gap from call start, which can collapse to zero under
+        // load or leave the next request stacked immediately behind it.
+        let latency_spacing = call_duration.min(MAX_BACKGROUND_RPC_MIN_SPACING);
+        let spacing = pressure_spacing.max(latency_spacing);
+        let next = (!spacing.is_zero()).then(|| Instant::now() + spacing);
+        *self.low_priority_next_allowed_at.lock().await = next;
+    }
+
+    async fn check_background_pause(&self) -> Result<()> {
+        let mut pause = self.low_priority_pause_until.lock().await;
+        if let Some(until) = *pause {
+            let now = Instant::now();
+            if until > now {
+                return Err(anyhow::Error::new(RpcBackpressure::CircuitOpen(
+                    until.duration_since(now),
+                )));
+            }
+            *pause = None;
+        }
+        Ok(())
+    }
+
+    async fn call_json(
+        &self,
+        method: &str,
+        args: &[XmlValue],
+        timeout: std::time::Duration,
+    ) -> Result<XmlValue> {
         if args.iter().any(contains_base64) {
             bail!("JSON-RPC unavailable for XML-RPC base64 payload");
         }
@@ -230,14 +546,10 @@ impl Client {
             bail!("JSON-RPC request exceeds {MAX_XMLRPC_REQUEST_BYTES} byte limit");
         }
         let response = self
-            .scgi_roundtrip("application/json", body.as_bytes())
+            .scgi_roundtrip_with_timeout("application/json", body.as_bytes(), timeout)
             .await
             .with_context(|| format!("JSON-RPC call {method}"))?;
         parse_jsonrpc_response(&response)
-    }
-
-    async fn call_xml(&self, method: &str, args: &[XmlValue]) -> Result<XmlValue> {
-        self.call_xml_with_timeout(method, args, self.timeout).await
     }
 
     async fn call_xml_with_timeout(
@@ -252,12 +564,6 @@ impl Client {
             .await
             .with_context(|| format!("XMLRPC call {method}"))?;
         parse_xmlrpc_response(&response)
-    }
-
-    /// Send raw SCGI request and return the HTTP body.
-    async fn scgi_roundtrip(&self, content_type: &str, body: &[u8]) -> Result<Vec<u8>> {
-        self.scgi_roundtrip_with_timeout(content_type, body, self.timeout)
-            .await
     }
 
     async fn scgi_roundtrip_with_timeout(
@@ -277,7 +583,7 @@ impl Client {
         packet.put(netstring.as_bytes());
         packet.put(body);
 
-        let response = tokio::time::timeout(timeout, async {
+        let response = with_pressure_scaled_deadline(timeout, async {
             match &self.transport {
                 Transport::Unix(path) => {
                     #[cfg(not(unix))]
@@ -314,7 +620,7 @@ impl Client {
             }
         })
         .await
-        .context("SCGI call timed out")??;
+        .map_err(|()| anyhow!("SCGI call timed out"))??;
 
         // Strip HTTP headers (everything up to \r\n\r\n)
         let body_start = response
@@ -323,7 +629,14 @@ impl Client {
             .map(|i| i + 4)
             .unwrap_or(0);
 
-        Ok(response[body_start..].to_vec())
+        let body = &response[body_start..];
+        if body.iter().all(|byte| byte.is_ascii_whitespace()) {
+            return Err(unexpected_scgi_eof(
+                "SCGI response body was empty or whitespace-only",
+            ));
+        }
+
+        Ok(body.to_vec())
     }
 }
 
@@ -803,22 +1116,32 @@ fn is_transient_transport_error(error: &anyhow::Error) -> bool {
 
     error.chain().any(|cause| {
         cause
-            .downcast_ref::<std::io::Error>()
-            .is_some_and(|io_error| {
-                matches!(
-                    io_error.kind(),
-                    std::io::ErrorKind::BrokenPipe
-                        | std::io::ErrorKind::ConnectionAborted
-                        | std::io::ErrorKind::ConnectionRefused
-                        | std::io::ErrorKind::ConnectionReset
-                        | std::io::ErrorKind::NotConnected
-                        | std::io::ErrorKind::NotFound
-                        | std::io::ErrorKind::TimedOut
-                        | std::io::ErrorKind::UnexpectedEof
-                        | std::io::ErrorKind::WouldBlock
-                )
-            })
+            .downcast_ref::<serde_json::Error>()
+            .is_some_and(|json_error| json_error.is_eof())
+            || cause
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io_error| {
+                    matches!(
+                        io_error.kind(),
+                        std::io::ErrorKind::BrokenPipe
+                            | std::io::ErrorKind::ConnectionAborted
+                            | std::io::ErrorKind::ConnectionRefused
+                            | std::io::ErrorKind::ConnectionReset
+                            | std::io::ErrorKind::NotConnected
+                            | std::io::ErrorKind::NotFound
+                            | std::io::ErrorKind::TimedOut
+                            | std::io::ErrorKind::UnexpectedEof
+                            | std::io::ErrorKind::WouldBlock
+                    )
+                })
     })
+}
+
+fn unexpected_scgi_eof(message: &'static str) -> anyhow::Error {
+    anyhow::Error::new(std::io::Error::new(
+        std::io::ErrorKind::UnexpectedEof,
+        message,
+    ))
 }
 
 // --- XMLRPC builder ---
@@ -989,7 +1312,11 @@ fn parse_xmlrpc_response(xml: &[u8]) -> Result<XmlValue> {
     loop {
         match reader.read_event()? {
             Event::Start(e) if e.name().into_inner() == "methodResponse" => break,
-            Event::Eof => bail!("XMLRPC response missing <methodResponse>"),
+            Event::Eof => {
+                return Err(unexpected_scgi_eof(
+                    "XMLRPC response missing <methodResponse>",
+                ))
+            }
             _ => {}
         }
     }
@@ -1008,7 +1335,7 @@ fn parse_xmlrpc_response(xml: &[u8]) -> Result<XmlValue> {
                 "params" => break,
                 _ => {}
             },
-            Event::Eof => bail!("unexpected EOF in XMLRPC response"),
+            Event::Eof => return Err(unexpected_scgi_eof("unexpected EOF in XMLRPC response")),
             _ => {}
         }
     }
@@ -1061,7 +1388,9 @@ fn validate_xmlrpc_shape(xml: &str) -> Result<()> {
         }
     }
     if depth != 0 {
-        bail!("XML-RPC response has an unterminated element");
+        return Err(unexpected_scgi_eof(
+            "XML-RPC response has an unterminated element",
+        ));
     }
     Ok(())
 }
@@ -1072,7 +1401,7 @@ fn parse_value(reader: &mut Reader<&[u8]>) -> Result<XmlValue> {
         match reader.read_event()? {
             Event::Start(e) if e.name().into_inner() == "value" => break,
             Event::End(_) => return Err(anyhow!("XML-RPC response missing <value>")),
-            Event::Eof => return Err(anyhow!("XML-RPC response ended before <value>")),
+            Event::Eof => return Err(unexpected_scgi_eof("XML-RPC response ended before <value>")),
             _ => {}
         }
     }

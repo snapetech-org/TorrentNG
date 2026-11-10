@@ -130,19 +130,19 @@ impl Client {
             )
         }
 
-        let (download, upload) = tokio::join!(
-            first_available(
-                self,
-                &["throttle.global_down.rate", "get_down_rate"],
-                "download"
-            ),
-            first_available(self, &["throttle.global_up.rate", "get_up_rate"], "upload"),
-        );
+        // The SCGI client has one request gate. Keep rate probes sequential so
+        // an upload query cannot queue behind a download call and bypass a
+        // circuit breaker opened while waiting under pressure.
+        let download = first_available(
+            self,
+            &["throttle.global_down.rate", "get_down_rate"],
+            "download",
+        )
+        .await?;
+        let upload =
+            first_available(self, &["throttle.global_up.rate", "get_up_rate"], "upload").await?;
 
-        Ok(TransferRates {
-            download: download?,
-            upload: upload?,
-        })
+        Ok(TransferRates { download, upload })
     }
 
     pub async fn list_torrents(&self) -> Result<Vec<RawTorrent>> {

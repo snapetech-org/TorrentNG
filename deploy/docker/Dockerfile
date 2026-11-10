@@ -68,13 +68,26 @@ COPY deploy/docker/patches/rtorrent-0.16.11-multicall-range.patch /tmp/rtorrent-
 COPY deploy/docker/patches/rtorrent-0.16.11-tracker-identity-gate.patch /tmp/rtorrent-tracker-identity-gate.patch
 COPY deploy/docker/patches/rtorrent-0.16.11-unlimited-queue-refill.patch /tmp/rtorrent-unlimited-queue-refill.patch
 COPY deploy/docker/patches/rtorrent-0.16.11-scgi-accept-eagain.patch /tmp/rtorrent-scgi-accept-eagain.patch
+COPY deploy/docker/patches/rtorrent-0.16.11-scgi-pause-accept-on-resource-exhaustion.patch /tmp/rtorrent-scgi-pause-accept-on-resource-exhaustion.patch
+COPY deploy/docker/patches/rtorrent-0.16.11-scgi-task-timeout-3600s.patch /tmp/rtorrent-scgi-task-timeout.patch
+COPY deploy/docker/patches/rtorrent-0.16.11-scgi-task-buffer-release.patch /tmp/rtorrent-scgi-task-buffer-release.patch
+COPY deploy/docker/patches/rtorrent-0.16.11-scgi-close-on-header-buffer-full.patch /tmp/rtorrent-scgi-close-on-header-buffer-full.patch
+COPY deploy/docker/patches/rtorrent-0.16.11-scgi-partial-header-read.patch /tmp/rtorrent-scgi-partial-header-read.patch
+COPY deploy/docker/patches/rtorrent-0.16.11-scgi-close-on-epipe.patch /tmp/rtorrent-scgi-close-on-epipe.patch
+# These two zero-context backports are tied to the pinned source SHA above.
 RUN cd rtorrent && \
     git apply /tmp/rtorrent-user-agent-command.patch && \
     git apply /tmp/rtorrent-local-id-command.patch && \
     git apply /tmp/rtorrent-multicall-range.patch && \
     git apply /tmp/rtorrent-tracker-identity-gate.patch && \
     git apply /tmp/rtorrent-unlimited-queue-refill.patch && \
-    git apply /tmp/rtorrent-scgi-accept-eagain.patch
+    git apply /tmp/rtorrent-scgi-accept-eagain.patch && \
+    git apply --unidiff-zero /tmp/rtorrent-scgi-pause-accept-on-resource-exhaustion.patch && \
+    git apply /tmp/rtorrent-scgi-task-timeout.patch && \
+    git apply /tmp/rtorrent-scgi-task-buffer-release.patch && \
+    git apply --unidiff-zero /tmp/rtorrent-scgi-close-on-header-buffer-full.patch && \
+    git apply /tmp/rtorrent-scgi-partial-header-read.patch && \
+    git apply /tmp/rtorrent-scgi-close-on-epipe.patch
 RUN cd libtorrent && autoreconf -fi && \
     ./configure --prefix=/usr/local && \
     make -j"$(nproc)" && make install
@@ -112,7 +125,7 @@ ENV TNG_DEFAULT_UID="${TNG_UID}"
 ENV TNG_DEFAULT_GID="${TNG_GID}"
 ENV TNG_PACKAGED_RTORRENT_VERSION=0.16.11
 ENV TNG_PACKAGED_LIBTORRENT_VERSION=0.16.11
-ENV TNG_RTORRENT_PATCHES=rtorrent-0.16.11-user-agent-command,rtorrent-0.16.11-local-id-command,rtorrent-0.16.11-multicall-range,rtorrent-0.16.11-tracker-identity-gate,rtorrent-0.16.11-unlimited-queue-refill,rtorrent-0.16.11-scgi-accept-eagain
+ENV TNG_RTORRENT_PATCHES=rtorrent-0.16.11-user-agent-command,rtorrent-0.16.11-local-id-command,rtorrent-0.16.11-multicall-range,rtorrent-0.16.11-tracker-identity-gate,rtorrent-0.16.11-unlimited-queue-refill,rtorrent-0.16.11-scgi-accept-eagain,rtorrent-0.16.11-scgi-pause-accept-on-resource-exhaustion,rtorrent-0.16.11-scgi-task-timeout-3600s,rtorrent-0.16.11-scgi-task-buffer-release,rtorrent-0.16.11-scgi-close-on-header-buffer-full,rtorrent-0.16.11-scgi-partial-header-read,rtorrent-0.16.11-scgi-close-on-epipe
 
 LABEL org.opencontainers.image.title="TorrentNG Compatible-Client Service" \
       org.opencontainers.image.description="TorrentNG compatible-client WebUI/API service for existing qBittorrent, rTorrent, Transmission, and Deluge deployments." \

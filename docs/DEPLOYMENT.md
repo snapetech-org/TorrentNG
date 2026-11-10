@@ -296,6 +296,71 @@ The compatible-client image also carries
 `rtorrent-0.16.11-scgi-accept-eagain`, which returns from rTorrent's full-task
 SCGI accept loop when a nonblocking `accept()` has no queued connection and
 checks the current task slot when wrapping the 100-slot task ring.
+It backports later upstream SCGI fixes to the pinned rTorrent `0.16.11`
+source: `rtorrent-0.16.11-scgi-task-timeout-3600s` adapts upstream commit
+`af6d8a10ada22458cbb1744490fccfabd238b82b` from a 60-second timeout to a
+3600-second no-progress timeout, refreshed as SCGI data is read or written;
+`rtorrent-0.16.11-scgi-task-buffer-release` backports upstream commit
+`988aca1281c2173f1913344cdaa07883f3a9ec18` so pooled SCGI tasks release their
+peak request buffer when closed. `rtorrent-0.16.11-scgi-pause-accept-on-resource-exhaustion`
+backports upstream commit `8df6f23e779c166d2fcb813e16af386fce6f1dba`; it
+pauses the listener for one second on descriptor or memory exhaustion and
+clears the scheduled resume if the listener stops. `rtorrent-0.16.11-scgi-close-on-header-buffer-full`
+backports upstream commit `781520fef8e9c21c819f6eca7fab4e7645621c34` so a
+malformed or overlong header closes the connection instead of throwing from
+the SCGI task. `rtorrent-0.16.11-scgi-partial-header-read`
+backports upstream commit `c368b2de1e442953e6f16b7f72eca2f6f916fcd5`, which
+keeps a connection open when the nonblocking SCGI reader receives only part of
+the header; without it, fragmented reads can be mistaken for malformed
+headers. `rtorrent-0.16.11-scgi-close-on-epipe` backports upstream commit
+`49625ab5e510c62aff0186d644f60233756916b0`, which closes a pooled task after
+a client disconnects during response writing instead of leaving it in an
+EPIPE retry loop. Together, these bounds and error paths let slow calls finish,
+avoid spinning on resource exhaustion, close malformed requests safely, and
+reclaim stalled or abandoned SCGI slots.
+
+The sidecar scales direct XML-RPC, multicall, and JSON-RPC request deadlines
+using the maximum host I/O PSI average across the `some` and `full` windows.
+The timeout scale steps are 4x/8x/16x/32x/64x at 5%/15%/30%/60%/80%; RPC
+deadlines scale up to one hour. Polling uses a separate, smaller pressure
+curve: 2x/4x/6x/8x/12x at those thresholds, capped at 90 seconds between
+bounded sync pages and stats samples when the configured base interval is at
+most 90 seconds; longer configured base intervals remain unchanged. This
+keeps inventory moving when I/O pressure stays high instead of stretching
+each page into a multi-minute wait.
+A busy low-priority lane or RPC gate returns a retry hint instead of queuing
+background pollers; the hint scales from one second up to 24 seconds. Repeated
+transient failures open the low-priority circuit for at most two minutes. With
+the deployed 15-second base sync interval, successful polling waits 30 seconds
+at 5% pressure, one minute at 15%, and at most 90 seconds at 30% or higher.
+Only one SCGI RPC is allowed at a time.
+Pressure pacing starts after each background call completes. Slow calls get an
+additional settle period equal to their duration, capped at 30 seconds, so
+their runtime cannot consume the entire inter-call delay. Pressure alone
+spaces background calls by up to 24 seconds. Foreground controls remain
+available between calls, and background polling continues without waiting for
+PSI to clear. Missing PSI data uses normal pacing and does not disable RPCs.
+
+Periodic stats sampling uses the polling pressure curve. It waits for each
+sample to finish before scheduling the next one, applies the same 90-second
+pressure ceiling for base intervals at or below 90 seconds, and continues
+sampling under sustained pressure. This also slows the fallback transfer-rate
+SCGI probes when no live-speed snapshot is configured; request-driven API
+operations remain available and use the longer, pressure-scaled RPC deadlines.
+
+The rTorrent health endpoints use the latest successful sync and current sync
+state instead of sending a second SCGI health probe. A successful snapshot
+remains fresh for twice the pressure-scaled sync interval, with a one-minute
+minimum; a transient failed attempt does not discard that known-good state. If
+the snapshot expires while another sync pass is in flight, health remains
+connected for up to the maximum pressure-scaled SCGI deadline of one hour. Once
+that deadline expires, a stale snapshot reports the backend as unreachable.
+If the pass ends without success, the latest successful snapshot remains
+usable only through its normal freshness window. This keeps health checks from
+adding SCGI work, triggering a restart solely because a large pass is slow, or
+cancelling a slow request at the old three-second HTTP deadline. Other backend
+adapters retain their direct health probe.
+
 The service must keep rTorrent's leading XMLRPC target argument on patched
 calls; for global calls that argument is the empty string, followed by the
 view/range parameters.

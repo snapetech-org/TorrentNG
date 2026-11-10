@@ -1,0 +1,94 @@
+diff --git a/src/rpc/scgi_task.cc b/src/rpc/scgi_task.cc
+index 7feecc3..f4e4617 100644
+--- a/src/rpc/scgi_task.cc
++++ b/src/rpc/scgi_task.cc
+@@ -15,6 +15,7 @@
+ #include <torrent/runtime/socket_manager.h>
+ #include <torrent/utils/log.h>
+ #include <torrent/system/thread.h>
++#include <torrent/utils/scheduler.h>
+ 
+ #include "control.h"
+ #include "globals.h"
+@@ -39,6 +40,7 @@ SCgiTask::open(SCgi* parent, int fd) {
+   torrent::this_thread::poll()->open(this);
+   torrent::this_thread::poll()->insert_read(this);
+   torrent::this_thread::poll()->insert_error(this);
++  torrent::this_thread::scheduler()->update_wait_for_ceil_seconds(&m_task_timeout, timeout_request);
+ 
+   auto lock = std::lock_guard<std::mutex>(m_result_mutex);
+ 
+@@ -51,6 +53,7 @@ SCgiTask::cancel_open() {
+   if (!is_open())
+     return;
+ 
++  torrent::this_thread::scheduler()->erase(&m_task_timeout);
+   torrent::this_thread::poll()->remove_and_close(this);
+ 
+   torrent::fd_close(file_descriptor());
+@@ -62,6 +65,7 @@ SCgiTask::close() {
+   if (!is_open())
+     return;
+ 
++  torrent::this_thread::scheduler()->erase(&m_task_timeout);
+   torrent::main_thread::thread()->cancel_callback_and_wait(this);
+   torrent::system::Thread::self()->cancel_callback(this);
+ 
+@@ -97,6 +101,8 @@ SCgiTask::event_read() {
+     return;
+   }
+ 
++  torrent::this_thread::scheduler()->update_wait_for_ceil_seconds(&m_task_timeout, timeout_request);
++
+   // The buffer has space to nul-terminate to ease the parsing below.
+   m_position += bytes;
+ 
+@@ -173,6 +179,7 @@ SCgiTask::event_write() {
+   }
+ 
+   m_position += bytes;
++  torrent::this_thread::scheduler()->update_wait_for_ceil_seconds(&m_task_timeout, timeout_request);
+ 
+   if (bytes == 0 || m_position == m_buffer.size())
+     return close();
+diff --git a/src/rpc/scgi_task.h b/src/rpc/scgi_task.h
+index fea62b6..634896f 100644
+--- a/src/rpc/scgi_task.h
++++ b/src/rpc/scgi_task.h
+@@ -1,10 +1,12 @@
+ #ifndef RTORRENT_RPC_SCGI_TASK_H
+ #define RTORRENT_RPC_SCGI_TASK_H
+ 
++#include <chrono>
+ #include <memory>
+ #include <mutex>
+ #include <vector>
+ #include <torrent/event.h>
++#include <torrent/utils/scheduler.h>
+ 
+ namespace rpc {
+ 
+@@ -16,9 +18,14 @@ public:
+   static constexpr int max_header_size     = 2000;
+   static constexpr int max_content_size    = (2 << 23);
+ 
++  static constexpr auto timeout_request = std::chrono::seconds(3600);
++
+   enum ContentType { XML, JSON };
+ 
+-  SCgiTask() { m_fileDesc = -1; }
++  SCgiTask() {
++    m_fileDesc = -1;
++    m_task_timeout.slot() = [this]() { close(); };
++  }
+ 
+   const char*         type_name() const override { return "scgi-task"; }
+ 
+@@ -55,6 +62,7 @@ private:
+   void                gzip_response(const char* buffer, uint32_t content_length);
+ 
+   SCgi*               m_parent{};
++  torrent::utils::SchedulerEntry m_task_timeout;
+ 
+   std::mutex          m_result_mutex;
+ 
