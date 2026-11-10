@@ -1,0 +1,17 @@
+From c368b2de1e442953e6f16b7f72eca2f6f916fcd5 Mon Sep 17 00:00:00 2001
+Subject: [PATCH] Fix SCGI event_read: return on partial header read instead of closing connection @trim21
+
+Keep a connection open while a partial SCGI header arrives.
+
+diff --git a/src/rpc/scgi_task.cc b/src/rpc/scgi_task.cc
+--- a/src/rpc/scgi_task.cc
++++ b/src/rpc/scgi_task.cc
+@@ -120,5 +120,8 @@ SCgiTask::event_read() {
+     if (current == m_buffer.data())
+       return;
+ 
++    if (current == m_buffer.data() + m_position)
++      return;
++
+     if (*current != ':' || header_size < 17 || header_size > max_header_size)
+       goto event_read_failed;

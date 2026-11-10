@@ -302,9 +302,16 @@ source: `rtorrent-0.16.11-scgi-task-timeout-3600s` adapts upstream commit
 3600-second no-progress timeout, refreshed as SCGI data is read or written;
 `rtorrent-0.16.11-scgi-task-buffer-release` backports upstream commit
 `988aca1281c2173f1913344cdaa07883f3a9ec18` so pooled SCGI tasks release their
-peak request buffer when closed. The longer timeout lets a slow, bounded RPC
-finish under sustained storage pressure while still reclaiming stalled SCGI
-slots.
+peak request buffer when closed. `rtorrent-0.16.11-scgi-partial-header-read`
+backports upstream commit `c368b2de1e442953e6f16b7f72eca2f6f916fcd5`, which
+keeps a connection open when the nonblocking SCGI reader receives only part of
+the header; without it, fragmented reads can be mistaken for malformed
+headers. `rtorrent-0.16.11-scgi-close-on-epipe` backports upstream commit
+`49625ab5e510c62aff0186d644f60233756916b0`, which closes a pooled task after
+a client disconnects during response writing instead of leaving it in an
+EPIPE retry loop. Together, the server timeout, partial-read handling, client
+disconnect cleanup, and buffer release let slow calls finish while reclaiming
+stalled or abandoned SCGI slots.
 
 The sidecar scales direct XML-RPC, multicall, and JSON-RPC request deadlines
 using the maximum host I/O PSI average across the `some` and `full` windows.
