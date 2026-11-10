@@ -4,6 +4,7 @@ use quick_xml::{events::Event, name::QName, Reader};
 use serde::de::{self, DeserializeSeed, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde_json::{json, Value};
 use std::fmt;
+use std::future::Future;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -20,6 +21,7 @@ const MAX_PRESSURE_SCALED_RPC_TIMEOUT: std::time::Duration = std::time::Duration
 const MAX_BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration = std::time::Duration::from_secs(900);
 const BACKGROUND_RPC_MIN_SPACING: std::time::Duration = std::time::Duration::from_secs(2);
 const MAX_BACKGROUND_RPC_MIN_SPACING: std::time::Duration = std::time::Duration::from_secs(300);
+const RPC_PRESSURE_RECHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 const MODERATE_IO_PRESSURE_PERCENT: f64 = 5.0;
 const HIGH_IO_PRESSURE_PERCENT: f64 = 15.0;
 const SEVERE_IO_PRESSURE_PERCENT: f64 = 30.0;
@@ -80,6 +82,50 @@ fn pressure_scaled_rpc_timeout(
     let ceiling = base.max(MAX_PRESSURE_SCALED_RPC_TIMEOUT);
     base.saturating_mul(io_pressure_multiplier(io_pressure_percent))
         .min(ceiling)
+}
+
+/// Keep an in-flight SCGI request alive when pressure rises after it starts.
+/// The pinned future is never cancelled and replayed, so this remains safe for
+/// mutating RPC methods as well as reads. Pressure sampling only extends the
+/// original deadline, up to the same bounded timeout used for initial pacing.
+async fn with_pressure_scaled_deadline<T, F>(
+    initial_timeout: std::time::Duration,
+    future: F,
+) -> std::result::Result<Result<T>, ()>
+where
+    F: Future<Output = Result<T>>,
+{
+    let started = Instant::now();
+    let mut deadline = started + initial_timeout;
+    let mut next_pressure_sample = started + RPC_PRESSURE_RECHECK_INTERVAL;
+    tokio::pin!(future);
+
+    loop {
+        tokio::select! {
+            biased;
+            result = &mut future => return Ok(result),
+            _ = tokio::time::sleep_until(deadline) => {
+                let extended_timeout = pressure_scaled_rpc_timeout(
+                    initial_timeout,
+                    read_io_pressure_percent(),
+                );
+                let extended_deadline = started + extended_timeout;
+                if extended_deadline > deadline {
+                    deadline = extended_deadline;
+                } else {
+                    return Err(());
+                }
+            }
+            _ = tokio::time::sleep_until(next_pressure_sample) => {
+                let extended_timeout = pressure_scaled_rpc_timeout(
+                    initial_timeout,
+                    read_io_pressure_percent(),
+                );
+                deadline = deadline.max(started + extended_timeout);
+                next_pressure_sample = Instant::now() + RPC_PRESSURE_RECHECK_INTERVAL;
+            }
+        }
+    }
 }
 
 fn background_rpc_circuit_delay(io_pressure_percent: Option<f64>) -> std::time::Duration {
@@ -511,7 +557,7 @@ impl Client {
         packet.put(netstring.as_bytes());
         packet.put(body);
 
-        let response = tokio::time::timeout(timeout, async {
+        let response = with_pressure_scaled_deadline(timeout, async {
             match &self.transport {
                 Transport::Unix(path) => {
                     #[cfg(not(unix))]
@@ -548,7 +594,7 @@ impl Client {
             }
         })
         .await
-        .context("SCGI call timed out")??;
+        .map_err(|()| anyhow!("SCGI call timed out"))??;
 
         // Strip HTTP headers (everything up to \r\n\r\n)
         let body_start = response
