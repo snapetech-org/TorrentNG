@@ -16,6 +16,68 @@ use crate::config::RtorrentConfig;
 
 const MAX_SCGI_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 const BACKGROUND_RPC_QUEUE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration = std::time::Duration::from_secs(15);
+const MAX_BACKGROUND_RPC_DELAY: std::time::Duration = std::time::Duration::from_secs(120);
+const MODERATE_IO_PRESSURE_PERCENT: f64 = 5.0;
+const HIGH_IO_PRESSURE_PERCENT: f64 = 15.0;
+const SEVERE_IO_PRESSURE_PERCENT: f64 = 30.0;
+const EXTREME_IO_PRESSURE_PERCENT: f64 = 60.0;
+
+/// Read the host's short-window I/O PSI as an advisory scheduling hint.
+/// Missing or malformed PSI data falls back to normal pacing.
+pub(crate) fn read_io_pressure_avg10() -> Option<f64> {
+    let pressure = std::fs::read_to_string("/proc/pressure/io").ok()?;
+    let mut maximum = None;
+
+    for line in pressure.lines() {
+        let mut fields = line.split_whitespace();
+        let Some(kind) = fields.next() else {
+            continue;
+        };
+        if kind != "some" && kind != "full" {
+            continue;
+        }
+
+        if let Some(avg10) = fields.find_map(|field| {
+            field
+                .strip_prefix("avg10=")
+                .and_then(|value| value.parse::<f64>().ok())
+        }) {
+            if avg10.is_finite() && avg10 >= 0.0 {
+                maximum = Some(maximum.map_or(avg10, |current: f64| current.max(avg10)));
+            }
+        }
+    }
+
+    maximum
+}
+
+/// Scale advisory background work with sustained I/O pressure. This never
+/// disables requests or waits for pressure to clear.
+pub(crate) fn io_pressure_multiplier(io_pressure_avg10: Option<f64>) -> u32 {
+    match io_pressure_avg10 {
+        Some(percent) if percent >= EXTREME_IO_PRESSURE_PERCENT => 16,
+        Some(percent) if percent >= SEVERE_IO_PRESSURE_PERCENT => 8,
+        Some(percent) if percent >= HIGH_IO_PRESSURE_PERCENT => 4,
+        Some(percent) if percent >= MODERATE_IO_PRESSURE_PERCENT => 2,
+        _ => 1,
+    }
+}
+
+fn background_rpc_timeout(
+    base: std::time::Duration,
+    io_pressure_avg10: Option<f64>,
+) -> std::time::Duration {
+    let ceiling = base.max(MAX_BACKGROUND_RPC_DELAY);
+    base.saturating_mul(io_pressure_multiplier(io_pressure_avg10))
+        .min(ceiling)
+}
+
+fn background_rpc_circuit_delay(io_pressure_avg10: Option<f64>) -> std::time::Duration {
+    BACKGROUND_RPC_CIRCUIT_DELAY
+        .saturating_mul(io_pressure_multiplier(io_pressure_avg10))
+        .min(MAX_BACKGROUND_RPC_DELAY)
+}
 
 #[derive(Debug)]
 pub(crate) enum RpcBackpressure {
@@ -226,11 +288,23 @@ impl Client {
             self.check_background_pause().await?;
         }
 
-        let result = match self.call_json(method, args).await {
+        let io_pressure_avg10 = if priority == RpcPriority::Background {
+            read_io_pressure_avg10()
+        } else {
+            None
+        };
+        let request_timeout = if priority == RpcPriority::Background {
+            background_rpc_timeout(self.timeout, io_pressure_avg10)
+        } else {
+            self.timeout
+        };
+
+        let result = match self.call_json(method, args, request_timeout).await {
             Ok(value) => Ok(value),
             Err(json_err) => {
                 if is_jsonrpc_unavailable(&json_err) {
-                    self.call_xml(method, args).await
+                    self.call_xml_with_timeout(method, args, request_timeout)
+                        .await
                 } else {
                     Err(json_err)
                 }
@@ -240,7 +314,7 @@ impl Client {
             if let Err(error) = &result {
                 if is_transient_transport_error(error) {
                     *self.low_priority_pause_until.lock().await =
-                        Some(Instant::now() + std::time::Duration::from_secs(15));
+                        Some(Instant::now() + background_rpc_circuit_delay(io_pressure_avg10));
                 }
             }
         }
@@ -258,7 +332,12 @@ impl Client {
         Ok(())
     }
 
-    async fn call_json(&self, method: &str, args: &[XmlValue]) -> Result<XmlValue> {
+    async fn call_json(
+        &self,
+        method: &str,
+        args: &[XmlValue],
+        timeout: std::time::Duration,
+    ) -> Result<XmlValue> {
         if args.iter().any(contains_base64) {
             bail!("JSON-RPC unavailable for XML-RPC base64 payload");
         }
@@ -279,7 +358,7 @@ impl Client {
             bail!("JSON-RPC request exceeds {MAX_XMLRPC_REQUEST_BYTES} byte limit");
         }
         let response = self
-            .scgi_roundtrip("application/json", body.as_bytes())
+            .scgi_roundtrip_with_timeout("application/json", body.as_bytes(), timeout)
             .await
             .with_context(|| format!("JSON-RPC call {method}"))?;
         parse_jsonrpc_response(&response)
@@ -301,12 +380,6 @@ impl Client {
             .await
             .with_context(|| format!("XMLRPC call {method}"))?;
         parse_xmlrpc_response(&response)
-    }
-
-    /// Send raw SCGI request and return the HTTP body.
-    async fn scgi_roundtrip(&self, content_type: &str, body: &[u8]) -> Result<Vec<u8>> {
-        self.scgi_roundtrip_with_timeout(content_type, body, self.timeout)
-            .await
     }
 
     async fn scgi_roundtrip_with_timeout(
