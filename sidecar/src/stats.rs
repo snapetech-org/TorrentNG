@@ -14,14 +14,14 @@ use tracing::warn;
 
 use crate::{
     api::ws::Event,
-    backend::TorrentBackend,
+    backend::{BackendType, TorrentBackend},
     cache::{AppEventRow, Db},
     rtorrent::TransferRates,
     safe_file::open_regular_read,
 };
 
-const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const LIVE_SPEEDS_MAX_AGE: Duration = Duration::from_secs(60);
+const LIVE_FEATURE_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 const LIVE_SPEEDS_MAX_FUTURE_SKEW_SECS: i64 = 5;
 const MAX_LIVE_SPEEDS_BYTES: u64 = 64 * 1024;
 const MAX_RTORRENT_CONFIG_PROBE_BYTES: u64 = 256 * 1024;
@@ -48,57 +48,64 @@ pub async fn run(
     let mut upload_total = 0_i64;
     let mut download_total = 0_i64;
     let mut stats_error_active = false;
+    let mut cached_feature_status = None;
+    let mut last_feature_status_at = None;
 
     loop {
         ticker.tick().await;
         let now = tokio::time::Instant::now();
         let elapsed = now.duration_since(last_tick).as_secs_f64();
         last_tick = now;
-        let file_rates = match live_speeds_file() {
-            Some(path) => read_live_speeds_async(path).await,
-            None => None,
+        let rates_result = match live_speeds_file() {
+            Some(path) => read_live_speeds_async(path)
+                .await
+                .ok_or_else(|| anyhow::anyhow!("configured live speed snapshot is missing or stale")),
+            None => probe_transfer_rates_result(backend.as_ref()).await,
         };
-        let rates = match file_rates {
-            Some(rates) => rates,
-            None => match probe_transfer_rates_result(backend.as_ref()).await {
-                Ok(rates) => {
-                    if stats_error_active {
-                        append_app_event_async(
-                            &db,
-                            "info",
-                            "rtorrent_stats_recovered",
-                            "backend transfer stats recovered",
-                            serde_json::json!({
-                                "component": backend.backend_type().as_str(),
-                                "operation": "transfer_stats",
-                                "result": "ok",
-                            }),
-                            event_retention,
-                        )
-                        .await;
-                        stats_error_active = false;
-                    }
-                    rates
-                }
-                Err(e) => {
-                    record_stats_probe_failure(
-                        backend.as_ref(),
+        let rates = match rates_result {
+            Ok(rates) => {
+                if stats_error_active {
+                    append_app_event_async(
                         &db,
-                        &mut stats_error_active,
-                        &e,
+                        "info",
+                        "rtorrent_stats_recovered",
+                        "backend transfer stats recovered",
+                        serde_json::json!({
+                            "component": backend.backend_type().as_str(),
+                            "operation": "transfer_stats",
+                            "result": "ok",
+                        }),
                         event_retention,
                     )
                     .await;
-                    TransferRates::default()
+                    stats_error_active = false;
                 }
-            },
+                rates
+            }
+            Err(e) => {
+                record_stats_probe_failure(
+                    backend.as_ref(),
+                    &db,
+                    &mut stats_error_active,
+                    &e,
+                    event_retention,
+                )
+                .await;
+                TransferRates::default()
+            }
         };
         upload_total = upload_total.saturating_add((rates.upload.max(0) as f64 * elapsed) as i64);
         download_total =
             download_total.saturating_add((rates.download.max(0) as f64 * elapsed) as i64);
         SESSION_UPLOAD_TOTAL.store(upload_total, Ordering::Relaxed);
         SESSION_DOWNLOAD_TOTAL.store(download_total, Ordering::Relaxed);
-        let live = live_status(backend.as_ref()).await;
+        if last_feature_status_at.is_none_or(|last| {
+            now.duration_since(last) >= LIVE_FEATURE_STATUS_REFRESH_INTERVAL
+        }) {
+            cached_feature_status = Some(sample_feature_status(backend.as_ref()).await);
+            last_feature_status_at = Some(tokio::time::Instant::now());
+        }
+        let live = live_status(cached_feature_status.clone().unwrap_or_default()).await;
         let _ = tx.send(Event::Stats {
             upload_speed: rates.upload,
             download_speed: rates.download,
@@ -202,20 +209,10 @@ async fn record_stats_probe_failure(
 async fn probe_transfer_rates_result(
     backend: &dyn TorrentBackend,
 ) -> anyhow::Result<TransferRates> {
-    if let Ok(Ok(summary)) =
-        tokio::time::timeout(PROBE_TIMEOUT, backend.live_summary("main", 1)).await
-    {
-        return Ok(summary.rates);
-    }
-
-    match tokio::time::timeout(PROBE_TIMEOUT, backend.transfer_rates()).await {
-        Ok(Ok(rates)) => Ok(rates),
-        Ok(Err(e)) => Err(e),
-        Err(_) => Err(anyhow::anyhow!(
-            "transfer stats probe timed out after {} ms",
-            PROBE_TIMEOUT.as_millis()
-        )),
-    }
+    // Do not cancel a large rTorrent SCGI task after a short UI deadline. The
+    // server may continue executing after the client future is dropped, so
+    // repeated fallbacks can stack abandoned work under storage pressure.
+    backend.transfer_rates().await
 }
 
 async fn append_app_event_async(
@@ -346,9 +343,37 @@ struct LiveStatus {
     pex: String,
 }
 
-async fn live_status(backend: &dyn TorrentBackend) -> LiveStatus {
+async fn sample_feature_status(backend: &dyn TorrentBackend) -> (String, String) {
+    let (mut dht, mut pex) = if backend.backend_type() == BackendType::Rtorrent {
+        // rTorrent feature settings are static configuration for this bridge.
+        // Reading them locally avoids another pair of SCGI calls per refresh.
+        ("unknown".to_owned(), "unknown".to_owned())
+    } else {
+        backend.feature_status().await
+    };
+    let fallback = (dht.clone(), pex.clone());
+    let local_status = tokio::task::spawn_blocking(move || {
+        fill_feature_status_from_config(&mut dht, &mut pex);
+        (dht, pex)
+    })
+    .await;
+    match local_status {
+        Ok(status) => status,
+        Err(error) => {
+            warn!(
+                component = "stats",
+                operation = "feature_status_config",
+                result = "error",
+                error = %crate::task_join_error_summary("feature status config worker", &error),
+                "feature status config worker failed"
+            );
+            fallback
+        }
+    }
+}
+
+async fn live_status((dht, pex): (String, String)) -> LiveStatus {
     let listen_port = incoming_port();
-    let (dht, pex) = backend.feature_status().await;
     let probe_dht = dht.clone();
     let probe_pex = pex.clone();
     let local_status = tokio::task::spawn_blocking(move || {
@@ -360,9 +385,8 @@ async fn live_status(backend: &dyn TorrentBackend) -> LiveStatus {
         } else {
             "closed"
         };
-        let mut dht = probe_dht;
-        let mut pex = probe_pex;
-        fill_feature_status_from_config(&mut dht, &mut pex);
+        let dht = probe_dht;
+        let pex = probe_pex;
         LiveStatus {
             connections: sockets.established,
             pending_connections: sockets.pending,

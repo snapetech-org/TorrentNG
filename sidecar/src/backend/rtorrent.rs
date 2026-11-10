@@ -10,6 +10,8 @@ use crate::rtorrent::{
     Client, TransferRates,
 };
 
+const MAX_RTORRENT_LIVE_SUMMARY_ENTRIES: i64 = 32;
+
 pub struct RtorrentBackend {
     client: Arc<Client>,
 }
@@ -210,6 +212,10 @@ impl TorrentBackend for RtorrentBackend {
         // `started` returns torrents with nonzero rates. Also read the bounded
         // `leeching` view, which includes active incomplete torrents at zero
         // rate, so stalled downloads keep a fresh live sample.
+        // This is a live projection, not the complete inventory. Keep the two
+        // active views small; bounded range sync remains responsible for full
+        // torrent coverage.
+        let limit = limit.min(MAX_RTORRENT_LIVE_SUMMARY_ENTRIES);
         let mut summary = self.client.live_summary("started", limit).await?;
         let leeching = self.client.live_summary("leeching", limit).await?;
 

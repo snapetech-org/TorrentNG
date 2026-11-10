@@ -280,7 +280,7 @@ async fn main() -> Result<()> {
             stats_backend,
             stats_db,
             stats_events,
-            std::time::Duration::from_secs(2),
+            std::time::Duration::from_secs(5),
             retention,
         )
         .await;

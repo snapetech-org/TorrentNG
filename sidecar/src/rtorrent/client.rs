@@ -15,6 +15,33 @@ use tokio::time::Instant;
 use crate::config::RtorrentConfig;
 
 const MAX_SCGI_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
+const BACKGROUND_RPC_QUEUE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+#[derive(Debug)]
+pub(crate) enum RpcBackpressure {
+    CircuitOpen,
+    QueueWaitTimedOut(std::time::Duration),
+}
+
+impl fmt::Display for RpcBackpressure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CircuitOpen => f.write_str("rTorrent RPC circuit breaker is open"),
+            Self::QueueWaitTimedOut(timeout) => write!(
+                f,
+                "rTorrent background RPC gate remained busy for {} ms",
+                timeout.as_millis()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RpcBackpressure {}
+
+pub(crate) fn is_rpc_unavailable_or_backpressured(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<RpcBackpressure>().is_some() || is_transient_transport_error(error)
+}
+
 // XML-RPC responses can be large for a raw metainfo load, but their decoded
 // shape must stay bounded independently of the wire size.  These limits also
 // protect the JSON-RPC compatibility path, which is converted into XmlValue
@@ -173,20 +200,31 @@ impl Client {
         priority: RpcPriority,
     ) -> Result<XmlValue> {
         if priority == RpcPriority::Background {
-            let mut pause = self.low_priority_pause_until.lock().await;
-            if let Some(until) = *pause {
-                if until > Instant::now() {
-                    bail!("rTorrent RPC circuit breaker is open");
-                }
-                *pause = None;
-            }
+            self.check_background_pause().await?;
         }
 
-        let _permit = self
-            .rpc_gate
-            .acquire()
-            .await
-            .context("rTorrent RPC gate closed")?;
+        let _permit = if priority == RpcPriority::Background {
+            tokio::time::timeout(BACKGROUND_RPC_QUEUE_TIMEOUT, self.rpc_gate.acquire())
+                .await
+                .map_err(|_| {
+                    anyhow::Error::new(RpcBackpressure::QueueWaitTimedOut(
+                        BACKGROUND_RPC_QUEUE_TIMEOUT,
+                    ))
+                })?
+                .context("rTorrent RPC gate closed")?
+        } else {
+            self.rpc_gate
+                .acquire()
+                .await
+                .context("rTorrent RPC gate closed")?
+        };
+
+        // A request can time out and open the circuit while this one waits on
+        // the single SCGI permit. Re-checking here prevents queued work from
+        // bypassing that backpressure signal.
+        if priority == RpcPriority::Background {
+            self.check_background_pause().await?;
+        }
 
         let result = match self.call_json(method, args).await {
             Ok(value) => Ok(value),
@@ -207,6 +245,17 @@ impl Client {
             }
         }
         result
+    }
+
+    async fn check_background_pause(&self) -> Result<()> {
+        let mut pause = self.low_priority_pause_until.lock().await;
+        if let Some(until) = *pause {
+            if until > Instant::now() {
+                return Err(anyhow::Error::new(RpcBackpressure::CircuitOpen));
+            }
+            *pause = None;
+        }
+        Ok(())
     }
 
     async fn call_json(&self, method: &str, args: &[XmlValue]) -> Result<XmlValue> {
