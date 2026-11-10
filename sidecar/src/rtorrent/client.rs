@@ -17,9 +17,8 @@ use crate::config::RtorrentConfig;
 const MAX_SCGI_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 const BACKGROUND_RPC_QUEUE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration = std::time::Duration::from_secs(15);
-const MAX_BACKGROUND_RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
-const MAX_BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration =
-    std::time::Duration::from_secs(900);
+const MAX_BACKGROUND_RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(900);
+const MAX_BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration = std::time::Duration::from_secs(900);
 const MODERATE_IO_PRESSURE_PERCENT: f64 = 5.0;
 const HIGH_IO_PRESSURE_PERCENT: f64 = 15.0;
 const SEVERE_IO_PRESSURE_PERCENT: f64 = 30.0;

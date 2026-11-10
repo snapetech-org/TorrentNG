@@ -296,6 +296,23 @@ The compatible-client image also carries
 `rtorrent-0.16.11-scgi-accept-eagain`, which returns from rTorrent's full-task
 SCGI accept loop when a nonblocking `accept()` has no queued connection and
 checks the current task slot when wrapping the 100-slot task ring.
+It backports two later upstream SCGI fixes to the pinned rTorrent `0.16.11`
+source: `rtorrent-0.16.11-scgi-task-timeout-900s` adapts upstream commit
+`af6d8a10ada22458cbb1744490fccfabd238b82b` from a 60-second timeout to a
+900-second no-progress timeout, refreshed as SCGI data is read or written;
+`rtorrent-0.16.11-scgi-task-buffer-release` backports upstream commit
+`988aca1281c2173f1913344cdaa07883f3a9ec18` so pooled SCGI tasks release their
+peak request buffer when closed. The longer timeout lets a slow, bounded RPC
+finish under sustained storage pressure while still reclaiming stalled SCGI
+slots.
+
+The sidecar scales low-priority RPC timeouts and circuit delays using the
+maximum host I/O PSI average across the `some` and `full` windows. The scale
+steps are 4x/8x/16x/32x/64x at 5%/15%/30%/60%/80%, with a 900-second ceiling;
+only one SCGI RPC is allowed at a time, so elevated pressure lengthens bounded
+work and retry intervals instead of adding concurrent RPC load. Missing PSI
+data uses normal pacing and does not disable RPCs.
+
 The service must keep rTorrent's leading XMLRPC target argument on patched
 calls; for global calls that argument is the empty string, followed by the
 view/range parameters.
