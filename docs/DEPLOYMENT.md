@@ -324,13 +324,15 @@ using the maximum host I/O PSI average across the `some` and `full` windows.
 The scale steps are 4x/8x/16x/32x/64x at 5%/15%/30%/60%/80%; RPC deadlines
 scale up to one hour. A busy low-priority lane or RPC gate returns a retry hint
 instead of queuing background pollers; the hint scales from one second up to
-thirty seconds. Repeated transient failures open the low-priority circuit for
-up to fifteen minutes. With the deployed 15-second base sync interval,
+128 seconds under the configured pressure steps. Repeated transient failures
+open the low-priority circuit for up to fifteen minutes. With the deployed
+15-second base sync interval,
 background polling backs off to one, two, four, eight, and at most fifteen
 minutes at those pressure thresholds. Only one SCGI RPC is allowed at a time.
 Pressure pacing starts after each background call completes; slow calls also
-get a bounded settle period based on their duration, so their runtime cannot
-consume the entire inter-call delay. Foreground controls remain available
+get a settle period equal to their duration, capped at five minutes, so their
+runtime cannot consume the entire inter-call delay. Pressure alone spaces
+background calls by up to 128 seconds. Foreground controls remain available
 between calls, and background polling continues without waiting for PSI to
 clear. Missing PSI data uses normal pacing and does not disable RPCs.
 

@@ -18,8 +18,8 @@ const MAX_SCGI_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 const BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration = std::time::Duration::from_secs(15);
 const MAX_PRESSURE_SCALED_RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3600);
 const MAX_BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration = std::time::Duration::from_secs(900);
-const BACKGROUND_RPC_MIN_SPACING: std::time::Duration = std::time::Duration::from_millis(500);
-const MAX_BACKGROUND_RPC_MIN_SPACING: std::time::Duration = std::time::Duration::from_secs(30);
+const BACKGROUND_RPC_MIN_SPACING: std::time::Duration = std::time::Duration::from_secs(2);
+const MAX_BACKGROUND_RPC_MIN_SPACING: std::time::Duration = std::time::Duration::from_secs(300);
 const MODERATE_IO_PRESSURE_PERCENT: f64 = 5.0;
 const HIGH_IO_PRESSURE_PERCENT: f64 = 15.0;
 const SEVERE_IO_PRESSURE_PERCENT: f64 = 30.0;
@@ -422,9 +422,10 @@ impl Client {
     ) {
         let pressure_spacing = background_rpc_minimum_spacing(io_pressure_percent);
         // Long-running RPCs are evidence that the backend is already slow.
-        // Add a bounded settle period after completion instead of measuring
-        // the gap from call start, which can collapse to zero under load.
-        let latency_spacing = (call_duration / 2).min(MAX_BACKGROUND_RPC_MIN_SPACING);
+        // Give it a full bounded settle period after completion instead of
+        // measuring the gap from call start, which can collapse to zero under
+        // load or leave the next request stacked immediately behind it.
+        let latency_spacing = call_duration.min(MAX_BACKGROUND_RPC_MIN_SPACING);
         let spacing = pressure_spacing.max(latency_spacing);
         let next = (!spacing.is_zero()).then(|| Instant::now() + spacing);
         *self.low_priority_next_allowed_at.lock().await = next;
