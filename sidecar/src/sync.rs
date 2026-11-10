@@ -72,10 +72,10 @@ fn adapt_success_delay(current: Duration, base: Duration, cycle_time: Duration) 
 /// Convert PSI into a bounded minimum interval. This only lowers polling
 /// frequency; it never waits for pressure to clear, and latency-based pacing
 /// remains active when PSI is unavailable.
-fn io_pressure_delay_floor(base: Duration, io_pressure_avg10: Option<f64>) -> Duration {
+fn io_pressure_delay_floor(base: Duration, io_pressure_percent: Option<f64>) -> Duration {
     let ceiling = base.max(MAX_IO_PRESSURE_SYNC_DELAY);
     base.saturating_mul(crate::rtorrent::client::io_pressure_multiplier(
-        io_pressure_avg10,
+        io_pressure_percent,
     ))
     .min(ceiling)
 }
@@ -171,8 +171,8 @@ pub async fn run(
         // Wait after each completed pass so a slow SCGI cycle does not get an
         // immediate catch-up poll when it finally returns.
         tokio::time::sleep(next_delay).await;
-        let io_pressure_avg10 = crate::rtorrent::client::read_io_pressure_avg10();
-        let io_pressure_delay = io_pressure_delay_floor(interval, io_pressure_avg10);
+        let io_pressure_percent = crate::rtorrent::client::read_io_pressure_percent();
+        let io_pressure_delay = io_pressure_delay_floor(interval, io_pressure_percent);
         let cycle_started = tokio::time::Instant::now();
         let result = if range_supported {
             tick_bounded(backend.as_ref(), &db, &tx, &mut bounded).await
@@ -194,7 +194,7 @@ pub async fn run(
                         previous_delay_secs = previous_delay.as_secs(),
                         adaptive_delay_secs = adaptive_delay.as_secs(),
                         io_pressure_delay_secs = io_pressure_delay.as_secs(),
-                        io_pressure_avg10 = ?io_pressure_avg10,
+                        io_pressure_signal_percent = ?io_pressure_percent,
                         next_delay_secs = next_delay.as_secs(),
                         result = "adjusted",
                         "adjusted sync pacing from measured work and I/O pressure"
@@ -249,7 +249,7 @@ pub async fn run(
                     result = "error",
                     error = %chain,
                     cycle_ms = cycle_time.as_millis() as u64,
-                    io_pressure_avg10 = ?io_pressure_avg10,
+                    io_pressure_signal_percent = ?io_pressure_percent,
                     retry_delay_secs = next_delay.as_secs(),
                     "backend sync failed"
                 );

@@ -26,9 +26,10 @@ const SEVERE_IO_PRESSURE_PERCENT: f64 = 30.0;
 const EXTREME_IO_PRESSURE_PERCENT: f64 = 60.0;
 const CRITICAL_IO_PRESSURE_PERCENT: f64 = 80.0;
 
-/// Read the host's short-window I/O PSI as an advisory scheduling hint.
-/// Missing or malformed PSI data falls back to normal pacing.
-pub(crate) fn read_io_pressure_avg10() -> Option<f64> {
+/// Read the maximum host I/O PSI average across `some`/`full` and the
+/// 10/60/300-second windows. Longer windows keep background work damped across
+/// short pressure dips; missing or malformed PSI falls back to normal pacing.
+pub(crate) fn read_io_pressure_percent() -> Option<f64> {
     let pressure = std::fs::read_to_string("/proc/pressure/io").ok()?;
     let mut maximum = None;
 
@@ -41,13 +42,17 @@ pub(crate) fn read_io_pressure_avg10() -> Option<f64> {
             continue;
         }
 
-        if let Some(avg10) = fields.find_map(|field| {
-            field
-                .strip_prefix("avg10=")
-                .and_then(|value| value.parse::<f64>().ok())
-        }) {
-            if avg10.is_finite() && avg10 >= 0.0 {
-                maximum = Some(maximum.map_or(avg10, |current: f64| current.max(avg10)));
+        for field in fields {
+            let Some((key, raw_value)) = field.split_once('=') else {
+                continue;
+            };
+            if !matches!(key, "avg10" | "avg60" | "avg300") {
+                continue;
+            }
+            if let Ok(percent) = raw_value.parse::<f64>() {
+                if percent.is_finite() && percent >= 0.0 {
+                    maximum = Some(maximum.map_or(percent, |current: f64| current.max(percent)));
+                }
             }
         }
     }
@@ -57,8 +62,8 @@ pub(crate) fn read_io_pressure_avg10() -> Option<f64> {
 
 /// Scale advisory background work with sustained I/O pressure. This never
 /// disables requests or waits for pressure to clear.
-pub(crate) fn io_pressure_multiplier(io_pressure_avg10: Option<f64>) -> u32 {
-    match io_pressure_avg10 {
+pub(crate) fn io_pressure_multiplier(io_pressure_percent: Option<f64>) -> u32 {
+    match io_pressure_percent {
         Some(percent) if percent >= CRITICAL_IO_PRESSURE_PERCENT => 32,
         Some(percent) if percent >= EXTREME_IO_PRESSURE_PERCENT => 16,
         Some(percent) if percent >= SEVERE_IO_PRESSURE_PERCENT => 8,
@@ -70,16 +75,16 @@ pub(crate) fn io_pressure_multiplier(io_pressure_avg10: Option<f64>) -> u32 {
 
 fn background_rpc_timeout(
     base: std::time::Duration,
-    io_pressure_avg10: Option<f64>,
+    io_pressure_percent: Option<f64>,
 ) -> std::time::Duration {
     let ceiling = base.max(MAX_BACKGROUND_RPC_TIMEOUT);
-    base.saturating_mul(io_pressure_multiplier(io_pressure_avg10))
+    base.saturating_mul(io_pressure_multiplier(io_pressure_percent))
         .min(ceiling)
 }
 
-fn background_rpc_circuit_delay(io_pressure_avg10: Option<f64>) -> std::time::Duration {
+fn background_rpc_circuit_delay(io_pressure_percent: Option<f64>) -> std::time::Duration {
     BACKGROUND_RPC_CIRCUIT_DELAY
-        .saturating_mul(io_pressure_multiplier(io_pressure_avg10))
+        .saturating_mul(io_pressure_multiplier(io_pressure_percent))
         .min(MAX_BACKGROUND_RPC_CIRCUIT_DELAY)
 }
 
@@ -292,13 +297,13 @@ impl Client {
             self.check_background_pause().await?;
         }
 
-        let io_pressure_avg10 = if priority == RpcPriority::Background {
-            read_io_pressure_avg10()
+        let io_pressure_percent = if priority == RpcPriority::Background {
+            read_io_pressure_percent()
         } else {
             None
         };
         let request_timeout = if priority == RpcPriority::Background {
-            background_rpc_timeout(self.timeout, io_pressure_avg10)
+            background_rpc_timeout(self.timeout, io_pressure_percent)
         } else {
             self.timeout
         };
@@ -318,7 +323,7 @@ impl Client {
             if let Err(error) = &result {
                 if is_transient_transport_error(error) {
                     *self.low_priority_pause_until.lock().await =
-                        Some(Instant::now() + background_rpc_circuit_delay(io_pressure_avg10));
+                        Some(Instant::now() + background_rpc_circuit_delay(io_pressure_percent));
                 }
             }
         }
