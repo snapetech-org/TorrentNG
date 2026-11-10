@@ -1099,24 +1099,31 @@ jobs:
             echo "configured=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Announce release on Discord
+      - name: Check out Discord release tooling
+        if: steps.discord.outputs.configured == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .discord-release-tools
+          ref: ${{ github.sha }}
+          sparse-checkout: scripts/discord_release_route.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Post Discord changelog and project link
         if: success() && steps.discord.outputs.configured == 'true'
         env:
-          DISCORD_RELEASE_WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          DISCORD_PROJECT_WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          DISCORD_CHANGELOG_WEBHOOK: ${{ secrets.DISCORD_CHANGELOG_WEBHOOK }}
           RELEASE_TAG: ${{ needs.validate-release-tag.outputs.tag }}
           RELEASE_BODY: ${{ needs.release-notes.outputs.release_body }}
         shell: bash
         run: |
           set -euo pipefail
           release_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG"
-          body="$RELEASE_BODY"
-          if (( ${#body} > 3800 )); then
-            body="${body:0:3797}…"
-          fi
           jq -n \
             --arg tag "$RELEASE_TAG" \
             --arg url "$release_url" \
-            --arg description "$body" \
+            --arg description "$RELEASE_BODY" \
             '{
               username: "TorrentNG releases",
               embeds: [{
@@ -1129,8 +1136,4 @@ jobs:
                   {name: "Release", value: $url, inline: false}
                 ]
               }]
-            }' > discord-payload.json
-          curl -fsS \
-            -H "Content-Type: application/json" \
-            -d @discord-payload.json \
-            "$DISCORD_RELEASE_WEBHOOK"
+            }' | python3 .discord-release-tools/scripts/discord_release_route.py TorrentNG "$RELEASE_TAG" -
