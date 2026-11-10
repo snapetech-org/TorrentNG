@@ -1,0 +1,16 @@
+From 781520fef8e9c21c819f6eca7fab4e7645621c34 Mon Sep 17 00:00:00 2001
+Subject: [PATCH] rpc: close SCGI connection when header buffer is full
+
+Close malformed or oversized headers instead of throwing from the SCGI task.
+
+diff --git a/src/rpc/scgi_task.cc b/src/rpc/scgi_task.cc
+--- a/src/rpc/scgi_task.cc
++++ b/src/rpc/scgi_task.cc
+@@ -93 +93,4 @@
+-  if (read_length <= 0)
++  if (read_length <= 0) {
++    if (m_content_length == 0)
++      return close();
++
+@@ -94,0 +98 @@
++  }

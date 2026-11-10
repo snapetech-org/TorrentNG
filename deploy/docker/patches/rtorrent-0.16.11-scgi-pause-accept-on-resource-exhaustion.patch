@@ -1,0 +1,71 @@
+From 8df6f23e779c166d2fcb813e16af386fce6f1dba Mon Sep 17 00:00:00 2001
+Subject: [PATCH] rpc: pause SCGI accept on descriptor or memory exhaustion
+
+Pause the listener briefly instead of throwing when accept() cannot allocate
+resources. This avoids a hot error loop under sustained resource pressure.
+
+diff --git a/src/rpc/scgi.cc b/src/rpc/scgi.cc
+--- a/src/rpc/scgi.cc
++++ b/src/rpc/scgi.cc
+@@ -12,0 +13,2 @@
++#include <torrent/utils/log.h>
++#include <torrent/utils/scheduler.h>
+@@ -28,0 +31,2 @@
++
++  m_resume_accept.slot() = [this] { resume_accept(); };
+@@ -128,0 +133,3 @@
++
++  if (m_resume_accept.is_scheduled())
++    torrent::this_thread::scheduler()->erase(&m_resume_accept);
+@@ -171 +178,2 @@
+-        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR || errno == ECONNABORTED)
++        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR ||
++            errno == ECONNABORTED || errno == EPROTO || errno == EPERM)
+@@ -172,0 +181,5 @@
++
++        if (errno == EMFILE || errno == ENFILE || errno == ENOBUFS || errno == ENOMEM) {
++          pause_accept(errno);
++          return;
++        }
+@@ -191,2 +204 @@
+-          // Force a new event_read() call just to be sure we don't enter an infinite loop.
+-          if (errno == ECONNABORTED)
++          if (errno == ECONNABORTED || errno == EPROTO || errno == EPERM)
+@@ -193,0 +206,5 @@
++
++          if (errno == EMFILE || errno == ENFILE || errno == ENOBUFS || errno == ENOMEM) {
++            pause_accept(errno);
++            return;
++          }
+@@ -207 +224 @@
+-    if (!result)
++    if (!result || m_resume_accept.is_scheduled())
+@@ -212,0 +230,18 @@
++SCgi::pause_accept(int error) {
++  if (m_resume_accept.is_scheduled())
++    return;
++
++  lt_log_print(torrent::LOG_ERROR, "SCGI listener accept() failed: %s; pausing for one second", std::strerror(error));
++  torrent::this_thread::poll()->remove_read(this);
++  torrent::this_thread::scheduler()->update_wait_for(&m_resume_accept, std::chrono::seconds(1));
++}
++
++void
++SCgi::resume_accept() {
++  if (!is_open())
++    return;
++
++  torrent::this_thread::poll()->insert_read(this);
++}
++
++void
+diff --git a/src/rpc/scgi.h b/src/rpc/scgi.h
+--- a/src/rpc/scgi.h
++++ b/src/rpc/scgi.h
+@@ -6,0 +7 @@
++#include <torrent/utils/scheduler.h>
+@@ -41,0 +43,2 @@
++  void                pause_accept(int error);
++  void                resume_accept();
+@@ -47,0 +51 @@
++  torrent::utils::SchedulerEntry m_resume_accept;

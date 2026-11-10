@@ -296,22 +296,28 @@ The compatible-client image also carries
 `rtorrent-0.16.11-scgi-accept-eagain`, which returns from rTorrent's full-task
 SCGI accept loop when a nonblocking `accept()` has no queued connection and
 checks the current task slot when wrapping the 100-slot task ring.
-It backports two later upstream SCGI fixes to the pinned rTorrent `0.16.11`
+It backports later upstream SCGI fixes to the pinned rTorrent `0.16.11`
 source: `rtorrent-0.16.11-scgi-task-timeout-3600s` adapts upstream commit
 `af6d8a10ada22458cbb1744490fccfabd238b82b` from a 60-second timeout to a
 3600-second no-progress timeout, refreshed as SCGI data is read or written;
 `rtorrent-0.16.11-scgi-task-buffer-release` backports upstream commit
 `988aca1281c2173f1913344cdaa07883f3a9ec18` so pooled SCGI tasks release their
-peak request buffer when closed. `rtorrent-0.16.11-scgi-partial-header-read`
+peak request buffer when closed. `rtorrent-0.16.11-scgi-pause-accept-on-resource-exhaustion`
+backports upstream commit `8df6f23e779c166d2fcb813e16af386fce6f1dba`; it
+pauses the listener for one second on descriptor or memory exhaustion and
+clears the scheduled resume if the listener stops. `rtorrent-0.16.11-scgi-close-on-header-buffer-full`
+backports upstream commit `781520fef8e9c21c819f6eca7fab4e7645621c34` so a
+malformed or overlong header closes the connection instead of throwing from
+the SCGI task. `rtorrent-0.16.11-scgi-partial-header-read`
 backports upstream commit `c368b2de1e442953e6f16b7f72eca2f6f916fcd5`, which
 keeps a connection open when the nonblocking SCGI reader receives only part of
 the header; without it, fragmented reads can be mistaken for malformed
 headers. `rtorrent-0.16.11-scgi-close-on-epipe` backports upstream commit
 `49625ab5e510c62aff0186d644f60233756916b0`, which closes a pooled task after
 a client disconnects during response writing instead of leaving it in an
-EPIPE retry loop. Together, the server timeout, partial-read handling, client
-disconnect cleanup, and buffer release let slow calls finish while reclaiming
-stalled or abandoned SCGI slots.
+EPIPE retry loop. Together, these bounds and error paths let slow calls finish,
+avoid spinning on resource exhaustion, close malformed requests safely, and
+reclaim stalled or abandoned SCGI slots.
 
 The sidecar scales direct XML-RPC, multicall, and JSON-RPC request deadlines
 using the maximum host I/O PSI average across the `some` and `full` windows.
