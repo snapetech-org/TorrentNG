@@ -394,7 +394,10 @@ impl Client {
                     *failures = failure_count;
                     let exponent = failure_count.saturating_sub(1).min(8);
                     let multiplier = 1_u32 << exponent;
-                    let delay = background_rpc_circuit_delay(io_pressure_percent)
+                    // A slow failed call can observe more pressure while it
+                    // is in flight; use the worst sample across the call for
+                    // the retry cooldown rather than the stale start value.
+                    let delay = background_rpc_circuit_delay(settle_pressure)
                         .saturating_mul(multiplier)
                         .min(MAX_BACKGROUND_RPC_CIRCUIT_DELAY);
                     *self.low_priority_pause_until.lock().await = Some(Instant::now() + delay);
