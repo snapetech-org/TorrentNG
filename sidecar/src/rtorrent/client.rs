@@ -15,12 +15,10 @@ use tokio::time::Instant;
 use crate::config::RtorrentConfig;
 
 const MAX_SCGI_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
-const BACKGROUND_RPC_QUEUE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration = std::time::Duration::from_secs(15);
 const MAX_PRESSURE_SCALED_RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3600);
-const MAX_BACKGROUND_RPC_QUEUE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 const MAX_BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration = std::time::Duration::from_secs(900);
-const BACKGROUND_RPC_MIN_SPACING: std::time::Duration = std::time::Duration::from_millis(250);
+const BACKGROUND_RPC_MIN_SPACING: std::time::Duration = std::time::Duration::from_millis(500);
 const MAX_BACKGROUND_RPC_MIN_SPACING: std::time::Duration = std::time::Duration::from_secs(30);
 const MODERATE_IO_PRESSURE_PERCENT: f64 = 5.0;
 const HIGH_IO_PRESSURE_PERCENT: f64 = 15.0;
@@ -90,12 +88,6 @@ fn background_rpc_circuit_delay(io_pressure_percent: Option<f64>) -> std::time::
         .min(MAX_BACKGROUND_RPC_CIRCUIT_DELAY)
 }
 
-fn background_rpc_queue_timeout(io_pressure_percent: Option<f64>) -> std::time::Duration {
-    BACKGROUND_RPC_QUEUE_TIMEOUT
-        .saturating_mul(io_pressure_multiplier(io_pressure_percent))
-        .min(MAX_BACKGROUND_RPC_QUEUE_TIMEOUT)
-}
-
 /// Space successful background reads under sustained I/O pressure. A single
 /// semaphore prevents parallel SCGI calls, but without pacing a burst of fast
 /// responses can still keep rTorrent's storage-facing work continuously busy.
@@ -110,10 +102,15 @@ fn background_rpc_minimum_spacing(io_pressure_percent: Option<f64>) -> std::time
         .min(MAX_BACKGROUND_RPC_MIN_SPACING)
 }
 
+fn background_rpc_busy_retry_delay(io_pressure_percent: Option<f64>) -> std::time::Duration {
+    background_rpc_minimum_spacing(io_pressure_percent).max(std::time::Duration::from_secs(1))
+}
+
 #[derive(Debug)]
 pub(crate) enum RpcBackpressure {
     CircuitOpen(std::time::Duration),
-    QueueWaitTimedOut(std::time::Duration),
+    BackgroundLaneBusy(std::time::Duration),
+    RpcGateBusy(std::time::Duration),
 }
 
 impl fmt::Display for RpcBackpressure {
@@ -124,10 +121,15 @@ impl fmt::Display for RpcBackpressure {
                 "rTorrent RPC circuit breaker is open for another {} ms",
                 retry_after.as_millis()
             ),
-            Self::QueueWaitTimedOut(timeout) => write!(
+            Self::BackgroundLaneBusy(retry_after) => write!(
                 f,
-                "rTorrent background RPC gate remained busy for {} ms",
-                timeout.as_millis()
+                "rTorrent background RPC lane is busy; retry after {} ms",
+                retry_after.as_millis()
+            ),
+            Self::RpcGateBusy(retry_after) => write!(
+                f,
+                "rTorrent RPC gate is busy; background call deferred for {} ms",
+                retry_after.as_millis()
             ),
         }
     }
@@ -142,7 +144,8 @@ pub(crate) fn is_rpc_unavailable_or_backpressured(error: &anyhow::Error) -> bool
 pub(crate) fn rpc_backpressure_retry_after(error: &anyhow::Error) -> Option<std::time::Duration> {
     match error.downcast_ref::<RpcBackpressure>()? {
         RpcBackpressure::CircuitOpen(retry_after)
-        | RpcBackpressure::QueueWaitTimedOut(retry_after) => Some(*retry_after),
+        | RpcBackpressure::BackgroundLaneBusy(retry_after)
+        | RpcBackpressure::RpcGateBusy(retry_after) => Some(*retry_after),
     }
 }
 
@@ -173,7 +176,8 @@ pub struct Client {
     timeout: std::time::Duration,
     identity_timeout: std::time::Duration,
     rpc_gate: Arc<Semaphore>,
-    low_priority_last_started: Arc<Mutex<Option<Instant>>>,
+    low_priority_gate: Arc<Mutex<()>>,
+    low_priority_next_allowed_at: Arc<Mutex<Option<Instant>>>,
     low_priority_pause_until: Arc<Mutex<Option<Instant>>>,
     low_priority_failures: Arc<Mutex<u8>>,
     tracker_peer_id: Option<String>,
@@ -191,7 +195,8 @@ impl Client {
             timeout: std::time::Duration::from_secs(cfg.timeout_secs),
             identity_timeout: std::time::Duration::from_secs(cfg.identity_timeout_secs),
             rpc_gate: Arc::new(Semaphore::new(1)),
-            low_priority_last_started: Arc::new(Mutex::new(None)),
+            low_priority_gate: Arc::new(Mutex::new(())),
+            low_priority_next_allowed_at: Arc::new(Mutex::new(None)),
             low_priority_pause_until: Arc::new(Mutex::new(None)),
             low_priority_failures: Arc::new(Mutex::new(0)),
             tracker_peer_id: Some(cfg.peer_id.clone()),
@@ -205,7 +210,8 @@ impl Client {
             timeout: std::time::Duration::from_secs(timeout_secs),
             identity_timeout: std::time::Duration::from_secs(timeout_secs),
             rpc_gate: Arc::new(Semaphore::new(1)),
-            low_priority_last_started: Arc::new(Mutex::new(None)),
+            low_priority_gate: Arc::new(Mutex::new(())),
+            low_priority_next_allowed_at: Arc::new(Mutex::new(None)),
             low_priority_pause_until: Arc::new(Mutex::new(None)),
             low_priority_failures: Arc::new(Mutex::new(0)),
             tracker_peer_id: None,
@@ -318,17 +324,28 @@ impl Client {
         args: &[XmlValue],
         priority: RpcPriority,
     ) -> Result<XmlValue> {
+        // Keep low-priority calls out of unbounded mutex and semaphore
+        // queues. Under contention, defer them with a retry hint instead of
+        // letting many pollers line up and run back-to-back after slow I/O.
+        let _background_gate = if priority == RpcPriority::Background {
+            let retry_after = background_rpc_busy_retry_delay(read_io_pressure_percent());
+            Some(self.low_priority_gate.try_lock().map_err(|_| {
+                anyhow::Error::new(RpcBackpressure::BackgroundLaneBusy(retry_after))
+            })?)
+        } else {
+            None
+        };
+
         if priority == RpcPriority::Background {
             self.check_background_pause().await?;
-            self.pace_background_rpc(read_io_pressure_percent()).await;
+            self.pace_background_rpc().await;
         }
 
         let _permit = if priority == RpcPriority::Background {
-            let queue_timeout = background_rpc_queue_timeout(read_io_pressure_percent());
-            tokio::time::timeout(queue_timeout, self.rpc_gate.acquire())
-                .await
-                .map_err(|_| anyhow::Error::new(RpcBackpressure::QueueWaitTimedOut(queue_timeout)))?
-                .context("rTorrent RPC gate closed")?
+            let retry_after = background_rpc_busy_retry_delay(read_io_pressure_percent());
+            self.rpc_gate
+                .try_acquire()
+                .map_err(|_| anyhow::Error::new(RpcBackpressure::RpcGateBusy(retry_after)))?
         } else {
             self.rpc_gate
                 .acquire()
@@ -345,6 +362,7 @@ impl Client {
 
         let io_pressure_percent = read_io_pressure_percent();
         let request_timeout = pressure_scaled_rpc_timeout(self.timeout, io_pressure_percent);
+        let call_started = Instant::now();
 
         let result = match self.call_json(method, args, request_timeout).await {
             Ok(value) => Ok(value),
@@ -358,6 +376,13 @@ impl Client {
             }
         };
         if priority == RpcPriority::Background {
+            let settle_pressure = read_io_pressure_percent()
+                .into_iter()
+                .chain(io_pressure_percent)
+                .reduce(f64::max);
+            self.schedule_background_rpc_after(settle_pressure, call_started.elapsed())
+                .await;
+
             match &result {
                 Ok(_) => {
                     *self.low_priority_failures.lock().await = 0;
@@ -380,20 +405,29 @@ impl Client {
         result
     }
 
-    async fn pace_background_rpc(&self, io_pressure_percent: Option<f64>) {
-        let minimum_spacing = background_rpc_minimum_spacing(io_pressure_percent);
-        if minimum_spacing.is_zero() {
-            return;
-        }
-
-        let mut last_started = self.low_priority_last_started.lock().await;
-        if let Some(last) = *last_started {
-            let next_start = last + minimum_spacing;
-            if next_start > Instant::now() {
-                tokio::time::sleep_until(next_start).await;
+    async fn pace_background_rpc(&self) {
+        let mut next_allowed_at = self.low_priority_next_allowed_at.lock().await;
+        if let Some(next) = *next_allowed_at {
+            if next > Instant::now() {
+                tokio::time::sleep_until(next).await;
             }
         }
-        *last_started = Some(Instant::now());
+        *next_allowed_at = None;
+    }
+
+    async fn schedule_background_rpc_after(
+        &self,
+        io_pressure_percent: Option<f64>,
+        call_duration: std::time::Duration,
+    ) {
+        let pressure_spacing = background_rpc_minimum_spacing(io_pressure_percent);
+        // Long-running RPCs are evidence that the backend is already slow.
+        // Add a bounded settle period after completion instead of measuring
+        // the gap from call start, which can collapse to zero under load.
+        let latency_spacing = (call_duration / 2).min(MAX_BACKGROUND_RPC_MIN_SPACING);
+        let spacing = pressure_spacing.max(latency_spacing);
+        let next = (!spacing.is_zero()).then(|| Instant::now() + spacing);
+        *self.low_priority_next_allowed_at.lock().await = next;
     }
 
     async fn check_background_pause(&self) -> Result<()> {

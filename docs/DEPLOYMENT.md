@@ -322,14 +322,17 @@ reclaim stalled or abandoned SCGI slots.
 The sidecar scales direct XML-RPC, multicall, and JSON-RPC request deadlines
 using the maximum host I/O PSI average across the `some` and `full` windows.
 The scale steps are 4x/8x/16x/32x/64x at 5%/15%/30%/60%/80%; RPC deadlines
-scale up to one hour. Background RPC gate waits scale from five seconds up to
-five minutes, and repeated transient failures open the low-priority circuit
-for up to fifteen minutes. With the deployed 15-second base sync interval,
+scale up to one hour. A busy low-priority lane or RPC gate returns a retry hint
+instead of queuing background pollers; the hint scales from one second up to
+thirty seconds. Repeated transient failures open the low-priority circuit for
+up to fifteen minutes. With the deployed 15-second base sync interval,
 background polling backs off to one, two, four, eight, and at most fifteen
-minutes at those pressure thresholds. Only one SCGI RPC is allowed at a time,
-so pressure lengthens individual deadlines and spaces background work without
-stacking requests or waiting for PSI to clear. Missing PSI data uses normal
-pacing and does not disable RPCs.
+minutes at those pressure thresholds. Only one SCGI RPC is allowed at a time.
+Pressure pacing starts after each background call completes; slow calls also
+get a bounded settle period based on their duration, so their runtime cannot
+consume the entire inter-call delay. Foreground controls remain available
+between calls, and background polling continues without waiting for PSI to
+clear. Missing PSI data uses normal pacing and does not disable RPCs.
 
 Periodic stats sampling uses the same pressure scale. It waits for each sample
 to finish before scheduling the next one, scales the interval up to fifteen
