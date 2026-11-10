@@ -6,12 +6,8 @@ Close an SCGI task after a broken-pipe write.
 diff --git a/src/rpc/scgi_task.cc b/src/rpc/scgi_task.cc
 --- a/src/rpc/scgi_task.cc
 +++ b/src/rpc/scgi_task.cc
-@@ -184,7 +184,7 @@ SCgiTask::event_write() {
-   int bytes = ::send(m_fileDesc, m_buffer.data() + m_position, m_buffer.size() - m_position, 0);
- 
+@@ -178,3 +178,3 @@ SCgiTask::event_write() {
    if (bytes == -1) {
 -    if (!(errno == EAGAIN || errno == EINTR || errno == EPIPE))
 +    if (!(errno == EAGAIN || errno == EINTR))
        close();
- 
-     return;
