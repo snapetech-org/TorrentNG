@@ -49,6 +49,24 @@ const MAX_SYNC_MESSAGE_BYTES: usize = 8 * 1024;
 const MAX_SYNC_TAGS_BYTES: usize = 512 * 1024;
 const MAX_SYNC_CACHE_ENTRIES: usize = 100_000;
 const MAX_SYNC_RETRY_DELAY: Duration = Duration::from_secs(300);
+const MAX_SLOW_SYNC_DELAY: Duration = Duration::from_secs(60);
+const SLOW_SYNC_CYCLE_THRESHOLD: Duration = Duration::from_secs(2);
+const FAST_SYNC_CYCLE_THRESHOLD: Duration = Duration::from_secs(1);
+
+/// Pace successful polling by measured work time. This is deliberately a
+/// soft throttle: it keeps taking bounded pages under sustained load and does
+/// not wait for a host pressure metric to return to zero.
+fn adapt_success_delay(current: Duration, base: Duration, cycle_time: Duration) -> Duration {
+    let ceiling = base.max(MAX_SLOW_SYNC_DELAY);
+    let current = current.max(base).min(ceiling);
+    if cycle_time >= SLOW_SYNC_CYCLE_THRESHOLD {
+        current.saturating_mul(2).min(ceiling)
+    } else if cycle_time < FAST_SYNC_CYCLE_THRESHOLD && current > base {
+        (current.saturating_mul(3) / 4).max(base)
+    } else {
+        current
+    }
+}
 
 fn validate_torrent_projection(torrent: &RawTorrent) -> anyhow::Result<()> {
     fn check_field(name: &str, value: &str, maximum: usize) -> anyhow::Result<()> {
@@ -134,21 +152,37 @@ pub async fn run(
     let mut sync_error_active = false;
     let mut next_delay = interval;
     let mut retry_delay = interval;
+    let mut adaptive_delay = interval;
     let max_retry_delay = interval.max(MAX_SYNC_RETRY_DELAY);
 
     loop {
         // Wait after each completed pass so a slow SCGI cycle does not get an
         // immediate catch-up poll when it finally returns.
         tokio::time::sleep(next_delay).await;
+        let cycle_started = tokio::time::Instant::now();
         let result = if range_supported {
             tick_bounded(backend.as_ref(), &db, &tx, &mut bounded).await
         } else {
             tick_full(backend.as_ref(), &db, &tx).await
         };
+        let cycle_time = cycle_started.elapsed();
         match result {
             Ok(counts) => {
-                next_delay = interval;
-                retry_delay = interval;
+                let previous_delay = adaptive_delay;
+                adaptive_delay = adapt_success_delay(adaptive_delay, interval, cycle_time);
+                next_delay = adaptive_delay;
+                retry_delay = adaptive_delay;
+                if adaptive_delay != previous_delay {
+                    info!(
+                        component = backend.backend_type().as_str(),
+                        operation = "sync_loop_pacing",
+                        cycle_ms = cycle_time.as_millis() as u64,
+                        previous_delay_secs = previous_delay.as_secs(),
+                        next_delay_secs = adaptive_delay.as_secs(),
+                        result = "adjusted",
+                        "adjusted sync pacing from measured cycle time"
+                    );
+                }
                 if sync_error_active {
                     append_app_event_async(
                         &db,
@@ -197,6 +231,7 @@ pub async fn run(
                     operation = "sync",
                     result = "error",
                     error = %chain,
+                    cycle_ms = cycle_time.as_millis() as u64,
                     retry_delay_secs = next_delay.as_secs(),
                     "backend sync failed"
                 );
