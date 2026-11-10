@@ -17,7 +17,7 @@ use crate::{
     backend::{BackendType, TorrentBackend},
     cache::{AppEventRow, Db},
     rtorrent::{
-        client::{io_pressure_multiplier, read_io_pressure_percent},
+        client::{pressure_scaled_poll_interval, read_io_pressure_percent},
         TransferRates,
     },
     safe_file::open_regular_read,
@@ -25,7 +25,6 @@ use crate::{
 
 const LIVE_SPEEDS_MAX_AGE: Duration = Duration::from_secs(60);
 const LIVE_FEATURE_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
-const MAX_PRESSURE_SCALED_STATS_INTERVAL: Duration = Duration::from_secs(900);
 const LIVE_SPEEDS_MAX_FUTURE_SKEW_SECS: i64 = 5;
 const MAX_LIVE_SPEEDS_BYTES: u64 = 64 * 1024;
 const MAX_RTORRENT_CONFIG_PROBE_BYTES: u64 = 256 * 1024;
@@ -128,9 +127,7 @@ pub async fn run(
             dht: live.dht,
             pex: live.pex,
         });
-        let pressure_interval = interval
-            .saturating_mul(io_pressure_multiplier(read_io_pressure_percent()))
-            .min(interval.max(MAX_PRESSURE_SCALED_STATS_INTERVAL));
+        let pressure_interval = pressure_scaled_poll_interval(interval, read_io_pressure_percent());
         next_delay = pressure_interval;
     }
 }

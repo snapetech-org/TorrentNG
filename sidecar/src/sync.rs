@@ -50,7 +50,6 @@ const MAX_SYNC_TAGS_BYTES: usize = 512 * 1024;
 const MAX_SYNC_CACHE_ENTRIES: usize = 100_000;
 const MAX_SYNC_RETRY_DELAY: Duration = Duration::from_secs(300);
 const MAX_SLOW_SYNC_DELAY: Duration = Duration::from_secs(60);
-const MAX_IO_PRESSURE_SYNC_DELAY: Duration = Duration::from_secs(900);
 const SLOW_SYNC_CYCLE_THRESHOLD: Duration = Duration::from_secs(2);
 const FAST_SYNC_CYCLE_THRESHOLD: Duration = Duration::from_secs(1);
 
@@ -73,11 +72,7 @@ fn adapt_success_delay(current: Duration, base: Duration, cycle_time: Duration) 
 /// frequency; it never waits for pressure to clear, and latency-based pacing
 /// remains active when PSI is unavailable.
 fn io_pressure_delay_floor(base: Duration, io_pressure_percent: Option<f64>) -> Duration {
-    let ceiling = base.max(MAX_IO_PRESSURE_SYNC_DELAY);
-    base.saturating_mul(crate::rtorrent::client::io_pressure_multiplier(
-        io_pressure_percent,
-    ))
-    .min(ceiling)
+    crate::rtorrent::client::pressure_scaled_poll_interval(base, io_pressure_percent)
 }
 
 fn validate_torrent_projection(torrent: &RawTorrent) -> anyhow::Result<()> {
@@ -180,6 +175,7 @@ pub async fn run(
             tick_full(backend.as_ref(), &db, &tx).await
         };
         let cycle_time = cycle_started.elapsed();
+        metrics.record_sync_result(result.is_ok());
         match result {
             Ok(counts) => {
                 let previous_delay = adaptive_delay;

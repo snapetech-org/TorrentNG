@@ -138,11 +138,7 @@ pub async fn health(State(s): State<AppState>) -> impl IntoResponse {
             (0, false)
         }
     };
-    let backend_status =
-        match tokio::time::timeout(Duration::from_secs(3), s.backend.health()).await {
-            Ok(status) => status,
-            Err(_) => BackendStatus::Unreachable,
-        };
+    let backend_status = s.backend_health().await;
     let connected = backend_status == BackendStatus::Connected && cache_ok;
     let status = if connected {
         StatusCode::OK
@@ -255,11 +251,7 @@ pub async fn list_jobs() -> impl IntoResponse {
 }
 
 pub async fn transfer_info(State(s): State<AppState>) -> impl IntoResponse {
-    let backend_status =
-        match tokio::time::timeout(Duration::from_secs(3), s.backend.health()).await {
-            Ok(status) => status,
-            Err(_) => BackendStatus::Unreachable,
-        };
+    let backend_status = s.backend_health().await;
     if backend_status != BackendStatus::Connected {
         return (
             StatusCode::SERVICE_UNAVAILABLE,

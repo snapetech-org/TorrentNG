@@ -18,6 +18,8 @@ use crate::config::RtorrentConfig;
 const MAX_SCGI_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 const BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration = std::time::Duration::from_secs(15);
 const MAX_PRESSURE_SCALED_RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3600);
+pub(crate) const MAX_PRESSURE_SCALED_POLL_INTERVAL: std::time::Duration =
+    std::time::Duration::from_secs(900);
 const MAX_BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration = std::time::Duration::from_secs(900);
 const BACKGROUND_RPC_MIN_SPACING: std::time::Duration = std::time::Duration::from_secs(2);
 const MAX_BACKGROUND_RPC_MIN_SPACING: std::time::Duration = std::time::Duration::from_secs(300);
@@ -73,6 +75,15 @@ pub(crate) fn io_pressure_multiplier(io_pressure_percent: Option<f64>) -> u32 {
         Some(percent) if percent >= MODERATE_IO_PRESSURE_PERCENT => 4,
         _ => 1,
     }
+}
+
+pub(crate) fn pressure_scaled_poll_interval(
+    base: std::time::Duration,
+    io_pressure_percent: Option<f64>,
+) -> std::time::Duration {
+    let ceiling = base.max(MAX_PRESSURE_SCALED_POLL_INTERVAL);
+    base.saturating_mul(io_pressure_multiplier(io_pressure_percent))
+        .min(ceiling)
 }
 
 fn pressure_scaled_rpc_timeout(

@@ -15,7 +15,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 use tokio::sync::{broadcast, Mutex, RwLock, Semaphore};
 use tower_http::limit::RequestBodyLimitLayer;
@@ -23,7 +23,7 @@ use tower_http::services::{ServeDir, ServeFile};
 
 use crate::{
     auth::{require_auth, AuthCredentials},
-    backend::TorrentBackend,
+    backend::{BackendStatus, BackendType, TorrentBackend},
     cache::Db,
     config::Config,
     metrics::SharedMetrics,
@@ -88,6 +88,34 @@ pub struct AppState {
     pub request_concurrency: Arc<Semaphore>,
     pub large_uploads: Arc<Semaphore>,
     pub ws_clients: Arc<Semaphore>,
+}
+
+impl AppState {
+    /// Check backend health without making a second SCGI request while the
+    /// background sync is already the authoritative read path. Under sustained
+    /// disk pressure, a short HTTP health timeout would cancel that request and
+    /// leave more work queued in rTorrent's fixed SCGI task pool.
+    pub async fn backend_health(&self) -> BackendStatus {
+        if self.backend.backend_type() == BackendType::Rtorrent {
+            let pressure_interval = crate::rtorrent::client::pressure_scaled_poll_interval(
+                self.cfg.sync_interval(),
+                crate::rtorrent::client::read_io_pressure_percent(),
+            );
+            let max_age = pressure_interval
+                .saturating_mul(2)
+                .max(Duration::from_secs(60));
+            return if self.metrics.sync_is_healthy_and_fresh(max_age) {
+                BackendStatus::Connected
+            } else {
+                BackendStatus::Unreachable
+            };
+        }
+
+        match tokio::time::timeout(Duration::from_secs(3), self.backend.health()).await {
+            Ok(status) => status,
+            Err(_) => BackendStatus::Unreachable,
+        }
+    }
 }
 
 pub fn build_router(state: AppState) -> Router {
