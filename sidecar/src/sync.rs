@@ -48,7 +48,7 @@ const MAX_SYNC_TRACKER_URL_BYTES: usize = 8 * 1024;
 const MAX_SYNC_MESSAGE_BYTES: usize = 8 * 1024;
 const MAX_SYNC_TAGS_BYTES: usize = 512 * 1024;
 const MAX_SYNC_CACHE_ENTRIES: usize = 100_000;
-const MAX_SYNC_RETRY_DELAY: Duration = Duration::from_secs(300);
+const MAX_SYNC_RETRY_DELAY: Duration = Duration::from_secs(900);
 const MAX_SLOW_SYNC_DELAY: Duration = Duration::from_secs(60);
 const MAX_IO_PRESSURE_SYNC_DELAY: Duration = Duration::from_secs(900);
 const SLOW_SYNC_CYCLE_THRESHOLD: Duration = Duration::from_secs(2);
@@ -234,7 +234,10 @@ pub async fn run(
                     .store(counts.peers, Ordering::Relaxed);
             }
             Err(e) => {
-                next_delay = retry_delay.max(io_pressure_delay);
+                let server_backpressure_delay =
+                    crate::rtorrent::client::rpc_backpressure_retry_after(&e)
+                        .unwrap_or(retry_delay);
+                next_delay = server_backpressure_delay.max(io_pressure_delay);
                 retry_delay = next_delay.saturating_mul(2).min(max_retry_delay);
                 metrics.sync_errors_total.fetch_add(1, Ordering::Relaxed);
                 // `e.to_string()`/`%e` only print the outermost `.context()`

@@ -19,7 +19,7 @@ const BACKGROUND_RPC_QUEUE_TIMEOUT: std::time::Duration = std::time::Duration::f
 const BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration = std::time::Duration::from_secs(15);
 const MAX_BACKGROUND_RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 const MAX_BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration =
-    std::time::Duration::from_secs(300);
+    std::time::Duration::from_secs(900);
 const MODERATE_IO_PRESSURE_PERCENT: f64 = 5.0;
 const HIGH_IO_PRESSURE_PERCENT: f64 = 15.0;
 const SEVERE_IO_PRESSURE_PERCENT: f64 = 30.0;
@@ -64,11 +64,11 @@ pub(crate) fn read_io_pressure_percent() -> Option<f64> {
 /// disables requests or waits for pressure to clear.
 pub(crate) fn io_pressure_multiplier(io_pressure_percent: Option<f64>) -> u32 {
     match io_pressure_percent {
-        Some(percent) if percent >= CRITICAL_IO_PRESSURE_PERCENT => 32,
-        Some(percent) if percent >= EXTREME_IO_PRESSURE_PERCENT => 16,
-        Some(percent) if percent >= SEVERE_IO_PRESSURE_PERCENT => 8,
-        Some(percent) if percent >= HIGH_IO_PRESSURE_PERCENT => 4,
-        Some(percent) if percent >= MODERATE_IO_PRESSURE_PERCENT => 2,
+        Some(percent) if percent >= CRITICAL_IO_PRESSURE_PERCENT => 64,
+        Some(percent) if percent >= EXTREME_IO_PRESSURE_PERCENT => 32,
+        Some(percent) if percent >= SEVERE_IO_PRESSURE_PERCENT => 16,
+        Some(percent) if percent >= HIGH_IO_PRESSURE_PERCENT => 8,
+        Some(percent) if percent >= MODERATE_IO_PRESSURE_PERCENT => 4,
         _ => 1,
     }
 }
@@ -90,14 +90,18 @@ fn background_rpc_circuit_delay(io_pressure_percent: Option<f64>) -> std::time::
 
 #[derive(Debug)]
 pub(crate) enum RpcBackpressure {
-    CircuitOpen,
+    CircuitOpen(std::time::Duration),
     QueueWaitTimedOut(std::time::Duration),
 }
 
 impl fmt::Display for RpcBackpressure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::CircuitOpen => f.write_str("rTorrent RPC circuit breaker is open"),
+            Self::CircuitOpen(retry_after) => write!(
+                f,
+                "rTorrent RPC circuit breaker is open for another {} ms",
+                retry_after.as_millis()
+            ),
             Self::QueueWaitTimedOut(timeout) => write!(
                 f,
                 "rTorrent background RPC gate remained busy for {} ms",
@@ -111,6 +115,13 @@ impl std::error::Error for RpcBackpressure {}
 
 pub(crate) fn is_rpc_unavailable_or_backpressured(error: &anyhow::Error) -> bool {
     error.downcast_ref::<RpcBackpressure>().is_some() || is_transient_transport_error(error)
+}
+
+pub(crate) fn rpc_backpressure_retry_after(error: &anyhow::Error) -> Option<std::time::Duration> {
+    match error.downcast_ref::<RpcBackpressure>()? {
+        RpcBackpressure::CircuitOpen(retry_after)
+        | RpcBackpressure::QueueWaitTimedOut(retry_after) => Some(*retry_after),
+    }
 }
 
 // XML-RPC responses can be large for a raw metainfo load, but their decoded
@@ -141,6 +152,7 @@ pub struct Client {
     identity_timeout: std::time::Duration,
     rpc_gate: Arc<Semaphore>,
     low_priority_pause_until: Arc<Mutex<Option<Instant>>>,
+    low_priority_failures: Arc<Mutex<u8>>,
     tracker_peer_id: Option<String>,
 }
 
@@ -157,6 +169,7 @@ impl Client {
             identity_timeout: std::time::Duration::from_secs(cfg.identity_timeout_secs),
             rpc_gate: Arc::new(Semaphore::new(1)),
             low_priority_pause_until: Arc::new(Mutex::new(None)),
+            low_priority_failures: Arc::new(Mutex::new(0)),
             tracker_peer_id: Some(cfg.peer_id.clone()),
         })
     }
@@ -169,6 +182,7 @@ impl Client {
             identity_timeout: std::time::Duration::from_secs(timeout_secs),
             rpc_gate: Arc::new(Semaphore::new(1)),
             low_priority_pause_until: Arc::new(Mutex::new(None)),
+            low_priority_failures: Arc::new(Mutex::new(0)),
             tracker_peer_id: None,
         }
     }
@@ -320,11 +334,23 @@ impl Client {
             }
         };
         if priority == RpcPriority::Background {
-            if let Err(error) = &result {
-                if is_transient_transport_error(error) {
-                    *self.low_priority_pause_until.lock().await =
-                        Some(Instant::now() + background_rpc_circuit_delay(io_pressure_percent));
+            match &result {
+                Ok(_) => {
+                    *self.low_priority_failures.lock().await = 0;
+                    *self.low_priority_pause_until.lock().await = None;
                 }
+                Err(error) if is_transient_transport_error(error) => {
+                    let mut failures = self.low_priority_failures.lock().await;
+                    let failure_count = (*failures).saturating_add(1);
+                    *failures = failure_count;
+                    let exponent = failure_count.saturating_sub(1).min(8);
+                    let multiplier = 1_u32 << exponent;
+                    let delay = background_rpc_circuit_delay(io_pressure_percent)
+                        .saturating_mul(multiplier)
+                        .min(MAX_BACKGROUND_RPC_CIRCUIT_DELAY);
+                    *self.low_priority_pause_until.lock().await = Some(Instant::now() + delay);
+                }
+                Err(_) => {}
             }
         }
         result
@@ -333,8 +359,11 @@ impl Client {
     async fn check_background_pause(&self) -> Result<()> {
         let mut pause = self.low_priority_pause_until.lock().await;
         if let Some(until) = *pause {
-            if until > Instant::now() {
-                return Err(anyhow::Error::new(RpcBackpressure::CircuitOpen));
+            let now = Instant::now();
+            if until > now {
+                return Err(anyhow::Error::new(RpcBackpressure::CircuitOpen(
+                    until.duration_since(now),
+                )));
             }
             *pause = None;
         }
