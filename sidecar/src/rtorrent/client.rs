@@ -17,8 +17,8 @@ use crate::config::RtorrentConfig;
 const MAX_SCGI_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 const BACKGROUND_RPC_QUEUE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration = std::time::Duration::from_secs(15);
-const MAX_BACKGROUND_RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(900);
-const MAX_BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration = std::time::Duration::from_secs(900);
+const MAX_PRESSURE_SCALED_RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3600);
+const MAX_BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration = std::time::Duration::from_secs(300);
 const MODERATE_IO_PRESSURE_PERCENT: f64 = 5.0;
 const HIGH_IO_PRESSURE_PERCENT: f64 = 15.0;
 const SEVERE_IO_PRESSURE_PERCENT: f64 = 30.0;
@@ -72,11 +72,11 @@ pub(crate) fn io_pressure_multiplier(io_pressure_percent: Option<f64>) -> u32 {
     }
 }
 
-fn background_rpc_timeout(
+fn pressure_scaled_rpc_timeout(
     base: std::time::Duration,
     io_pressure_percent: Option<f64>,
 ) -> std::time::Duration {
-    let ceiling = base.max(MAX_BACKGROUND_RPC_TIMEOUT);
+    let ceiling = base.max(MAX_PRESSURE_SCALED_RPC_TIMEOUT);
     base.saturating_mul(io_pressure_multiplier(io_pressure_percent))
         .min(ceiling)
 }
@@ -269,8 +269,13 @@ impl Client {
             .acquire()
             .await
             .context("rTorrent RPC gate closed")?;
+        let request_timeout = pressure_scaled_rpc_timeout(self.timeout, read_io_pressure_percent());
         let response = self
-            .call_xml("system.multicall", &[XmlValue::Array(entries)])
+            .call_xml_with_timeout(
+                "system.multicall",
+                &[XmlValue::Array(entries)],
+                request_timeout,
+            )
             .await
             .with_context(|| format!("system.multicall({method})"))?;
 
@@ -310,16 +315,8 @@ impl Client {
             self.check_background_pause().await?;
         }
 
-        let io_pressure_percent = if priority == RpcPriority::Background {
-            read_io_pressure_percent()
-        } else {
-            None
-        };
-        let request_timeout = if priority == RpcPriority::Background {
-            background_rpc_timeout(self.timeout, io_pressure_percent)
-        } else {
-            self.timeout
-        };
+        let io_pressure_percent = read_io_pressure_percent();
+        let request_timeout = pressure_scaled_rpc_timeout(self.timeout, io_pressure_percent);
 
         let result = match self.call_json(method, args, request_timeout).await {
             Ok(value) => Ok(value),

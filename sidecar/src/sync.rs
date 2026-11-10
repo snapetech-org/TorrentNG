@@ -48,9 +48,9 @@ const MAX_SYNC_TRACKER_URL_BYTES: usize = 8 * 1024;
 const MAX_SYNC_MESSAGE_BYTES: usize = 8 * 1024;
 const MAX_SYNC_TAGS_BYTES: usize = 512 * 1024;
 const MAX_SYNC_CACHE_ENTRIES: usize = 100_000;
-const MAX_SYNC_RETRY_DELAY: Duration = Duration::from_secs(900);
+const MAX_SYNC_RETRY_DELAY: Duration = Duration::from_secs(300);
 const MAX_SLOW_SYNC_DELAY: Duration = Duration::from_secs(60);
-const MAX_IO_PRESSURE_SYNC_DELAY: Duration = Duration::from_secs(900);
+const MAX_IO_PRESSURE_SYNC_DELAY: Duration = Duration::from_secs(120);
 const SLOW_SYNC_CYCLE_THRESHOLD: Duration = Duration::from_secs(2);
 const FAST_SYNC_CYCLE_THRESHOLD: Duration = Duration::from_secs(1);
 
@@ -529,7 +529,9 @@ async fn tick_bounded(
     bounded.full_cycle_had_errors |= fetched.had_errors;
     if fetched.retry_later {
         sync_error.get_or_insert_with(|| {
-            anyhow::anyhow!("bounded torrent range deferred during SCGI backpressure at offset {offset}")
+            anyhow::anyhow!(
+                "bounded torrent range deferred during SCGI backpressure at offset {offset}"
+            )
         });
         bounded.snapshot = fetched.snapshot.or(bounded.snapshot);
         return sync_error.map_or(Ok(counts), Err);

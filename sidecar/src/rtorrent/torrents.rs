@@ -139,13 +139,10 @@ impl Client {
             "download",
         )
         .await?;
-        let upload = first_available(self, &["throttle.global_up.rate", "get_up_rate"], "upload")
-            .await?;
+        let upload =
+            first_available(self, &["throttle.global_up.rate", "get_up_rate"], "upload").await?;
 
-        Ok(TransferRates {
-            download,
-            upload,
-        })
+        Ok(TransferRates { download, upload })
     }
 
     pub async fn list_torrents(&self) -> Result<Vec<RawTorrent>> {
