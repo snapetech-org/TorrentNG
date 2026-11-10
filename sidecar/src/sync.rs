@@ -52,6 +52,8 @@ const MAX_SYNC_RETRY_DELAY: Duration = Duration::from_secs(300);
 const MAX_SLOW_SYNC_DELAY: Duration = Duration::from_secs(60);
 const SLOW_SYNC_CYCLE_THRESHOLD: Duration = Duration::from_secs(2);
 const FAST_SYNC_CYCLE_THRESHOLD: Duration = Duration::from_secs(1);
+const MODERATE_IO_PRESSURE_PERCENT: f64 = 10.0;
+const HIGH_IO_PRESSURE_PERCENT: f64 = 25.0;
 
 /// Pace successful polling by measured work time. This is deliberately a
 /// soft throttle: it keeps taking bounded pages under sustained load and does
@@ -66,6 +68,49 @@ fn adapt_success_delay(current: Duration, base: Duration, cycle_time: Duration) 
     } else {
         current
     }
+}
+
+/// Read the host's short-window I/O PSI as a pacing hint. PSI is advisory:
+/// unavailable or persistently high pressure never prevents the next bounded
+/// sync page from running.
+fn read_io_pressure_avg10() -> Option<f64> {
+    let pressure = std::fs::read_to_string("/proc/pressure/io").ok()?;
+    let mut maximum = None;
+
+    for line in pressure.lines() {
+        let mut fields = line.split_whitespace();
+        let Some(kind) = fields.next() else {
+            continue;
+        };
+        if kind != "some" && kind != "full" {
+            continue;
+        }
+
+        if let Some(avg10) = fields.find_map(|field| {
+            field
+                .strip_prefix("avg10=")
+                .and_then(|value| value.parse::<f64>().ok())
+        }) {
+            if avg10.is_finite() && avg10 >= 0.0 {
+                maximum = Some(maximum.map_or(avg10, |current: f64| current.max(avg10)));
+            }
+        }
+    }
+
+    maximum
+}
+
+/// Convert PSI into a bounded minimum interval. This only lowers polling
+/// frequency; it never waits for pressure to clear, and latency-based pacing
+/// remains active when PSI is unavailable.
+fn io_pressure_delay_floor(base: Duration, io_pressure_avg10: Option<f64>) -> Duration {
+    let ceiling = base.max(MAX_SLOW_SYNC_DELAY);
+    let pressure_delay = match io_pressure_avg10 {
+        Some(percent) if percent >= HIGH_IO_PRESSURE_PERCENT => base.saturating_mul(4),
+        Some(percent) if percent >= MODERATE_IO_PRESSURE_PERCENT => base.saturating_mul(2),
+        _ => base,
+    };
+    pressure_delay.min(ceiling)
 }
 
 fn validate_torrent_projection(torrent: &RawTorrent) -> anyhow::Result<()> {
@@ -159,6 +204,8 @@ pub async fn run(
         // Wait after each completed pass so a slow SCGI cycle does not get an
         // immediate catch-up poll when it finally returns.
         tokio::time::sleep(next_delay).await;
+        let io_pressure_avg10 = read_io_pressure_avg10();
+        let io_pressure_delay = io_pressure_delay_floor(interval, io_pressure_avg10);
         let cycle_started = tokio::time::Instant::now();
         let result = if range_supported {
             tick_bounded(backend.as_ref(), &db, &tx, &mut bounded).await
@@ -170,17 +217,20 @@ pub async fn run(
             Ok(counts) => {
                 let previous_delay = adaptive_delay;
                 adaptive_delay = adapt_success_delay(adaptive_delay, interval, cycle_time);
-                next_delay = adaptive_delay;
-                retry_delay = adaptive_delay;
-                if adaptive_delay != previous_delay {
+                next_delay = adaptive_delay.max(io_pressure_delay);
+                retry_delay = next_delay;
+                if next_delay != previous_delay {
                     info!(
                         component = backend.backend_type().as_str(),
                         operation = "sync_loop_pacing",
                         cycle_ms = cycle_time.as_millis() as u64,
                         previous_delay_secs = previous_delay.as_secs(),
-                        next_delay_secs = adaptive_delay.as_secs(),
+                        adaptive_delay_secs = adaptive_delay.as_secs(),
+                        io_pressure_delay_secs = io_pressure_delay.as_secs(),
+                        io_pressure_avg10 = ?io_pressure_avg10,
+                        next_delay_secs = next_delay.as_secs(),
                         result = "adjusted",
-                        "adjusted sync pacing from measured cycle time"
+                        "adjusted sync pacing from measured work and I/O pressure"
                     );
                 }
                 if sync_error_active {
@@ -217,8 +267,8 @@ pub async fn run(
                     .store(counts.peers, Ordering::Relaxed);
             }
             Err(e) => {
-                next_delay = retry_delay;
-                retry_delay = retry_delay.saturating_mul(2).min(max_retry_delay);
+                next_delay = retry_delay.max(io_pressure_delay);
+                retry_delay = next_delay.saturating_mul(2).min(max_retry_delay);
                 metrics.sync_errors_total.fetch_add(1, Ordering::Relaxed);
                 // `e.to_string()`/`%e` only print the outermost `.context()`
                 // layer (e.g. "bounded_torrent_sync main offset=200 limit=100")
@@ -232,6 +282,7 @@ pub async fn run(
                     result = "error",
                     error = %chain,
                     cycle_ms = cycle_time.as_millis() as u64,
+                    io_pressure_avg10 = ?io_pressure_avg10,
                     retry_delay_secs = next_delay.as_secs(),
                     "backend sync failed"
                 );
