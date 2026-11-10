@@ -17,11 +17,14 @@ use crate::config::RtorrentConfig;
 const MAX_SCGI_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 const BACKGROUND_RPC_QUEUE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration = std::time::Duration::from_secs(15);
-const MAX_BACKGROUND_RPC_DELAY: std::time::Duration = std::time::Duration::from_secs(120);
+const MAX_BACKGROUND_RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+const MAX_BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration =
+    std::time::Duration::from_secs(300);
 const MODERATE_IO_PRESSURE_PERCENT: f64 = 5.0;
 const HIGH_IO_PRESSURE_PERCENT: f64 = 15.0;
 const SEVERE_IO_PRESSURE_PERCENT: f64 = 30.0;
 const EXTREME_IO_PRESSURE_PERCENT: f64 = 60.0;
+const CRITICAL_IO_PRESSURE_PERCENT: f64 = 80.0;
 
 /// Read the host's short-window I/O PSI as an advisory scheduling hint.
 /// Missing or malformed PSI data falls back to normal pacing.
@@ -56,6 +59,7 @@ pub(crate) fn read_io_pressure_avg10() -> Option<f64> {
 /// disables requests or waits for pressure to clear.
 pub(crate) fn io_pressure_multiplier(io_pressure_avg10: Option<f64>) -> u32 {
     match io_pressure_avg10 {
+        Some(percent) if percent >= CRITICAL_IO_PRESSURE_PERCENT => 32,
         Some(percent) if percent >= EXTREME_IO_PRESSURE_PERCENT => 16,
         Some(percent) if percent >= SEVERE_IO_PRESSURE_PERCENT => 8,
         Some(percent) if percent >= HIGH_IO_PRESSURE_PERCENT => 4,
@@ -68,7 +72,7 @@ fn background_rpc_timeout(
     base: std::time::Duration,
     io_pressure_avg10: Option<f64>,
 ) -> std::time::Duration {
-    let ceiling = base.max(MAX_BACKGROUND_RPC_DELAY);
+    let ceiling = base.max(MAX_BACKGROUND_RPC_TIMEOUT);
     base.saturating_mul(io_pressure_multiplier(io_pressure_avg10))
         .min(ceiling)
 }
@@ -76,7 +80,7 @@ fn background_rpc_timeout(
 fn background_rpc_circuit_delay(io_pressure_avg10: Option<f64>) -> std::time::Duration {
     BACKGROUND_RPC_CIRCUIT_DELAY
         .saturating_mul(io_pressure_multiplier(io_pressure_avg10))
-        .min(MAX_BACKGROUND_RPC_DELAY)
+        .min(MAX_BACKGROUND_RPC_CIRCUIT_DELAY)
 }
 
 #[derive(Debug)]
