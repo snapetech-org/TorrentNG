@@ -20,6 +20,8 @@ const BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration = std::time::Duration::f
 const MAX_PRESSURE_SCALED_RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3600);
 const MAX_BACKGROUND_RPC_QUEUE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 const MAX_BACKGROUND_RPC_CIRCUIT_DELAY: std::time::Duration = std::time::Duration::from_secs(900);
+const BACKGROUND_RPC_MIN_SPACING: std::time::Duration = std::time::Duration::from_millis(250);
+const MAX_BACKGROUND_RPC_MIN_SPACING: std::time::Duration = std::time::Duration::from_secs(30);
 const MODERATE_IO_PRESSURE_PERCENT: f64 = 5.0;
 const HIGH_IO_PRESSURE_PERCENT: f64 = 15.0;
 const SEVERE_IO_PRESSURE_PERCENT: f64 = 30.0;
@@ -94,6 +96,20 @@ fn background_rpc_queue_timeout(io_pressure_percent: Option<f64>) -> std::time::
         .min(MAX_BACKGROUND_RPC_QUEUE_TIMEOUT)
 }
 
+/// Space successful background reads under sustained I/O pressure. A single
+/// semaphore prevents parallel SCGI calls, but without pacing a burst of fast
+/// responses can still keep rTorrent's storage-facing work continuously busy.
+fn background_rpc_minimum_spacing(io_pressure_percent: Option<f64>) -> std::time::Duration {
+    let multiplier = io_pressure_multiplier(io_pressure_percent);
+    if multiplier == 1 {
+        return std::time::Duration::ZERO;
+    }
+
+    BACKGROUND_RPC_MIN_SPACING
+        .saturating_mul(multiplier)
+        .min(MAX_BACKGROUND_RPC_MIN_SPACING)
+}
+
 #[derive(Debug)]
 pub(crate) enum RpcBackpressure {
     CircuitOpen(std::time::Duration),
@@ -157,6 +173,7 @@ pub struct Client {
     timeout: std::time::Duration,
     identity_timeout: std::time::Duration,
     rpc_gate: Arc<Semaphore>,
+    low_priority_last_started: Arc<Mutex<Option<Instant>>>,
     low_priority_pause_until: Arc<Mutex<Option<Instant>>>,
     low_priority_failures: Arc<Mutex<u8>>,
     tracker_peer_id: Option<String>,
@@ -174,6 +191,7 @@ impl Client {
             timeout: std::time::Duration::from_secs(cfg.timeout_secs),
             identity_timeout: std::time::Duration::from_secs(cfg.identity_timeout_secs),
             rpc_gate: Arc::new(Semaphore::new(1)),
+            low_priority_last_started: Arc::new(Mutex::new(None)),
             low_priority_pause_until: Arc::new(Mutex::new(None)),
             low_priority_failures: Arc::new(Mutex::new(0)),
             tracker_peer_id: Some(cfg.peer_id.clone()),
@@ -187,6 +205,7 @@ impl Client {
             timeout: std::time::Duration::from_secs(timeout_secs),
             identity_timeout: std::time::Duration::from_secs(timeout_secs),
             rpc_gate: Arc::new(Semaphore::new(1)),
+            low_priority_last_started: Arc::new(Mutex::new(None)),
             low_priority_pause_until: Arc::new(Mutex::new(None)),
             low_priority_failures: Arc::new(Mutex::new(0)),
             tracker_peer_id: None,
@@ -301,6 +320,7 @@ impl Client {
     ) -> Result<XmlValue> {
         if priority == RpcPriority::Background {
             self.check_background_pause().await?;
+            self.pace_background_rpc(read_io_pressure_percent()).await;
         }
 
         let _permit = if priority == RpcPriority::Background {
@@ -358,6 +378,22 @@ impl Client {
             }
         }
         result
+    }
+
+    async fn pace_background_rpc(&self, io_pressure_percent: Option<f64>) {
+        let minimum_spacing = background_rpc_minimum_spacing(io_pressure_percent);
+        if minimum_spacing.is_zero() {
+            return;
+        }
+
+        let mut last_started = self.low_priority_last_started.lock().await;
+        if let Some(last) = *last_started {
+            let next_start = last + minimum_spacing;
+            if next_start > Instant::now() {
+                tokio::time::sleep_until(next_start).await;
+            }
+        }
+        *last_started = Some(Instant::now());
     }
 
     async fn check_background_pause(&self) -> Result<()> {
