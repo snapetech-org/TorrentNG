@@ -38,6 +38,12 @@ const RTORRENT_MULTICALL_RANGE_PATCH: &str = "rtorrent-0.16.28-multicall-range";
 const LEGACY_RTORRENT_NONZERO_RATE_PATCH: &str = "rtorrent-0.16.11-multicall-nonzero-rate";
 const LEGACY_RTORRENT_LIVE_SUMMARY_PATCH: &str = "rtorrent-0.16.11-tng-live-summary";
 const RTORRENT_DEFAULT_SAVE_PATH: &str = "/downloads/temp";
+fn append_started_load_commands(args: &mut Vec<XmlValue>, start: bool) {
+    if start {
+        args.extend(["d.open=", "d.resume=", "d.try_start=", "d.start="].map(XmlValue::from));
+    }
+}
+
 const RTORRENT_INFO_HASH_NOT_FOUND: &str = "invalid parameters: info-hash not found";
 
 fn is_missing_rtorrent_torrent(error: &anyhow::Error) -> bool {
@@ -360,6 +366,7 @@ impl Client {
         if let Some(identity_cmd) = identity_cmd.as_deref() {
             args.push(identity_cmd.into());
         }
+        append_started_load_commands(&mut args, start);
         self.call_xmlrpc(method, &args).await?;
         Ok(())
     }
@@ -879,12 +886,38 @@ fn base64_encode(data: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        bounded_range_args, decode_legacy_category, ensure_paged_torrent_capacity,
-        live_summary_args, nonzero_rate_args, normalize_rtorrent_save_path, parse_torrent_rows,
+        append_started_load_commands, bounded_range_args, decode_legacy_category,
+        ensure_paged_torrent_capacity, live_summary_args, nonzero_rate_args,
+        normalize_rtorrent_save_path, parse_torrent_rows,
         rtorrent_patch_manifest_enables_bounded_live, validate_torrent_metrics, TorrentMetrics,
         MAX_LEGACY_FULL_LIST_ENTRIES,
     };
     use crate::rtorrent::XmlValue;
+
+    #[test]
+    fn started_raw_loads_open_and_resume_after_identity_assignment() {
+        let mut args = vec![XmlValue::from("d.local_id.set=peer-id")];
+        append_started_load_commands(&mut args, true);
+
+        let commands = args
+            .iter()
+            .map(|value| value.as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            commands,
+            [
+                "d.local_id.set=peer-id",
+                "d.open=",
+                "d.resume=",
+                "d.try_start=",
+                "d.start=",
+            ]
+        );
+
+        let mut paused_args = Vec::new();
+        append_started_load_commands(&mut paused_args, false);
+        assert!(paused_args.is_empty());
+    }
 
     #[test]
     fn paged_torrent_list_stops_at_the_legacy_response_limit() {
