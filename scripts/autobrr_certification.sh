@@ -15,6 +15,9 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 
 TNG_API_TOKEN="${TNG_API_TOKEN:-local-cert-api-token-20260904}"
+CERT_TNG_CLIENT_HOST="${CERT_TNG_CLIENT_HOST:-torrentng}"
+CERT_TNG_CLIENT_PORT="${CERT_TNG_CLIENT_PORT:-8080}"
+CERT_TNG_CLIENT_TLS="${CERT_TNG_CLIENT_TLS:-false}"
 AUTOBRR_CONTAINER="${AUTOBRR_CONTAINER:-certification-autobrr-1}"
 AUTOBRR_HOST_URL="${AUTOBRR_HOST_URL:-http://localhost:${AUTOBRR_HOST_PORT:-17474}}"
 AUTOBRR_CERT_USER="${AUTOBRR_CERT_USER:-cert}"
@@ -81,6 +84,18 @@ delete_named() {
   echo "|---|---|---|"
 } > "$OUT"
 
+if [[ "$CERT_TNG_CLIENT_TLS" == true ]]; then
+  if [[ -z "${CERT_TLS_DIR:-}" || -z "${COMPOSE_PROJECT_NAME:-}" || ! -s "$CERT_TLS_DIR/ca.crt" ]]; then
+    mark "certification TLS trust" "FAIL" "TLS mode requires CERT_TLS_DIR and COMPOSE_PROJECT_NAME for the isolated stack"
+    status="FAIL"
+  elif "$ROOT/scripts/install_certification_test_ca.sh" "$COMPOSE_PROJECT_NAME" "$CERT_TLS_DIR/ca.crt" "$AUTOBRR_CONTAINER"; then
+    mark "certification TLS trust" "PASS" "task CA installed only in Compose project $COMPOSE_PROJECT_NAME"
+  else
+    mark "certification TLS trust" "FAIL" "autobrr is outside the declared certification Compose project"
+    status="FAIL"
+  fi
+fi
+
 code="$(curl -q -sS --noproxy "*" -o "$BODY" -w '%{http_code}' "$AUTOBRR_HOST_URL/api/auth/onboard")"
 if [[ "$code" == "204" ]]; then
   code="$(curl -q -sS --noproxy "*" -o "$BODY" -w '%{http_code}' -H 'Content-Type: application/json' -X POST -d "{\"username\":\"$AUTOBRR_CERT_USER\",\"password\":\"$AUTOBRR_CERT_PASSWORD\"}" "$AUTOBRR_HOST_URL/api/auth/onboard")"
@@ -97,24 +112,27 @@ else
   echo >> "$OUT"; echo "Overall status: $status" >> "$OUT"; echo "$OUT"; exit 1
 fi
 
-client="$(curl -fsS -b "$COOKIE_JAR" "$AUTOBRR_HOST_URL/api/download_clients" | jq -c '.[] | select(.name=="TorrentNG-qBit")' | head -1)"
+client="$(curl -fsS -b "$COOKIE_JAR" "$AUTOBRR_HOST_URL/api/downloaders" | jq -c '.[] | select(.name=="TorrentNG-qBit")' | head -1)"
 if [[ -n "$client" ]]; then
   client_id="$(jq -r '.id' <<<"$client")"
   mark "qBit client exists" "PASS" "id=$client_id"
 else
-  payload="$(jq -nc --arg token "$TNG_API_TOKEN" '{
+  tls_json=false
+  [[ "$CERT_TNG_CLIENT_TLS" == true ]] && tls_json=true
+  payload="$(jq -nc --arg token "$TNG_API_TOKEN" --arg host "$CERT_TNG_CLIENT_HOST" \
+    --argjson port "$CERT_TNG_CLIENT_PORT" --argjson tls "$tls_json" '{
     name: "TorrentNG-qBit",
     type: "QBITTORRENT",
     enabled: true,
-    host: "torrentng",
-    port: 8080,
-    tls: false,
+    host: $host,
+    port: $port,
+    tls: $tls,
     tls_skip_verify: false,
     username: $token,
     password: $token,
     settings: {basic: {}, rules: {enabled: false}}
   }')"
-  code="$(api POST /api/download_clients "$payload")"
+  code="$(api POST /api/downloaders "$payload")"
   if [[ "$code" == "200" || "$code" == "201" ]]; then
     client_id="$(jq -r '.id' "$BODY")"
     mark "qBit client exists" "PASS" "created id=$client_id"
@@ -125,20 +143,24 @@ else
 fi
 
 if [[ -n "${client_id:-}" ]]; then
-  test_payload="$(jq -nc --argjson id "$client_id" --arg token "$TNG_API_TOKEN" '{
+  tls_json=false
+  [[ "$CERT_TNG_CLIENT_TLS" == true ]] && tls_json=true
+  test_payload="$(jq -nc --argjson id "$client_id" --arg token "$TNG_API_TOKEN" \
+    --arg host "$CERT_TNG_CLIENT_HOST" --argjson port "$CERT_TNG_CLIENT_PORT" \
+    --argjson tls "$tls_json" '{
     id: $id,
     name: "TorrentNG-qBit",
     type: "QBITTORRENT",
     enabled: true,
-    host: "torrentng",
-    port: 8080,
-    tls: false,
+    host: $host,
+    port: $port,
+    tls: $tls,
     tls_skip_verify: false,
     username: $token,
     password: $token,
     settings: {basic: {}, rules: {enabled: false}}
   }')"
-  code="$(api POST /api/download_clients/test "$test_payload")"
+  code="$(api POST /api/downloaders/test "$test_payload")"
   if [[ "$code" == "204" ]]; then
     mark "qBit client test" "PASS" "autobrr reached TorrentNG"
   else

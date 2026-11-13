@@ -81,7 +81,7 @@ cleanup() {
     delete_named_indexer "$RADARR_BASE" "$RADARR_KEY" "$RADARR_INDEXER_NAME" || true
   fi
   docker rm -f "$TRACKER_NAME" "$SONARR_SEEDER_NAME" "$RADARR_SEEDER_NAME" "$SONARR_INDEXER_CONTAINER" "$RADARR_INDEXER_CONTAINER" >/dev/null 2>&1 || true
-  docker run --rm -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
+  docker run --rm -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
     sh -c "rm -rf -- /downloads/$FIXTURE_DOWNLOAD_DIR" >/dev/null 2>&1 || true
   rm -f -- "$COOKIE_JAR" "$BODY" "$AUTH_BODY_FILE"
 }
@@ -231,7 +231,7 @@ wait_for_indexer() {
   local label="$1"
   local url="$2"
   for _ in $(seq 1 30); do
-    if docker run --rm --network "$NETWORK" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf wget -qO /dev/null "$url/api?t=caps&apikey=fixture" >/dev/null 2>&1; then
+    if docker run --rm --network "$NETWORK" alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf wget -qO /dev/null "$url/api?t=caps&apikey=fixture" >/dev/null 2>&1; then
       mark "$label fixture indexer HTTP" "PASS" "$url"
       return 0
     fi
@@ -302,7 +302,7 @@ SONARR_KEY="${SONARR_API_KEY_OVERRIDE:-$(api_key_from_container "$SONARR_CONTAIN
 RADARR_KEY="${RADARR_API_KEY_OVERRIDE:-$(api_key_from_container "$RADARR_CONTAINER")}"
 
 docker run -d --rm --name "$TRACKER_NAME" --network "$NETWORK" lednerb/opentracker-docker >/dev/null
-docker run --rm --network "$NETWORK" -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -lc "
+docker run --rm --network "$NETWORK" -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -lc "
   apk add --no-cache mktorrent >/dev/null
   mkdir -p /downloads/$FIXTURE_DOWNLOAD_DIR/sonarr-seed /downloads/$FIXTURE_DOWNLOAD_DIR/radarr-seed
   dd if=/dev/urandom of=/downloads/$FIXTURE_DOWNLOAD_DIR/sonarr-seed/$SONARR_FIXTURE_FILE bs=$FIXTURE_BYTES count=1 status=none
@@ -312,10 +312,10 @@ docker run --rm --network "$NETWORK" -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.
 "
 docker run -d --rm --name "$SONARR_SEEDER_NAME" --network "$NETWORK" -v "$DOWNLOADS_VOLUME:/downloads" \
   -e "FIXTURE_DOWNLOAD_DIR=$FIXTURE_DOWNLOAD_DIR" \
-  alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -lc 'apk add --no-cache transmission-cli >/dev/null && exec transmission-cli -w "/downloads/$FIXTURE_DOWNLOAD_DIR/sonarr-seed" "/downloads/$FIXTURE_DOWNLOAD_DIR/tng-sonarr-fixture.torrent"' >/dev/null
+  alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -lc 'apk add --no-cache transmission-cli >/dev/null && exec transmission-cli -w "/downloads/$FIXTURE_DOWNLOAD_DIR/sonarr-seed" "/downloads/$FIXTURE_DOWNLOAD_DIR/tng-sonarr-fixture.torrent"' >/dev/null
 docker run -d --rm --name "$RADARR_SEEDER_NAME" --network "$NETWORK" -v "$DOWNLOADS_VOLUME:/downloads" \
   -e "FIXTURE_DOWNLOAD_DIR=$FIXTURE_DOWNLOAD_DIR" \
-  alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -lc 'apk add --no-cache transmission-cli >/dev/null && exec transmission-cli -w "/downloads/$FIXTURE_DOWNLOAD_DIR/radarr-seed" "/downloads/$FIXTURE_DOWNLOAD_DIR/tng-radarr-fixture.torrent"' >/dev/null
+  alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -lc 'apk add --no-cache transmission-cli >/dev/null && exec transmission-cli -w "/downloads/$FIXTURE_DOWNLOAD_DIR/radarr-seed" "/downloads/$FIXTURE_DOWNLOAD_DIR/tng-radarr-fixture.torrent"' >/dev/null
 mark "fixture torrents" "PASS" "separate $FIXTURE_BYTES byte Sonarr/Radarr torrents and stock seeders ready"
 
 docker run -d --rm --name "$SONARR_INDEXER_CONTAINER" --network "$NETWORK" \

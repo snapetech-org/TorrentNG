@@ -24,6 +24,9 @@ fi
 
 TNG_HOST_URL="${ENV_TNG_HOST_URL:-${TNG_HOST_URL:-http://localhost:${TNG_HOST_PORT:-18080}}}"
 TNG_API_TOKEN="${TNG_API_TOKEN:-local-cert-api-token-20260904}"
+CERT_TNG_CLIENT_HOST="${CERT_TNG_CLIENT_HOST:-torrentng}"
+CERT_TNG_CLIENT_PORT="${CERT_TNG_CLIENT_PORT:-8080}"
+CERT_TNG_CLIENT_TLS="${CERT_TNG_CLIENT_TLS:-false}"
 SONARR_HOST_URL="${ENV_SONARR_HOST_URL:-${SONARR_HOST_URL:-http://localhost:${SONARR_HOST_PORT:-18989}}}"
 RADARR_HOST_URL="${ENV_RADARR_HOST_URL:-${RADARR_HOST_URL:-http://localhost:${RADARR_HOST_PORT:-17878}}}"
 PROWLARR_HOST_URL="${ENV_PROWLARR_HOST_URL:-${PROWLARR_HOST_URL:-http://localhost:${PROWLARR_HOST_PORT:-19696}}}"
@@ -35,26 +38,33 @@ for protected_url in "$TNG_HOST_URL" "$SONARR_HOST_URL" "$RADARR_HOST_URL" \
   python3 "$ROOT/scripts/protected_target.py" "$protected_url"
 done
 
-BODY="$(mktemp "${TMPDIR:-/tmp}/tng-cert-body.XXXXXX")"
-COOKIE_JAR="$(mktemp "${TMPDIR:-/tmp}/tng-cert-cookies.XXXXXX")"
-AUTH_BODY_FILE="$(mktemp "${TMPDIR:-/tmp}/tng-cert-auth.XXXXXX")"
-cleanup() {
-  rm -f -- "$BODY" "$COOKIE_JAR" "$AUTH_BODY_FILE"
-}
-trap cleanup EXIT
-tng_write_qbit_login_body "$TNG_API_TOKEN" "$AUTH_BODY_FILE"
-
+umask 077
 mkdir -p "$(dirname "$OUT")"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/torrentng-live-cert.XXXXXX")"
 BODY="$TMP_DIR/body"
 COOKIE_JAR="$TMP_DIR/cookies"
+AUTH_BODY_FILE="$TMP_DIR/auth-body"
+: >"$BODY"
+: >"$COOKIE_JAR"
+: >"$AUTH_BODY_FILE"
 cleanup() {
-  rm -rf "$TMP_DIR"
+  rm -rf -- "$TMP_DIR"
 }
 trap cleanup EXIT
+tng_write_qbit_login_body "$TNG_API_TOKEN" "$AUTH_BODY_FILE"
 
 if [[ "${CERT_START_STACK:-0}" == "1" ]]; then
-  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --build
+  compose_files=(-f "$COMPOSE_FILE")
+  if [[ -n "${CERT_TLS_DIR:-}" ]]; then
+    TLS_COMPOSE_FILE="${CERT_TLS_COMPOSE_FILE:-$ROOT/deploy/certification/compose.tls.yml}"
+    [[ -s "$CERT_TLS_DIR/ca.crt" && -s "$CERT_TLS_DIR/server.crt" && -s "$CERT_TLS_DIR/server.key" ]] || {
+      echo "CERT_TLS_DIR does not contain generated test certificates" >&2
+      exit 2
+    }
+    compose_files+=(-f "$TLS_COMPOSE_FILE")
+    export CURL_CA_BUNDLE="$CERT_TLS_DIR/ca.crt"
+  fi
+  docker compose --env-file "$ENV_FILE" "${compose_files[@]}" up -d --build
   for _ in $(seq 1 30); do
     code="$(curl -q -sS --noproxy "*" -o /dev/null -w '%{http_code}' "$TNG_HOST_URL/health" || true)"
     [[ "$code" == "200" || "$code" == "503" ]] && break
@@ -160,8 +170,13 @@ done
   echo
   echo "## Integration Gates"
   echo
-  echo "- Run \`scripts/configure_certification_clients.sh\` to configure and test Sonarr/Radarr/Prowlarr/autobrr qBittorrent clients against \`torrentng:8080\`."
-  echo '- Configure cross-seed qBittorrent URL as `http://<token>:<token>@torrentng:8080` where supported.'
+  if [[ "$CERT_TNG_CLIENT_TLS" == true ]]; then
+    echo "- Run \`scripts/configure_certification_clients.sh\` to configure Sonarr/Radarr/Prowlarr/autobrr against \`https://${CERT_TNG_CLIENT_HOST}:${CERT_TNG_CLIENT_PORT}\`."
+    echo '- Configure cross-seed qBittorrent URL as `https://<token>:<token>@torrentng-cert-tls`; the isolated stack trusts its generated test CA.'
+  else
+    echo "- Run \`scripts/configure_certification_clients.sh\` to configure and test Sonarr/Radarr/Prowlarr/autobrr qBittorrent clients against \`torrentng:8080\`."
+    echo '- Configure cross-seed qBittorrent URL as `http://<token>:<token>@torrentng:8080` where supported.'
+  fi
   echo "- Use tracker/indexer or local fixture releases for full add-torrent job certification."
   echo
   echo "Overall status: $status"

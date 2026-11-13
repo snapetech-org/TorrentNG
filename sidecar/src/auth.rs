@@ -6,6 +6,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use hmac::{Hmac, KeyInit, Mac};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -340,7 +341,10 @@ pub async fn require_auth(
         // cross-origin WebSocket handshakes, so the ordinary safe-method
         // exemption would permit cross-origin event reads from a sibling
         // subdomain. Require same-origin evidence for this route as well.
-        if (is_mutating(&req) || path == "/ws") && !csrf_request_allowed(req.headers()) {
+        if (is_mutating(&req) || path == "/ws")
+            && !csrf_request_allowed(req.headers())
+            && !qbit_native_client_mutation_allowed(&req, &state.cfg.auth.api_tokens)
+        {
             return (StatusCode::FORBIDDEN, "cross-site cookie mutation rejected").into_response();
         }
         return next.run(req).await;
@@ -646,6 +650,48 @@ fn single_header_value<'a>(
     value.to_str().map(Some).map_err(|_| ())
 }
 
+/// qBittorrent-compatible desktop and automation clients use a SID cookie for
+/// the session and repeat their configured API-token credentials with Basic
+/// authentication on API calls. They do not send browser Origin metadata. Allow
+/// that explicit non-browser proof for qB API mutations only; any request that
+/// carries browser metadata still has to pass the strict same-origin check.
+fn qbit_native_client_mutation_allowed(req: &Request<Body>, api_tokens: &[String]) -> bool {
+    let path = req.uri().path();
+    if !is_mutating(req)
+        || !(path.starts_with("/api/qb/v2/") || path.starts_with("/api/v2/"))
+        || has_browser_request_headers(req.headers())
+    {
+        return false;
+    }
+
+    let Some(value) = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return false;
+    };
+    let mut parts = value.split_ascii_whitespace();
+    let (Some(scheme), Some(encoded), None) = (parts.next(), parts.next(), parts.next()) else {
+        return false;
+    };
+    if !scheme.eq_ignore_ascii_case("Basic") || encoded.len() > 4_096 {
+        return false;
+    }
+    let Ok(decoded) = BASE64_STANDARD.decode(encoded) else {
+        return false;
+    };
+    let Ok(credentials) = String::from_utf8(decoded) else {
+        return false;
+    };
+    let Some((username, password)) = credentials.split_once(':') else {
+        return false;
+    };
+    api_tokens
+        .iter()
+        .any(|token| tokens_match(token, username) || tokens_match(token, password))
+}
+
 fn same_origin_authority(value: &str, host: &str, required: bool) -> bool {
     let value = value.trim();
     if value.eq_ignore_ascii_case("null") {
@@ -845,6 +891,89 @@ mod tests {
         // omit both. Absent evidence must not be treated as a same-origin pass.
         let h = headers(&[("Host", "example.com")]);
         assert!(!csrf_request_allowed(&h));
+    }
+
+    #[test]
+    fn native_qbit_mutation_requires_matching_api_token_basic_credentials() {
+        let token = "client-api-token".to_owned();
+        let credentials = BASE64_STANDARD.encode(format!("{token}:{token}"));
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/api/v2/torrents/createCategory")
+            .header("Authorization", format!("Basic {credentials}"))
+            .body(Body::empty())
+            .unwrap();
+        assert!(qbit_native_client_mutation_allowed(
+            &request,
+            std::slice::from_ref(&token)
+        ));
+    }
+
+    #[test]
+    fn native_qbit_mutation_accepts_api_token_in_either_basic_field() {
+        let token = "client-api-token".to_owned();
+        for credentials in ["client-api-token:operator", "operator:client-api-token"] {
+            let encoded = BASE64_STANDARD.encode(credentials);
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("/api/v2/torrents/createCategory")
+                .header("Authorization", format!("Basic {encoded}"))
+                .body(Body::empty())
+                .unwrap();
+            assert!(qbit_native_client_mutation_allowed(
+                &request,
+                std::slice::from_ref(&token)
+            ));
+        }
+    }
+
+    #[test]
+    fn native_qbit_mutation_rejects_wrong_credentials_and_other_routes() {
+        let token = "client-api-token".to_owned();
+        // qB's login accepts the configured API token in either credential
+        // field, so a mismatching other field does not make this a bad token.
+        let bad = BASE64_STANDARD.encode("wrong-user:wrong-password");
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/api/v2/torrents/createCategory")
+            .header("Authorization", format!("Basic {bad}"))
+            .body(Body::empty())
+            .unwrap();
+        assert!(!qbit_native_client_mutation_allowed(
+            &request,
+            std::slice::from_ref(&token)
+        ));
+
+        let good = BASE64_STANDARD.encode("client-api-token:client-api-token");
+        let unrelated = Request::builder()
+            .method(Method::POST)
+            .uri("/api/v1/torrents")
+            .header("Authorization", format!("Basic {good}"))
+            .body(Body::empty())
+            .unwrap();
+        assert!(!qbit_native_client_mutation_allowed(
+            &unrelated,
+            std::slice::from_ref(&token)
+        ));
+    }
+
+    #[test]
+    fn native_qbit_basic_credentials_do_not_bypass_cross_origin_browser_checks() {
+        let token = "client-api-token".to_owned();
+        let credentials = BASE64_STANDARD.encode(format!("{token}:{token}"));
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/api/v2/torrents/createCategory")
+            .header("Authorization", format!("Basic {credentials}"))
+            .header("Host", "torrentng.example")
+            .header("Origin", "https://evil.example")
+            .header("Sec-Fetch-Site", "cross-site")
+            .body(Body::empty())
+            .unwrap();
+        assert!(!qbit_native_client_mutation_allowed(
+            &request,
+            std::slice::from_ref(&token)
+        ));
     }
 
     #[test]

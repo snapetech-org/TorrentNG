@@ -529,6 +529,53 @@ class WorkflowSecurityTests(unittest.TestCase):
             source = (ROOT / "scripts" / script_name).read_text(encoding="utf-8")
             self.assertIn("protected_target.py", source, script_name)
 
+    def test_certification_cookie_jars_are_created_before_use_in_private_tempdirs(self) -> None:
+        live = (ROOT / "scripts" / "live_certification.sh").read_text(encoding="utf-8")
+        self.assertIn('TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/torrentng-live-cert.XXXXXX")"', live)
+        self.assertIn('COOKIE_JAR="$TMP_DIR/cookies"', live)
+        self.assertLess(live.index(': >"$COOKIE_JAR"'), live.index("tng_write_qbit_login_body"))
+        self.assertEqual(live.count("cleanup() {"), 1)
+        self.assertNotIn('COOKIE_JAR="$(mktemp', live)
+
+        clients = (ROOT / "scripts" / "configure_certification_clients.sh").read_text(encoding="utf-8")
+        self.assertIn('local test_body="$TMP_DIR/arr-test-body"', clients)
+        self.assertIn('local save_body="$TMP_DIR/arr-save-body"', clients)
+        self.assertNotRegex(clients, r"/tmp/tng-(?:arr|autobrr)-")
+        self.assertLess(clients.index(': >"$cookies"'), clients.index('-c "$cookies"'))
+
+    def test_arr_client_connection_test_accepts_no_content_success(self) -> None:
+        clients = (ROOT / "scripts" / "configure_certification_clients.sh").read_text(encoding="utf-8")
+        self.assertIn('if [[ ! "$code" =~ ^(200|202|204)$ ]]; then', clients)
+
+    def test_pinned_alpine_images_use_valid_digest_reference_syntax(self) -> None:
+        malformed = re.compile(r"\balpine:[^\s\"'@]+:[0-9a-f]{64}\b")
+        for base in (ROOT / "scripts", ROOT / "docs", ROOT / "deploy", ROOT / ".github"):
+            for path in base.rglob("*"):
+                if path.is_file() and path.suffix in {".sh", ".md", ".yml", ".yaml", ".py"}:
+                    with self.subTest(path=path.relative_to(ROOT)):
+                        self.assertNotRegex(path.read_text(encoding="utf-8"), malformed)
+
+    def test_certification_tls_proxy_is_loopback_scoped_and_preserves_secure_cookies(self) -> None:
+        compose = (ROOT / "deploy" / "certification" / "compose.tls.yml").read_text(encoding="utf-8")
+        self.assertIn('"127.0.0.1:${TNG_TLS_HOST_PORT:-18443}:443"', compose)
+        self.assertIn("CERT_TLS_DIR:?CERT_TLS_DIR must point to generated test certificates", compose)
+        self.assertIn("NODE_EXTRA_CA_CERTS", compose)
+        self.assertIn("TNG_CROSS_SEED_QBIT_HOST: https://torrentng-cert-tls", compose)
+
+        config = (ROOT / "deploy" / "certification" / "sidecar.config.toml").read_text(encoding="utf-8")
+        self.assertIn("secure_cookies = true", config)
+        clients = (ROOT / "scripts" / "configure_certification_clients.sh").read_text(encoding="utf-8")
+        self.assertIn('elif .name=="useSsl" then .value=$tls', clients)
+        self.assertIn('CERT_TNG_CLIENT_HOST="${CERT_TNG_CLIENT_HOST:-torrentng}"', clients)
+        trust_helper = (ROOT / "scripts" / "install_certification_test_ca.sh").read_text(encoding="utf-8")
+        self.assertIn('[[ "$actual_project" != "$PROJECT" ]]', trust_helper)
+        for proxy in ("nginx.conf", "certification-tls.conf"):
+            source = (ROOT / "deploy" / "nginx" / proxy).read_text(encoding="utf-8")
+            self.assertIn("access_log /dev/stdout tng_redacted_access;", source)
+            self.assertIn("$request_method $uri $server_protocol", source)
+            self.assertNotIn("$remote_user", source)
+            self.assertNotIn("$request ", source)
+
     def test_nginx_proxy_drops_client_supplied_identity_header(self) -> None:
         source = (ROOT / "deploy" / "nginx" / "nginx.conf").read_text(encoding="utf-8")
         locations = re.findall(

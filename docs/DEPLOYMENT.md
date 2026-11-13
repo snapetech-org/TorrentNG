@@ -122,7 +122,11 @@ authenticated TLS reverse proxy for remote access, and do not override the
 loopback binds without equivalent transport and access protection. Incoming
 BitTorrent peer ports remain published separately. Compatibility session
 cookies carry `Secure` by default; disable `auth.secure_cookies` only for an
-explicitly trusted loopback HTTP setup.
+explicitly trusted loopback HTTP setup. qBittorrent-compatible native clients
+must use HTTPS and send a configured API token in either Basic-auth credential
+field when they perform mutations. Browser requests still require same-origin
+CSRF evidence; the native-client exception is limited to qB API paths and
+valid API-token credentials.
 
 The native, compatible-client, and Phase 1 images accept runtime `PUID` and
 `PGID` values. Generic Compose deployments default to `1000:1000`; the
@@ -276,7 +280,7 @@ cp deploy/certification/.env.example deploy/certification/.env
 CERT_START_STACK=1 ./scripts/live_certification.sh
 ```
 
-The runner writes a markdown report under `certification/reports/`. Use it as the release gate for local qBittorrent API compatibility and container-level integration readiness, then complete the first-run app configuration in each service UI for full end-to-end add-torrent jobs.
+The runner writes a markdown report under `certification/reports/`. For the full app-driven release-grab checks, run `scripts/release_grab_certification.sh`; it creates an isolated Compose project, generates a short-lived local CA, routes client compatibility traffic through a loopback-only TLS proxy, and removes the stack and test certificates on exit. The clients verify that CA before testing secure qBittorrent session cookies. Use `CERT_GRAB_KEEP_STACK=1` only when you need to retain the isolated stack and its generated TLS material for diagnosis.
 
 The running TorrentNG client can be audited through the TorrentNG API:
 

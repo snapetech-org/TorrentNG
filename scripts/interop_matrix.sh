@@ -326,7 +326,7 @@ reset_workdir() {
   if [[ -d "$WORKDIR" ]]; then
     chmod -R u+rwX "$WORKDIR" 2>/dev/null || true
     rm -rf "$WORKDIR/artifacts" "$WORKDIR/config" "$WORKDIR/downloads" "$WORKDIR/fixtures" "$WORKDIR/logs" "$WORKDIR/torrents" "$WORKDIR/watch" 2>/dev/null || \
-      docker run --rm -v "$WORKDIR:/work" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -lc 'rm -rf /work/artifacts /work/config /work/downloads /work/fixtures /work/logs /work/torrents /work/watch'
+      docker run --rm -v "$WORKDIR:/work" alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -lc 'rm -rf /work/artifacts /work/config /work/downloads /work/fixtures /work/logs /work/torrents /work/watch'
   fi
 }
 
@@ -463,7 +463,7 @@ ensure_services_running() {
 }
 
 docker_tool() {
-  docker run --rm -v "$WORKDIR:/work" -w /work alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -lc "$*"
+  docker run --rm -v "$WORKDIR:/work" -w /work alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -lc "$*"
 }
 
 ensure_mktorrent() {
@@ -1978,7 +1978,7 @@ cleanup_public_data() {
   done
   rm -rf "$(host_download_dir rtorrent)"/*.iso "$(host_download_dir rtorrent)"/*.img "$(host_download_dir rtorrent)"/Fedora-* 2>/dev/null || true
   if find "$WORKDIR/downloads" \( -path '*/public/*' -o -name '*.iso' -o -name '*.img' \) 2>/dev/null | grep -q .; then
-    docker run --rm -v "$WORKDIR/downloads:/downloads" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -lc \
+    docker run --rm -v "$WORKDIR/downloads:/downloads" alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -lc \
       "rm -rf /downloads/*/public /downloads/rtorrent/*.iso /downloads/rtorrent/*.img /downloads/rtorrent/Fedora-*" >/dev/null 2>&1 || true
   fi
 }

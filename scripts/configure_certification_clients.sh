@@ -15,6 +15,17 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 
 TNG_API_TOKEN="${TNG_API_TOKEN:-local-cert-api-token-20260904}"
+CERT_TNG_CLIENT_HOST="${CERT_TNG_CLIENT_HOST:-torrentng}"
+CERT_TNG_CLIENT_PORT="${CERT_TNG_CLIENT_PORT:-8080}"
+CERT_TNG_CLIENT_TLS="${CERT_TNG_CLIENT_TLS:-false}"
+if [[ ! "$CERT_TNG_CLIENT_PORT" =~ ^[0-9]{1,5}$ ]] || (( CERT_TNG_CLIENT_PORT < 1 || CERT_TNG_CLIENT_PORT > 65535 )); then
+  echo "CERT_TNG_CLIENT_PORT must be between 1 and 65535" >&2
+  exit 2
+fi
+if [[ "$CERT_TNG_CLIENT_TLS" != true && "$CERT_TNG_CLIENT_TLS" != false ]]; then
+  echo "CERT_TNG_CLIENT_TLS must be true or false" >&2
+  exit 2
+fi
 SONARR_HOST_URL="${SONARR_HOST_URL:-http://localhost:${SONARR_HOST_PORT:-18989}}"
 RADARR_HOST_URL="${RADARR_HOST_URL:-http://localhost:${RADARR_HOST_PORT:-17878}}"
 PROWLARR_HOST_URL="${PROWLARR_HOST_URL:-http://localhost:${PROWLARR_HOST_PORT:-19696}}"
@@ -78,16 +89,20 @@ arr_payload() {
   local category_field="$5"
   local category_value="$6"
 
+  local tls_json=false
+  [[ "$CERT_TNG_CLIENT_TLS" == true ]] && tls_json=true
   curl -fsS -H "X-Api-Key: $api_key" "$base_url$api_path/downloadclient/schema" \
-    | jq --arg name "$name" --arg category_field "$category_field" --arg category_value "$category_value" --arg token "$TNG_API_TOKEN" '
+    | jq --arg name "$name" --arg category_field "$category_field" --arg category_value "$category_value" \
+        --arg token "$TNG_API_TOKEN" --arg host "$CERT_TNG_CLIENT_HOST" \
+        --argjson port "$CERT_TNG_CLIENT_PORT" --argjson tls "$tls_json" '
       map(select(.implementation=="QBittorrent"))[0]
       | .enable=true
       | .name=$name
       | .priority=1
       | .fields |= map(
-          if .name=="host" then .value="torrentng"
-          elif .name=="port" then .value=8080
-          elif .name=="useSsl" then .value=false
+          if .name=="host" then .value=$host
+          elif .name=="port" then .value=$port
+          elif .name=="useSsl" then .value=$tls
           elif .name=="urlBase" then .value=""
           elif .name=="username" then .value=$token
           elif .name=="password" then .value=$token
@@ -108,7 +123,9 @@ configure_arr_client() {
   local category_field="$5"
   local category_value="$6"
   local name="TorrentNG-qBit"
-  local payload code existing_id
+  local test_body="$TMP_DIR/arr-test-body"
+  local save_body="$TMP_DIR/arr-save-body"
+  local payload code existing_id detail
 
   payload="$(arr_payload "$base_url" "$api_key" "$api_path" "$name" "$category_field" "$category_value")"
   existing_id="$(curl -fsS -H "X-Api-Key: $api_key" "$base_url$api_path/downloadclient" | jq -r --arg name "$name" '.[] | select(.name==$name) | .id' | head -1)"
@@ -116,22 +133,26 @@ configure_arr_client() {
     payload="$(printf '%s' "$payload" | jq --argjson id "$existing_id" '.id=$id')"
   fi
 
-  code="$(curl -q -sS --noproxy "*" -o /tmp/tng-arr-test-body.txt -w '%{http_code}' -H "X-Api-Key: $api_key" -H 'Content-Type: application/json' -X POST -d "$payload" "$base_url$api_path/downloadclient/test")"
-  if [[ "$code" != "200" ]]; then
-    mark "$label qBit test" "FAIL" "HTTP $code $(tr '\n' ' ' <"$test_body")"
+  code="$(curl -q -sS --noproxy "*" -o "$test_body" -w '%{http_code}' -H "X-Api-Key: $api_key" -H 'Content-Type: application/json' -X POST -d "$payload" "$base_url$api_path/downloadclient/test")"
+  if [[ ! "$code" =~ ^(200|202|204)$ ]]; then
+    detail="$(tr '\n' ' ' <"$test_body")"
+    detail="${detail//"$TNG_API_TOKEN"/<redacted>}"
+    mark "$label qBit test" "FAIL" "HTTP $code $detail"
     return
   fi
 
   if [[ -n "$existing_id" ]]; then
-    code="$(curl -q -sS --noproxy "*" -o /tmp/tng-arr-save-body.txt -w '%{http_code}' -H "X-Api-Key: $api_key" -H 'Content-Type: application/json' -X PUT -d "$payload" "$base_url$api_path/downloadclient/$existing_id")"
+    code="$(curl -q -sS --noproxy "*" -o "$save_body" -w '%{http_code}' -H "X-Api-Key: $api_key" -H 'Content-Type: application/json' -X PUT -d "$payload" "$base_url$api_path/downloadclient/$existing_id")"
   else
-    code="$(curl -q -sS --noproxy "*" -o /tmp/tng-arr-save-body.txt -w '%{http_code}' -H "X-Api-Key: $api_key" -H 'Content-Type: application/json' -X POST -d "$payload" "$base_url$api_path/downloadclient")"
+    code="$(curl -q -sS --noproxy "*" -o "$save_body" -w '%{http_code}' -H "X-Api-Key: $api_key" -H 'Content-Type: application/json' -X POST -d "$payload" "$base_url$api_path/downloadclient")"
   fi
 
   if [[ "$code" == "200" || "$code" == "201" || "$code" == "202" ]]; then
     mark "$label qBit client" "PASS" "tested and saved as $name"
   else
-    mark "$label qBit client" "FAIL" "HTTP $code $(tr '\n' ' ' <"$save_body")"
+    detail="$(tr '\n' ' ' <"$save_body")"
+    detail="${detail//"$TNG_API_TOKEN"/<redacted>}"
+    mark "$label qBit client" "FAIL" "HTTP $code $detail"
   fi
 }
 
@@ -143,26 +164,31 @@ configure_autobrr_client() {
   local save_body="$TMP_DIR/autobrr-save-body"
   local user="${AUTOBRR_CERT_USER:-cert}"
   local pass="${AUTOBRR_CERT_PASSWORD:-cert}"
-  local payload code existing_id
+  local payload code existing_id detail
+  : >"$cookies"
 
-  code="$(curl -q -sS --noproxy "*" -o /tmp/tng-autobrr-onboard.txt -w '%{http_code}' "$AUTOBRR_HOST_URL/api/auth/onboard")"
+  code="$(curl -q -sS --noproxy "*" -o "$onboard_body" -w '%{http_code}' "$AUTOBRR_HOST_URL/api/auth/onboard")"
   if [[ "$code" == "204" ]]; then
-    curl -q -sS --noproxy "*" -o /tmp/tng-autobrr-onboard.txt -H 'Content-Type: application/json' -X POST -d "{\"username\":\"$user\",\"password\":\"$pass\"}" "$AUTOBRR_HOST_URL/api/auth/onboard" >/dev/null
+    curl -q -sS --noproxy "*" -o "$onboard_body" -H 'Content-Type: application/json' -X POST -d "{\"username\":\"$user\",\"password\":\"$pass\"}" "$AUTOBRR_HOST_URL/api/auth/onboard" >/dev/null
   fi
 
-  code="$(curl -q -sS --noproxy "*" -c "$cookies" -o /tmp/tng-autobrr-login.txt -w '%{http_code}' -H 'Content-Type: application/json' -X POST -d "{\"username\":\"$user\",\"password\":\"$pass\",\"remember_me\":true}" "$AUTOBRR_HOST_URL/api/auth/login")"
+  code="$(curl -q -sS --noproxy "*" -c "$cookies" -o "$login_body" -w '%{http_code}' -H 'Content-Type: application/json' -X POST -d "{\"username\":\"$user\",\"password\":\"$pass\",\"remember_me\":true}" "$AUTOBRR_HOST_URL/api/auth/login")"
   if [[ "$code" != "204" ]]; then
-    mark "autobrr login" "FAIL" "HTTP $code $(tr '\n' ' ' <"$login_body")"
+    detail="$(tr '\n' ' ' <"$login_body")"
+    mark "autobrr login" "FAIL" "HTTP $code $detail"
     return
   fi
 
-  payload="$(jq -nc --arg token "$TNG_API_TOKEN" '{
+  local tls_json=false
+  [[ "$CERT_TNG_CLIENT_TLS" == true ]] && tls_json=true
+  payload="$(jq -nc --arg token "$TNG_API_TOKEN" --arg host "$CERT_TNG_CLIENT_HOST" \
+    --argjson port "$CERT_TNG_CLIENT_PORT" --argjson tls "$tls_json" '{
     name: "TorrentNG-qBit",
     type: "QBITTORRENT",
     enabled: true,
-    host: "torrentng",
-    port: 8080,
-    tls: false,
+    host: $host,
+    port: $port,
+    tls: $tls,
     tls_skip_verify: false,
     username: $token,
     password: $token,
@@ -172,24 +198,28 @@ configure_autobrr_client() {
     }
   }')"
 
-  code="$(curl -q -sS --noproxy "*" -b "$cookies" -o /tmp/tng-autobrr-test.txt -w '%{http_code}' -H 'Content-Type: application/json' -X POST -d "$payload" "$AUTOBRR_HOST_URL/api/download_clients/test")"
+  code="$(curl -q -sS --noproxy "*" -b "$cookies" -o "$test_body" -w '%{http_code}' -H 'Content-Type: application/json' -X POST -d "$payload" "$AUTOBRR_HOST_URL/api/downloaders/test")"
   if [[ "$code" != "204" ]]; then
-    mark "autobrr qBit test" "FAIL" "HTTP $code $(tr '\n' ' ' <"$test_body")"
+    detail="$(tr '\n' ' ' <"$test_body")"
+    detail="${detail//"$TNG_API_TOKEN"/<redacted>}"
+    mark "autobrr qBit test" "FAIL" "HTTP $code $detail"
     return
   fi
 
-  existing_id="$(curl -fsS -b "$cookies" "$AUTOBRR_HOST_URL/api/download_clients" | jq -r '.[] | select(.name=="TorrentNG-qBit") | .id' | head -1)"
+  existing_id="$(curl -fsS -b "$cookies" "$AUTOBRR_HOST_URL/api/downloaders" | jq -r '.[] | select(.name=="TorrentNG-qBit") | .id' | head -1)"
   if [[ -n "$existing_id" ]]; then
     payload="$(printf '%s' "$payload" | jq --argjson id "$existing_id" '.id=$id')"
-    code="$(curl -q -sS --noproxy "*" -b "$cookies" -o /tmp/tng-autobrr-save.txt -w '%{http_code}' -H 'Content-Type: application/json' -X PUT -d "$payload" "$AUTOBRR_HOST_URL/api/download_clients")"
+    code="$(curl -q -sS --noproxy "*" -b "$cookies" -o "$save_body" -w '%{http_code}' -H 'Content-Type: application/json' -X PUT -d "$payload" "$AUTOBRR_HOST_URL/api/downloaders")"
   else
-    code="$(curl -q -sS --noproxy "*" -b "$cookies" -o /tmp/tng-autobrr-save.txt -w '%{http_code}' -H 'Content-Type: application/json' -X POST -d "$payload" "$AUTOBRR_HOST_URL/api/download_clients")"
+    code="$(curl -q -sS --noproxy "*" -b "$cookies" -o "$save_body" -w '%{http_code}' -H 'Content-Type: application/json' -X POST -d "$payload" "$AUTOBRR_HOST_URL/api/downloaders")"
   fi
 
   if [[ "$code" == "200" || "$code" == "201" ]]; then
     mark "autobrr qBit client" "PASS" "tested and saved as TorrentNG-qBit"
   else
-    mark "autobrr qBit client" "FAIL" "HTTP $code $(tr '\n' ' ' <"$save_body")"
+    detail="$(tr '\n' ' ' <"$save_body")"
+    detail="${detail//"$TNG_API_TOKEN"/<redacted>}"
+    mark "autobrr qBit client" "FAIL" "HTTP $code $detail"
   fi
 }
 
@@ -197,13 +227,44 @@ configure_autobrr_client() {
   echo "# TorrentNG Client Configuration Report"
   echo
   echo "- Date UTC: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  echo "- TorrentNG Docker host: torrentng:8080"
+  if [[ "$CERT_TNG_CLIENT_TLS" == true ]]; then compat_scheme=https; else compat_scheme=http; fi
+  echo "- TorrentNG qBittorrent endpoint: ${compat_scheme}://${CERT_TNG_CLIENT_HOST}:${CERT_TNG_CLIENT_PORT}"
   echo
   echo "## Checks"
   echo
   echo "| Check | Result | Detail |"
   echo "|---|---|---|"
 } > "$OUT"
+
+if [[ "$CERT_TNG_CLIENT_TLS" == true ]]; then
+  if [[ -z "${CERT_TLS_DIR:-}" || -z "${COMPOSE_PROJECT_NAME:-}" || ! -s "$CERT_TLS_DIR/ca.crt" ]]; then
+    mark "certification TLS trust" "FAIL" "TLS mode requires CERT_TLS_DIR and COMPOSE_PROJECT_NAME for the isolated stack"
+    status="FAIL"
+  elif "$ROOT/scripts/install_certification_test_ca.sh" "$COMPOSE_PROJECT_NAME" "$CERT_TLS_DIR/ca.crt" \
+      "$SONARR_CONTAINER" "$RADARR_CONTAINER" "$PROWLARR_CONTAINER" "$AUTOBRR_CONTAINER"; then
+    for entry in "Sonarr|$SONARR_HOST_URL/ping" "Radarr|$RADARR_HOST_URL/ping" \
+      "Prowlarr|$PROWLARR_HOST_URL/ping" "autobrr|$AUTOBRR_HOST_URL/"; do
+      IFS='|' read -r app url <<<"$entry"
+      ready=0
+      for _ in $(seq 1 60); do
+        code="$(curl -q -sS --noproxy "*" -o /dev/null -w '%{http_code}' "$url" || true)"
+        if [[ "$code" == 200 || ( "$app" == autobrr && "$code" =~ ^(200|401|403)$ ) ]]; then
+          ready=1
+          break
+        fi
+        sleep 1
+      done
+      if (( ready == 0 )); then
+        mark "certification TLS trust $app" "FAIL" "service did not become ready after trust update"
+        status="FAIL"
+      fi
+    done
+    mark "certification TLS trust" "PASS" "task CA installed only in Compose project $COMPOSE_PROJECT_NAME"
+  else
+    mark "certification TLS trust" "FAIL" "app containers are outside the declared certification Compose project"
+    status="FAIL"
+  fi
+fi
 
 SONARR_API_KEY="${SONARR_API_KEY_OVERRIDE:-$(api_key_from_container "$SONARR_CONTAINER")}"
 RADARR_API_KEY="${RADARR_API_KEY_OVERRIDE:-$(api_key_from_container "$RADARR_CONTAINER")}"

@@ -76,7 +76,7 @@ docker volume create "$state_volume"
 docker run --rm \
   --mount "type=volume,source=$state_volume,target=/state" \
   --mount "type=bind,source=$state_export,target=/source,readonly" \
-  alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -ec 'cp -a /source/. /state/'
+  alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -ec 'cp -a /source/. /state/'
 docker compose -f deploy/docker/compose.yml up -d --build --force-recreate "$service"
 printf 'Keep the state export at %s until restore is verified.\n' "$state_export"
 ```

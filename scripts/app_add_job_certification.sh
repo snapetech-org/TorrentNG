@@ -75,7 +75,7 @@ cleanup() {
       -X DELETE "$PROWLARR_BASE_URL/api/v1/indexer/$INDEXER_ID" >/dev/null 2>&1 || true
   fi
   docker rm -f "$TRACKER_NAME" "$INDEXER_NAME" "$SEEDER_NAME" >/dev/null 2>&1 || true
-  docker run --rm -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
+  docker run --rm -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
     sh -c "rm -rf -- /downloads/$FIXTURE_DOWNLOAD_DIR" >/dev/null 2>&1 || true
   rm -f -- "$COOKIE_JAR" "$BODY" "$AUTH_BODY_FILE"
 }
@@ -147,7 +147,7 @@ fi
 docker run -d --rm --name "$TRACKER_NAME" --network "$NETWORK" lednerb/opentracker-docker >/dev/null
 mark "local tracker" "PASS" "$TRACKER_NAME on $NETWORK"
 
-docker run --rm --network "$NETWORK" -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -lc "
+docker run --rm --network "$NETWORK" -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -lc "
   apk add --no-cache mktorrent >/dev/null
   mkdir -p /downloads/$FIXTURE_DOWNLOAD_DIR/seed /downloads/$FIXTURE_DOWNLOAD_DIR/leech
   dd if=/dev/urandom of=/downloads/$FIXTURE_DOWNLOAD_DIR/seed/$FIXTURE_TITLE bs=$FIXTURE_BYTES count=1 status=none
@@ -167,11 +167,11 @@ docker run -d --rm --name "$INDEXER_NAME" --network "$NETWORK" \
 
 docker run -d --rm --name "$SEEDER_NAME" --network "$NETWORK" \
   -v "$DOWNLOADS_VOLUME:/downloads" \
-  alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -lc "apk add --no-cache transmission-cli >/dev/null && exec transmission-cli -w /downloads/$FIXTURE_DOWNLOAD_DIR/seed /downloads/$FIXTURE_DOWNLOAD_DIR/tng-fixture.torrent" >/dev/null
+  alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -lc "apk add --no-cache transmission-cli >/dev/null && exec transmission-cli -w /downloads/$FIXTURE_DOWNLOAD_DIR/seed /downloads/$FIXTURE_DOWNLOAD_DIR/tng-fixture.torrent" >/dev/null
 mark "stock seeder" "PASS" "$SEEDER_NAME seeding fixture"
 
 for _ in $(seq 1 30); do
-  if docker run --rm --network "$NETWORK" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf wget -qO /dev/null "http://$INDEXER_NAME:8082/api?t=caps" >/dev/null 2>&1; then
+  if docker run --rm --network "$NETWORK" alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf wget -qO /dev/null "http://$INDEXER_NAME:8082/api?t=caps" >/dev/null 2>&1; then
     mark "fixture Torznab" "PASS" "caps reachable"
     break
   fi

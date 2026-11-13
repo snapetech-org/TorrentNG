@@ -887,7 +887,7 @@ jobs:
             docker run --rm --entrypoint /bin/sh \
               -v "$log_volume:/var/log/rtorrent" \
               -v "$default_volume:/var/lib/torrentng" \
-              -v "$override_volume:/var/lib/rtorrentng" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
+              -v "$override_volume:/var/lib/rtorrentng" alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
               -c 'touch /var/log/rtorrent/rtorrent.log /var/lib/torrentng/cache.db /var/lib/rtorrentng/cache.db && chmod 0664 /var/log/rtorrent/rtorrent.log /var/lib/torrentng/cache.db /var/lib/rtorrentng/cache.db'
             docker run -d --name "$name" --network none --read-only \
               --tmpfs /tmp:rw,nosuid,nodev,size=1g \

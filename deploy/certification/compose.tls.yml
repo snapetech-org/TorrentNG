@@ -1,0 +1,22 @@
+services:
+  torrentng-cert-tls:
+    image: nginx@sha256:62ff2089abf5a9ed33bd232895bef5e22f7bb4b200675cec49a5ebc48e3d4ac8
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "127.0.0.1:${TNG_TLS_HOST_PORT:-18443}:443"
+    volumes:
+      - ../nginx/certification-tls.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${CERT_TLS_DIR:?CERT_TLS_DIR must point to generated test certificates}/server.crt:/etc/nginx/tls/server.crt:ro
+      - ${CERT_TLS_DIR:?CERT_TLS_DIR must point to generated test certificates}/server.key:/etc/nginx/tls/server.key:ro
+    depends_on:
+      - torrentng
+
+  cross-seed:
+    environment:
+      NODE_EXTRA_CA_CERTS: /etc/ssl/certs/torrentng-certification-ca.crt
+      TNG_API_TOKEN: "${TNG_API_TOKEN:-local-cert-api-token-20260904}"
+      TNG_CROSS_SEED_QBIT_HOST: https://torrentng-cert-tls
+    volumes:
+      - ${CERT_TLS_DIR:?CERT_TLS_DIR must point to generated test certificates}/ca.crt:/etc/ssl/certs/torrentng-certification-ca.crt:ro

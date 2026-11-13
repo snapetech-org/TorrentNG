@@ -63,6 +63,14 @@ derive_primary_stack_env() {
   port="$(mapped_port "$prowlarr" 9696)"; [[ -n "$port" ]] && export PROWLARR_HOST_URL="http://localhost:$port" PROWLARR_HOST_PORT="$port"
   port="$(mapped_port "$autobrr" 7474)"; [[ -n "$port" ]] && export AUTOBRR_HOST_URL="http://localhost:$port" AUTOBRR_HOST_PORT="$port"
   port="$(mapped_port "$cross_seed" 2468)"; [[ -n "$port" ]] && export CROSS_SEED_HOST_URL="http://localhost:$port" CROSS_SEED_HOST_PORT="$port"
+
+  local tls_proxy="${CERT_TLS_PROXY_CONTAINER:-${COMPOSE_PROJECT_NAME:-certification}-torrentng-cert-tls-1}"
+  port="$(mapped_port "$tls_proxy" 443)"
+  if [[ -n "$port" && -n "${CERT_TLS_DIR:-}" && -s "$CERT_TLS_DIR/ca.crt" ]]; then
+    export TNG_HOST_URL="https://localhost:$port" TNG_HOST_PORT="$port" TNG_TLS_HOST_PORT="$port"
+    export CURL_CA_BUNDLE="$CERT_TLS_DIR/ca.crt"
+    export CERT_TNG_CLIENT_HOST="torrentng-cert-tls" CERT_TNG_CLIENT_PORT=443 CERT_TNG_CLIENT_TLS=true
+  fi
 }
 
 {

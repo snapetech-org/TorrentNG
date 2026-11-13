@@ -161,10 +161,10 @@ remove_volume_path() {
   # These single-quoted commands are interpreted inside the Alpine container.
   # shellcheck disable=SC2016
   timeout --signal=TERM --kill-after=1s 30s \
-    docker run --rm -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -c 'rm -rf -- "$1"' sh "$path" >/dev/null 2>&1 || return 1
+    docker run --rm -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -c 'rm -rf -- "$1"' sh "$path" >/dev/null 2>&1 || return 1
   # shellcheck disable=SC2016
   if timeout --signal=TERM --kill-after=1s 30s \
-    docker run --rm -v "$DOWNLOADS_VOLUME:/downloads:ro" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -c 'test ! -e "$1"' sh "$path" >/dev/null 2>&1; then
+    docker run --rm -v "$DOWNLOADS_VOLUME:/downloads:ro" alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -c 'test ! -e "$1"' sh "$path" >/dev/null 2>&1; then
     return 0
   fi
   return 1
@@ -483,7 +483,7 @@ read_disk_bytes() {
   local path="$1" deadline="$2" result
   # The single-quoted command is interpreted inside the Alpine container.
   # shellcheck disable=SC2016
-  result="$(bounded_for_deadline "$deadline" docker run --rm -v "$DOWNLOADS_VOLUME:/downloads:ro" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
+  result="$(bounded_for_deadline "$deadline" docker run --rm -v "$DOWNLOADS_VOLUME:/downloads:ro" alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
     sh -c 'if [ -f "$1" ]; then wc -c < "$1"; else printf 0; fi' sh "$path" 2>/dev/null)" || return 1
   result="$(tr -d '[:space:]' <<<"$result")"
   [[ "$result" =~ ^[0-9]+$ ]] || return 1
@@ -492,7 +492,7 @@ read_disk_bytes() {
 
 read_file_sha256() {
   local path="$1" deadline="$2" digest
-  digest="$(bounded_for_deadline "$deadline" docker run --rm -v "$DOWNLOADS_VOLUME:/downloads:ro" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
+  digest="$(bounded_for_deadline "$deadline" docker run --rm -v "$DOWNLOADS_VOLUME:/downloads:ro" alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
     sha256sum "$path" 2>/dev/null | awk '{print $1}')" || return 1
   [[ "$digest" =~ ^[[:xdigit:]]{64}$ ]] || return 1
   printf '%s\n' "$digest"
@@ -585,7 +585,7 @@ fi
 
 DOCKER_RESOURCES_ATTEMPTED="1"
 bounded_command docker run -d --label "com.torrentng.transfer-churn.run=$FIXTURE_ID" \
-  --name "$TRACKER_NAME" --network "$COMPOSE_NETWORK" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
+  --name "$TRACKER_NAME" --network "$COMPOSE_NETWORK" alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
   sh -lc 'apk add --no-cache opentracker >/dev/null && exec opentracker -i 0.0.0.0 -p 6969 -P 6969' >/dev/null
 if wait_for_container_dns "$TRACKER_NAME" \
   && wait_for_container_http_response "http://$TRACKER_NAME:6969/announce"; then
@@ -603,10 +603,10 @@ mark "app runtime identity" "PASS" "torrentngd runs as $APP_RUNTIME_OWNER"
 
 # The single-quoted command is interpreted inside the Alpine container.
 # shellcheck disable=SC2016
-bounded_command docker run --rm -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -c 'mkdir -p -- "$1"' sh "/downloads/$CHURN_DOWNLOAD_DIR"
+bounded_command docker run --rm -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -c 'mkdir -p -- "$1"' sh "/downloads/$CHURN_DOWNLOAD_DIR"
 
 bounded_command docker run -d --label "com.torrentng.transfer-churn.run=$FIXTURE_ID" \
-  --name "$FILESERVER_NAME" --network "$COMPOSE_NETWORK" -v "$DOWNLOADS_VOLUME:/downloads:ro" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
+  --name "$FILESERVER_NAME" --network "$COMPOSE_NETWORK" -v "$DOWNLOADS_VOLUME:/downloads:ro" alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
   sh -lc "apk add --no-cache busybox-extras >/dev/null && exec httpd -f -p 8081 -h /downloads/$CHURN_DOWNLOAD_DIR" >/dev/null
 if wait_for_container_dns "$FILESERVER_NAME" \
   && wait_for_container_http_response "http://$FILESERVER_NAME:8081/"; then
@@ -625,7 +625,7 @@ for cycle in $(seq 1 "$CHURN_CYCLES"); do
   seeder="tng-churn-seeder-$FIXTURE_ID-$cycle"
   seeders+=("$seeder")
 
-  bounded_command docker run --rm --network "$COMPOSE_NETWORK" -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -lc "
+  bounded_command docker run --rm --network "$COMPOSE_NETWORK" -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -lc "
     set -e
     apk add --no-cache mktorrent >/dev/null
     mkdir -p /downloads/$CHURN_DOWNLOAD_DIR/$cycle/seed /downloads/$CHURN_DOWNLOAD_DIR/$cycle/leech
@@ -641,7 +641,7 @@ for cycle in $(seq 1 "$CHURN_CYCLES"); do
   }
 
   bounded_command docker run -d --label "com.torrentng.transfer-churn.run=$FIXTURE_ID" \
-    --name "$seeder" --network "$COMPOSE_NETWORK" -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
+    --name "$seeder" --network "$COMPOSE_NETWORK" -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
     sh -lc "apk add --no-cache transmission-cli >/dev/null && exec transmission-cli -M -et -w /downloads/$CHURN_DOWNLOAD_DIR/$cycle/seed /downloads/$CHURN_DOWNLOAD_DIR/$cycle/$torrent" >/dev/null
 
   fixture_url="http://$FILESERVER_NAME:8081/$cycle/$torrent"
@@ -703,7 +703,7 @@ for cycle in $(seq 1 "$PUBLIC_CYCLES"); do
   public_save_path="/downloads/$CHURN_DOWNLOAD_DIR/public/$cycle"
   # The public torrent writes as torrentngd, so prepare its cycle directory with that owner.
   # shellcheck disable=SC2016
-  bounded_command docker run --rm -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
+  bounded_command docker run --rm -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
     sh -c 'mkdir -p -- "$1" && chown "$2" "$1"' sh "$public_save_path" "$APP_RUNTIME_OWNER"
   code="$(curl -q -sS --noproxy "*" --connect-timeout 3 --max-time 10 -o "$BODY" -w '%{http_code}' -b "$COOKIE_JAR" \
     -F "urls=$PUBLIC_TORRENT_URL" \

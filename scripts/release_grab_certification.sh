@@ -6,16 +6,21 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/curl_policy.sh"
 ENV_FILE="${CERT_ENV_FILE:-$ROOT/deploy/certification/.env}"
 COMPOSE_FILE="${CERT_COMPOSE_FILE:-$ROOT/deploy/certification/compose.yml}"
+TLS_COMPOSE_FILE="${CERT_TLS_COMPOSE_FILE:-$ROOT/deploy/certification/compose.tls.yml}"
 PROJECT="${CERT_GRAB_PROJECT:-certgrab}"
-OUT="${1:-$ROOT/certification/reports/release-grab-$(date -u +%Y%m%dT%H%M%SZ).md}"
-WORK_DIR="$(mktemp -d)"
+REPORT_DIR="${REPORT_DIR:-$ROOT/certification/reports}"
+OUT="${1:-$REPORT_DIR/release-grab-$(date -u +%Y%m%dT%H%M%SZ).md}"
+WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/torrentng-release-grab.XXXXXX")"
 
-mkdir -p "$(dirname "$OUT")"
+mkdir -p "$(dirname "$OUT")" "$REPORT_DIR"
 
 cleanup() {
-  if [[ "${CERT_GRAB_KEEP_STACK:-0}" != "1" ]]; then
-    docker compose --env-file "$WORK_DIR/env" -p "$PROJECT" -f "$COMPOSE_FILE" down -v --remove-orphans >/dev/null 2>&1 || true
+  if [[ "${CERT_GRAB_KEEP_STACK:-0}" == "1" ]]; then
+    echo "kept certification stack and TLS material under $WORK_DIR" >&2
+    return
   fi
+  docker compose --env-file "$WORK_DIR/env" -p "$PROJECT" \
+    -f "$COMPOSE_FILE" -f "$TLS_COMPOSE_FILE" down -v --remove-orphans >/dev/null 2>&1 || true
   rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
@@ -26,8 +31,17 @@ else
   cp "$ROOT/deploy/certification/.env.example" "$WORK_DIR/env"
 fi
 
+TLS_DIR="$WORK_DIR/tls"
+"$ROOT/scripts/prepare_certification_tls.sh" "$TLS_DIR"
+
 cat >> "$WORK_DIR/env" <<EOF
 
+CERT_TLS_DIR="$TLS_DIR"
+TNG_TLS_HOST_PORT=${CERT_GRAB_TLS_HOST_PORT:-38443}
+CERT_TNG_CLIENT_HOST=torrentng-cert-tls
+CERT_TNG_CLIENT_PORT=443
+CERT_TNG_CLIENT_TLS=true
+TNG_CROSS_SEED_QBIT_HOST=https://torrentng-cert-tls
 TNG_HOST_PORT=${CERT_GRAB_TNG_HOST_PORT:-38080}
 TNG_INCOMING_PORT=${CERT_GRAB_TNG_INCOMING_PORT:-52000}
 SONARR_HOST_PORT=${CERT_GRAB_SONARR_HOST_PORT:-38989}
@@ -46,6 +60,13 @@ set +a
 
 export CERT_ENV_FILE="$WORK_DIR/env"
 export CERT_COMPOSE_FILE="$COMPOSE_FILE"
+export CERT_TLS_COMPOSE_FILE="$TLS_COMPOSE_FILE"
+export CERT_TLS_DIR="$TLS_DIR"
+export CERT_TNG_CLIENT_HOST="${CERT_TNG_CLIENT_HOST:-torrentng-cert-tls}"
+export CERT_TNG_CLIENT_PORT="${CERT_TNG_CLIENT_PORT:-443}"
+export CERT_TNG_CLIENT_TLS="${CERT_TNG_CLIENT_TLS:-true}"
+export COMPOSE_PROJECT_NAME="$PROJECT"
+export CURL_CA_BUNDLE="$TLS_DIR/ca.crt"
 export CERT_DOCKER_NETWORK="${PROJECT}_default"
 export CERT_DOWNLOADS_VOLUME="${PROJECT}_downloads"
 export TNG_CONTAINER="${PROJECT}-torrentng-1"
@@ -53,7 +74,7 @@ export SONARR_CONTAINER="${PROJECT}-sonarr-1"
 export RADARR_CONTAINER="${PROJECT}-radarr-1"
 export PROWLARR_CONTAINER="${PROJECT}-prowlarr-1"
 export AUTOBRR_CONTAINER="${PROJECT}-autobrr-1"
-export TNG_HOST_URL="http://localhost:${TNG_HOST_PORT:-38080}"
+export TNG_HOST_URL="https://localhost:${TNG_TLS_HOST_PORT:-38443}"
 export SONARR_HOST_URL="http://localhost:${SONARR_HOST_PORT:-38989}"
 export RADARR_HOST_URL="http://localhost:${RADARR_HOST_PORT:-37878}"
 export PROWLARR_HOST_URL="http://localhost:${PROWLARR_HOST_PORT:-39696}"
@@ -113,7 +134,8 @@ wait_for_stack() {
   echo "|---|---|---|"
 } > "$OUT"
 
-docker compose --env-file "$WORK_DIR/env" -p "$PROJECT" -f "$COMPOSE_FILE" up -d --build
+docker compose --env-file "$WORK_DIR/env" -p "$PROJECT" \
+  -f "$COMPOSE_FILE" -f "$TLS_COMPOSE_FILE" up -d --build
 
 if wait_for_stack; then
   mark "isolated stack readiness" "PASS" "$OUT"
@@ -125,11 +147,11 @@ else
   exit 1
 fi
 
-run_gate "live API/app readiness" "$ROOT/certification/reports/live-cert-${PROJECT}-$(date -u +%Y%m%dT%H%M%SZ).md" "$ROOT/scripts/live_certification.sh"
-run_gate "client configuration" "$ROOT/certification/reports/client-config-${PROJECT}-$(date -u +%Y%m%dT%H%M%SZ).md" "$ROOT/scripts/configure_certification_clients.sh"
-run_gate "Prowlarr release grab/transfer" "$ROOT/certification/reports/app-add-job-${PROJECT}-$(date -u +%Y%m%dT%H%M%SZ).md" "$ROOT/scripts/app_add_job_certification.sh"
-ARR_GRAB=1 run_gate "Sonarr/Radarr release grab/transfer" "$ROOT/certification/reports/arr-app-${PROJECT}-$(date -u +%Y%m%dT%H%M%SZ).md" "$ROOT/scripts/arr_app_certification.sh"
-run_gate "autobrr downloader/filter/action" "$ROOT/certification/reports/autobrr-${PROJECT}-$(date -u +%Y%m%dT%H%M%SZ).md" "$ROOT/scripts/autobrr_certification.sh"
+run_gate "live API/app readiness" "$REPORT_DIR/live-cert-${PROJECT}-$(date -u +%Y%m%dT%H%M%SZ).md" "$ROOT/scripts/live_certification.sh"
+run_gate "client configuration" "$REPORT_DIR/client-config-${PROJECT}-$(date -u +%Y%m%dT%H%M%SZ).md" "$ROOT/scripts/configure_certification_clients.sh"
+run_gate "Prowlarr release grab/transfer" "$REPORT_DIR/app-add-job-${PROJECT}-$(date -u +%Y%m%dT%H%M%SZ).md" "$ROOT/scripts/app_add_job_certification.sh"
+ARR_GRAB=1 run_gate "Sonarr/Radarr release grab/transfer" "$REPORT_DIR/arr-app-${PROJECT}-$(date -u +%Y%m%dT%H%M%SZ).md" "$ROOT/scripts/arr_app_certification.sh"
+run_gate "autobrr downloader/filter/action" "$REPORT_DIR/autobrr-${PROJECT}-$(date -u +%Y%m%dT%H%M%SZ).md" "$ROOT/scripts/autobrr_certification.sh"
 
 {
   echo
