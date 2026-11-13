@@ -21,8 +21,8 @@ services:
       - no-new-privileges:true
     ports:
       - "127.0.0.1:${TNG_HOST_PORT:-18080}:8080"
-      - "${TNG_INCOMING_PORT:-50000}:50000"
-      - "${TNG_INCOMING_PORT:-50000}:50000/udp"
+      - "127.0.0.1:${TNG_INCOMING_PORT:-50000}:50000"
+      - "127.0.0.1:${TNG_INCOMING_PORT:-50000}:50000/udp"
     volumes:
       - ./sidecar.config.toml:/config/config.toml:ro
       - tng-data:/var/lib/torrentng
