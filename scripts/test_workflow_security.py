@@ -428,6 +428,34 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567", security_audit)
         self.assertIn("run: ./scripts/security-scan-local.sh --trivy-only --ci", security_audit)
 
+    def test_release_images_are_scanned_for_cves_before_smoke_and_publication(self) -> None:
+        release = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+        image_job = release.split("  linux-release-assets:\n", 1)[1].split(
+            "  publish:\n", 1
+        )[0]
+        self.assertIn("TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2", image_job)
+        self.assertIn(
+            "uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567",
+            image_job,
+        )
+        scan = image_job.split(
+            "- name: Scan release Docker images for HIGH and CRITICAL CVEs", 1
+        )[1].split("- name:", 1)[0]
+        for image in (
+            '"torrentng-native:${RELEASE_TAG}"',
+            '"torrentng:${RELEASE_TAG}"',
+            '"torrentng-phase1:${RELEASE_TAG}"',
+        ):
+            self.assertIn(image, scan)
+        self.assertIn("--severity HIGH,CRITICAL", scan)
+        self.assertIn("--exit-code 1", scan)
+        self.assertIn("status=1", scan)
+        self.assertIn("name: release-image-vulnerability-scans-${{ github.run_id }}", image_job)
+        self.assertLess(
+            image_job.index("Scan release Docker images"),
+            image_job.index("Smoke native image"),
+        )
+
     def test_release_security_scans_do_not_run_on_tags(self) -> None:
         for workflow_name in (
             "semgrep-community.yml",

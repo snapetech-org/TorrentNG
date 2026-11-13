@@ -692,6 +692,7 @@ jobs:
     needs: [validate-release-tag, native-quality, msrv-check, msrv-check-sidecar, security-audit, native-release-smoke]
     env:
       RELEASE_TAG: ${{ needs.validate-release-tag.outputs.tag }}
+      TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2
     permissions:
       contents: read
       packages: write
@@ -764,6 +765,46 @@ jobs:
           docker build --pull --network host --build-arg "TORRENTNG_SOURCE_REVISION=$source_revision" -f deploy/native/Dockerfile -t "torrentng-native:${RELEASE_TAG}" .
           docker build --pull --network host --build-arg "TORRENTNG_SOURCE_REVISION=$source_revision" -f deploy/docker/Dockerfile -t "torrentng:${RELEASE_TAG}" .
           docker build --pull --network host --build-arg "TORRENTNG_SOURCE_REVISION=$source_revision" -f deploy/docker/Dockerfile.phase1 -t "torrentng-phase1:${RELEASE_TAG}" .
+
+      - name: Install Trivy for release image scans
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # pinned action
+        with:
+          version: latest
+          token: ${{ github.token }}
+
+      - name: Scan release Docker images for HIGH and CRITICAL CVEs
+        env:
+          RELEASE_TAG: ${{ needs.validate-release-tag.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          images=(
+            "torrentng-native:${RELEASE_TAG}"
+            "torrentng:${RELEASE_TAG}"
+            "torrentng-phase1:${RELEASE_TAG}"
+          )
+          for image in "${images[@]}"; do
+            image_name="${image%%:*}"
+            report="trivy-image-${image_name}.json"
+            if trivy image --timeout 20m --scanners vuln --severity HIGH,CRITICAL \
+              --exit-code 1 --format json --output "$report" "$image"; then
+              printf 'No HIGH or CRITICAL CVEs in %s.\n' "$image"
+            else
+              printf 'Trivy found HIGH or CRITICAL CVEs in %s, or could not complete the scan.\n' "$image" >&2
+              status=1
+            fi
+          done
+          exit "$status"
+
+      - name: Retain release image vulnerability reports
+        if: always() && hashFiles('trivy-image-*.json') != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-image-vulnerability-scans-${{ github.run_id }}
+          path: trivy-image-*.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Smoke native image with authenticated read-only runtime
         env:
