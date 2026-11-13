@@ -1884,7 +1884,12 @@ public_bridge_peers() {
   if ip="$(container_ip rtorrent 2>/dev/null)" && [[ -n "$ip" ]]; then
     peers+=("$ip:6885")
   fi
-  (IFS='|'; printf '%s\n' "${peers[*]}")
+  local separator="" peer
+  for peer in "${peers[@]}"; do
+    printf '%s%s' "$separator" "$peer"
+    separator='|'
+  done
+  printf '\n'
 }
 
 bridge_public_reference_peers_to_rust() {

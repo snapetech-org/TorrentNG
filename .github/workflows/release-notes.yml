@@ -58,7 +58,8 @@ jobs:
           if [[ -z "$base" ]]; then
             base="$(git rev-parse --verify "${head}^")"
           fi
-          python3 scripts/release_notes.py check \
+          commit_body="$(git log -1 --format=%B "$head")"
+          PR_BODY="$commit_body" python3 scripts/release_notes.py check \
             --base "$base" \
             --head "$head"
           python3 scripts/release_notes.py preview \

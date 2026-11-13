@@ -837,7 +837,7 @@ jobs:
     timeout-minutes: 60
     runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-candidate-artifact"]}}', github.run_id)) }}
     env:
-      CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+      CANDIDATE_SHA: ${{ github.sha }}
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -861,7 +861,7 @@ jobs:
       - name: Checkout exact candidate SHA
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.candidate_sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Verify exact main candidate and runner architecture
@@ -1013,7 +1013,7 @@ jobs:
         id: upload-candidate
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: torrentng-candidate-linux-x64-${{ inputs.candidate_sha }}
+          name: torrentng-candidate-linux-x64-${{ github.sha }}
           path: ${{ env.BUILD_BUNDLE }}
           if-no-files-found: error
           retention-days: 30

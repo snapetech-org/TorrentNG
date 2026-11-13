@@ -47,7 +47,9 @@ class CandidateArtifactRouteTests(unittest.TestCase):
         self.assertNotIn("ubuntu-latest", runner.group("runner"))
 
         for build_step in (
-            "ref: ${{ inputs.candidate_sha }}",
+            "CANDIDATE_SHA: ${{ github.sha }}",
+            "ref: ${{ github.sha }}",
+            "name: torrentng-candidate-linux-x64-${{ github.sha }}",
             '[[ "$candidate_sha" == "${GITHUB_SHA,,}" ]]',
             'docker build --pull --network host',
             "-f deploy/docker/Dockerfile",
@@ -57,6 +59,8 @@ class CandidateArtifactRouteTests(unittest.TestCase):
             "retention-days: 30",
         ):
             self.assertIn(build_step, body)
+
+        self.assertNotIn("ref: ${{ inputs.candidate_sha }}", body)
 
         lowered = body.lower()
         self.assertNotIn("docker push", lowered)

@@ -179,7 +179,8 @@ finalize_report() {
     mark "task resources removed" "PASS" "category, named containers, and run-scoped volume directory verified clean" || status="FAIL"
   else
     local detail
-    detail="$(IFS=', '; echo "${cleanup_failures[*]}")"
+    printf -v detail '%s, ' "${cleanup_failures[@]}"
+    detail="${detail%, }"
     mark "task resource cleanup" "FAIL" "$detail" || status="FAIL"
   fi
   [[ "$REPORT_WRITE_FAILED" == "1" ]] && status="FAIL"

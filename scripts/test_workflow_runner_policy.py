@@ -158,7 +158,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             if name != "webui":
                 self.assertRegex(
                     condition.group("condition"),
-                    r"inputs\.candidate_sha == ''\s*&&\s*\(\s*\(\(",
+                    r"inputs\.candidate_sha == ''\s*&&\s*\(\s*\(",
                 )
                 self.assertTrue(condition.group("condition").rstrip().endswith(")"), name)
 
@@ -173,7 +173,8 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             if workflow.name == "ci.yml":
                 continue
             if workflow.name == PUBLIC_FORK_WORKFLOW:
-                self.assertIn('"group":"public-fork-jit"', source)
+                self.assertIn("group: public-fork-jit", source)
+                self.assertIn("labels: [self-hosted, linux, x64, public-pr-torrentng", source)
                 self.assertNotIn("ubuntu-latest", source)
                 self.assertNotIn("ng-shared-main-jit", source)
                 self.assertIn("contents: read", source)
@@ -209,28 +210,19 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                     if workflow.name == "release.yml":
                         self.assertNotIn("workflow_dispatch", expression)
                         self.assertNotIn("ubuntu-latest", expression)
-                        if "matrix.os == 'windows'" in expression:
+                        if "strategy.job-index" in expression:
+                            self.assertIn("matrix.os == 'windows-x64'", expression)
+                            self.assertIn("matrix.os == 'macos-arm64'", expression)
+                            self.assertIn("matrix.os == 'linux-arm64'", expression)
                             self.assertIn('"group":"packer-windows"', expression)
-                            self.assertIn('"on-demand"', expression)
-                            self.assertIn('"TorrentNG"', expression)
-                            self.assertIn("strategy.job-index", expression)
-                            self.assertRegex(
-                                expression,
-                                r"gha-\{0\}-\{1\}-(?:native-binaries|desktop-bundles)",
-                            )
-                            self.assertIn("|| matrix.os == 'macos-14'", expression)
-                        elif "matrix.os == 'macos-14'" in expression:
                             self.assertIn('"group":"private-apple-builds"', expression)
                             self.assertIn('"on-demand"', expression)
                             self.assertIn('"TorrentNG"', expression)
-                            self.assertIn("strategy.job-index", expression)
                             self.assertRegex(
                                 expression,
                                 r"gha-\{0\}-\{1\}-(?:native-binaries|desktop-bundles)",
                             )
-                            self.assertNotIn("matrix.os }}", expression)
                         else:
-                            self.assertNotIn("||", expression)
                             self.assertIn("fromJSON(format(", expression)
                     else:
                         self.assertNotIn("ubuntu-latest", expression)
@@ -253,12 +245,17 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             and "torrentng-transfer-perf" in line
         ]
         self.assertEqual(
-            dedicated_hardware_lines,
-            ["runs-on: [self-hosted, linux, x64, torrentng-transfer-perf]"],
+            len(dedicated_hardware_lines),
+            1,
         )
+        self.assertIn('"group":"ng-shared-main-jit"', dedicated_hardware_lines[0])
+        self.assertIn('"torrentng-transfer-perf"', dedicated_hardware_lines[0])
+        self.assertIn('"gha-{0}-transfer-rebuild-dedicated-hardware"', dedicated_hardware_lines[0])
         self.assertRegex(
             source,
             r"(?m)^\s*if: github\.ref == 'refs/heads/main' && "
+            r"inputs\.action == 'transfer-rebuild' && "
+            r"inputs\.runner_pool == 'private' && "
             r"inputs\.run_dedicated_hardware == true\s*$",
         )
         self.assertRegex(
@@ -277,13 +274,9 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
 
     def test_public_fork_validation_uses_the_isolated_no_secret_jit_pool(self) -> None:
         source = (WORKFLOW_DIR / PUBLIC_FORK_WORKFLOW).read_text(encoding="utf-8")
-        runs_on = next(
-            line.strip()
-            for line in source.splitlines()
-            if line.strip().startswith("runs-on:")
-        )
-        self.assertIn('"group":"public-fork-jit"', runs_on)
-        self.assertIn("self-hosted", runs_on)
+        self.assertIn("group: public-fork-jit", source)
+        self.assertIn("labels: [self-hosted, linux, x64, public-pr-torrentng", source)
+        self.assertIn("self-hosted", source)
         self.assertNotIn("ubuntu-latest", source)
         self.assertNotIn("ng-shared-main-jit", source)
         self.assertIn(
@@ -296,19 +289,24 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         caller = (WORKFLOW_DIR / "public-fork-pr.yml").read_text(encoding="utf-8")
         self.assertRegex(
             caller,
-            r"(?ms)^  pull_request_target:\n    branches:\n      - main\n    types:\n      - labeled\n",
+            r"(?m)^  pull_request:\n    types: \[labeled\]\n    branches: \[main\]$",
         )
-        self.assertIn("action:fork-validation", caller)
-        self.assertIn("runner_pool: public", caller)
-        self.assertIn("action:fork-validation", caller)
+        self.assertIn("action:ci", caller)
+        self.assertIn("runner_pool:", caller)
         self.assertIn("pool:public", caller)
-        self.assertIn("uses: ./.github/workflows/fork-safe-validation.yml", caller)
-        self.assertNotIn("@7cb3c216a2473fd6db8ec07f70be209ac4fefe46", caller)
+        self.assertIn("pool:hybrid", caller)
+        self.assertRegex(
+            caller,
+            r"uses: snapetech-org/TorrentNG/\.github/workflows/fork-safe-validation\.yml@"
+            r"[0-9a-f]{40}",
+        )
+        self.assertNotIn("uses: ./.github/workflows/fork-safe-validation.yml", caller)
         self.assertIn("github.event.pull_request.head.repo.fork == true", caller)
         self.assertIn("github.event.pull_request.base.ref == 'main'", caller)
-        self.assertIn("inputs.pr_head_sha", source)
+        self.assertIn("pr_head_sha:", source)
+        self.assertIn("ref: ${{ inputs.pr_head_sha }}", source)
         self.assertIn("repository: ${{ inputs.pr_head_repo }}", source)
-        self.assertIn("pull_request_target", source + caller)
+        self.assertNotIn("pull_request_target", source + caller)
 
     def test_windows_smoke_uses_the_private_packer_runner(self) -> None:
         source = (WORKFLOW_DIR / "windows-smoke.yml").read_text(encoding="utf-8")

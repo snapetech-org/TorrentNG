@@ -191,9 +191,12 @@ class WorkflowSecurityTests(unittest.TestCase):
             and "torrentng-transfer-perf" in line
         ]
         self.assertEqual(
-            dedicated_hardware_lines,
-            ["runs-on: [self-hosted, linux, x64, torrentng-transfer-perf]"],
+            len(dedicated_hardware_lines),
+            1,
         )
+        self.assertIn('"group":"ng-shared-main-jit"', dedicated_hardware_lines[0])
+        self.assertIn('"torrentng-transfer-perf"', dedicated_hardware_lines[0])
+        self.assertIn('"gha-{0}-transfer-rebuild-dedicated-hardware"', dedicated_hardware_lines[0])
         self.assertRegex(
             source,
             r"(?m)^\s*if: github\.ref == 'refs/heads/main' && "
@@ -219,7 +222,7 @@ class WorkflowSecurityTests(unittest.TestCase):
         for workflow_path in WORKFLOWS.glob("*.y*"):
             source = workflow_path.read_text(encoding="utf-8")
             if workflow_path.name == "fork-safe-validation.yml":
-                self.assertIn('"group":"public-fork-jit"', source)
+                self.assertIn("group: public-fork-jit", source)
                 self.assertIn("self-hosted", source)
                 self.assertNotIn("ubuntu-latest", source)
                 self.assertNotIn("ng-shared-main-jit", source)
@@ -229,8 +232,10 @@ class WorkflowSecurityTests(unittest.TestCase):
                 )
                 self.assertIn("contents: read", source)
                 self.assertNotIn("secrets:", source)
-                self.assertIn("pull_request_target", source)
-                self.assertIn("inputs.runner_pool == 'public'", source)
+                self.assertIn("workflow_call:", source)
+                self.assertIn(
+                    "inputs.runner_pool == 'public' || inputs.runner_pool == 'hybrid'", source
+                )
                 continue
             if workflow_path.name == TRANSFER_HARDWARE_WORKFLOW:
                 self.assertIn('"group":"ng-shared-main-jit"', source)
@@ -245,7 +250,9 @@ class WorkflowSecurityTests(unittest.TestCase):
                 self.assertIn('"TorrentNG"', source)
                 self.assertIn("gha-{0}-smoke", source)
                 self.assertNotIn("runs-on: windows-latest", source)
-                self.assertIn("scripts/enable-msvc-environment.ps1", source)
+                self.assertIn(
+                    "scripts/enable-msvc-environment.ps1", source.replace("\\", "/")
+                )
                 continue
             if workflow_path.name in {
                 "release-notes.yml",
@@ -266,28 +273,19 @@ class WorkflowSecurityTests(unittest.TestCase):
                     if workflow_path.name == "release.yml":
                         self.assertNotIn("workflow_dispatch", expression)
                         self.assertNotIn("ubuntu-latest", expression)
-                        if "matrix.os == 'windows'" in expression:
+                        if "strategy.job-index" in expression:
+                            self.assertIn("matrix.os == 'windows-x64'", expression)
+                            self.assertIn("matrix.os == 'macos-arm64'", expression)
+                            self.assertIn("matrix.os == 'linux-arm64'", expression)
                             self.assertIn('"group":"packer-windows"', expression)
-                            self.assertIn('"on-demand"', expression)
-                            self.assertIn('"TorrentNG"', expression)
-                            self.assertIn("strategy.job-index", expression)
-                            self.assertRegex(
-                                expression,
-                                r"gha-\{0\}-\{1\}-(?:native-binaries|desktop-bundles)",
-                            )
-                            self.assertIn("|| matrix.os == 'macos-14'", expression)
-                        elif "matrix.os == 'macos-14'" in expression:
                             self.assertIn('"group":"private-apple-builds"', expression)
                             self.assertIn('"on-demand"', expression)
                             self.assertIn('"TorrentNG"', expression)
-                            self.assertIn("strategy.job-index", expression)
                             self.assertRegex(
                                 expression,
                                 r"gha-\{0\}-\{1\}-(?:native-binaries|desktop-bundles)",
                             )
-                            self.assertNotIn("matrix.os }}", expression)
                         else:
-                            self.assertNotIn("||", expression)
                             self.assertIn("fromJSON(format(", expression)
                     else:
                         self.assertNotIn("ubuntu-latest", expression)
@@ -364,7 +362,27 @@ class WorkflowSecurityTests(unittest.TestCase):
             ]
             self.assertTrue(checkout_lines, workflow_name)
             for index in checkout_lines:
-                block = "\n".join(lines[index : index + 6])
+                line_indent = len(lines[index]) - len(lines[index].lstrip())
+                step_indent = (
+                    line_indent
+                    if lines[index].lstrip().startswith("-")
+                    else line_indent - 2
+                )
+                start = index
+                if step_indent != line_indent:
+                    while start >= 0:
+                        match = re.match(r"^(?P<indent>\s*)-\s+", lines[start])
+                        if match and len(match.group("indent")) == step_indent:
+                            break
+                        start -= 1
+                self.assertGreaterEqual(start, 0, f"{workflow_name}:{index + 1}")
+                end = index + 1
+                while end < len(lines):
+                    match = re.match(r"^(?P<indent>\s*)-\s+", lines[end])
+                    if match and len(match.group("indent")) == step_indent:
+                        break
+                    end += 1
+                block = "\n".join(lines[start:end])
                 self.assertIn("persist-credentials: false", block, f"{workflow_name}:{index + 1}")
 
     def test_untrusted_values_are_not_interpolated_into_shell(self) -> None:
@@ -413,8 +431,8 @@ class WorkflowSecurityTests(unittest.TestCase):
 
         self.assertIn("target: aarch64-unknown-linux-gnu", native_job)
         self.assertIn("target: x86_64-pc-windows-msvc", native_job)
-        self.assertIn("gcc-aarch64-linux-gnu", native_job)
-        self.assertIn("scripts/enable-msvc-environment.ps1", native_job)
+        self.assertIn('"labels":["self-hosted","linux","arm64","ng-shared-main-torrentng"', native_job)
+        self.assertIn("scripts/enable-msvc-environment.ps1", native_job.replace("\\", "/"))
         self.assertNotIn("x86_64-pc-windows-gnu", native_job)
 
         publish_job = release.split("  publish:\n", 1)[1]
