@@ -661,7 +661,7 @@ These values control the qBittorrent-compatible API identity presented to automa
 |---|---|---|---|
 | `qbittorrent_version` | `5.0.0` | `TNG_QBITTORRENT_VERSION` | Response for `/api/v2/app/version` |
 | `qbittorrent_webapi_version` | `2.11.0` | `TNG_QBITTORRENT_WEBAPI_VERSION` | Response for `/api/v2/app/webapiVersion` |
-| `qbittorrent_build_libtorrent` | `0.16.11` | `TNG_QBITTORRENT_BUILD_LIBTORRENT` | `libtorrent` value in `/api/v2/app/buildInfo` |
+| `qbittorrent_build_libtorrent` | `0.16.28` | `TNG_QBITTORRENT_BUILD_LIBTORRENT` | `libtorrent` value in `/api/v2/app/buildInfo` |
 | `qbittorrent_build_qt` | `6.7.0` | `TNG_QBITTORRENT_BUILD_QT` | `qt` value in `/api/v2/app/buildInfo` |
 
 Use these only for lab compatibility testing. Tracker-facing identity is still controlled by the underlying rTorrent build and `TNG_USER_AGENT` support.
@@ -814,7 +814,7 @@ trust_proxy_header = false
 [identity]
 qbittorrent_version = "5.0.0"
 qbittorrent_webapi_version = "2.11.0"
-qbittorrent_build_libtorrent = "0.16.11"
+qbittorrent_build_libtorrent = "0.16.28"
 qbittorrent_build_qt = "6.7.0"
 
 [logging]

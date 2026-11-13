@@ -303,6 +303,8 @@ class CgroupCounterTests(unittest.TestCase):
 
         compose = benchmark.CURRENT_RTORRENT_COMPOSE_FILE.read_text()
         dockerfile = (benchmark.ROOT / "certification/benchmarks/rtorrent-current/Dockerfile").read_text()
+        self.assertEqual(benchmark.CURRENT_RTORRENT_VERSION, "v0.16.28")
+        self.assertEqual(benchmark.CURRENT_LIBTORRENT_VERSION, "v0.16.28")
         self.assertIn(benchmark.CURRENT_RTORRENT_COMMIT, compose)
         self.assertIn(benchmark.CURRENT_LIBTORRENT_COMMIT, compose)
         self.assertIn(benchmark.CURRENT_RTORRENT_COMMIT, dockerfile)

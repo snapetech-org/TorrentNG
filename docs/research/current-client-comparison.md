@@ -5,7 +5,10 @@
 The latest release-default screen compared TorrentNG with current qBittorrent,
 Transmission, Deluge, and rTorrent builds in three randomized rounds. Every
 client sent the same locally seeded 64 MiB fixture, and all 15 leecher copies
-passed SHA-256 verification.
+passed SHA-256 verification. The source-built rTorrent measurement used
+version 0.16.26. TorrentNG now bundles upstream rTorrent/libtorrent 0.16.28;
+the measured row below remains tied to 0.16.26 and is not a current-version
+performance comparison.
 
 TorrentNG has **not reached CPU or anonymous-memory parity with rTorrent**.
 Across the three runs, TorrentNG used a median 4.17 CPU-s/GiB over the full

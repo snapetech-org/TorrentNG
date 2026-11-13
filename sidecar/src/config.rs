@@ -304,7 +304,7 @@ impl Default for IdentityConfig {
         Self {
             qbittorrent_version: "5.0.0".to_owned(),
             qbittorrent_webapi_version: "2.11.0".to_owned(),
-            qbittorrent_build_libtorrent: "0.16.11".to_owned(),
+            qbittorrent_build_libtorrent: "0.16.28".to_owned(),
             qbittorrent_build_qt: "6.7.0".to_owned(),
         }
     }

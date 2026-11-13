@@ -685,6 +685,14 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("type: RuntimeDefault", statefulset)
         self.assertIn("automountServiceAccountToken: false", statefulset)
 
+    def test_qbittorrent_compatibility_build_info_matches_packaged_libtorrent(self) -> None:
+        config = (ROOT / "sidecar/src/config.rs").read_text(encoding="utf-8")
+        self.assertIn('qbittorrent_build_libtorrent: "0.16.28".to_owned()', config)
+        for filename in ("deploy/docker/compose.yml", "deploy/certification/compose.yml"):
+            compose = (ROOT / filename).read_text(encoding="utf-8")
+            self.assertIn('TNG_QBITTORRENT_BUILD_LIBTORRENT: "${TNG_QBITTORRENT_BUILD_LIBTORRENT:-0.16.28}"', compose)
+            self.assertNotIn("0.16.11", compose)
+
     def test_rtorrent_builds_pin_the_current_upstream_pair_and_local_patches(self) -> None:
         dockerfile = (ROOT / "deploy/docker/Dockerfile").read_text(encoding="utf-8")
         phase1 = (ROOT / "deploy/docker/Dockerfile.phase1").read_text(encoding="utf-8")

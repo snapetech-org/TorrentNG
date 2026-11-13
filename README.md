@@ -81,7 +81,10 @@ docker compose down unless you intend to delete those volumes.
 
 TorrentNG is pre-1.0; settings and APIs can change. The latest comparison
 against qBittorrent, Transmission, Deluge, and rTorrent used three randomized
-rounds of local, hash-verified seeding. All 15 transfers passed. The current
+rounds of local, hash-verified seeding. All 15 transfers passed. The
+rTorrent row records the measured 0.16.26 build; this release now bundles
+upstream 0.16.28, and those performance measurements have not been
+relabeled or repeated for the newer build. The current
 build is still above rTorrent on CPU and cgroup anonymous memory. It used less
 anonymous memory than Transmission and Deluge, and was near qBittorrent.
 
