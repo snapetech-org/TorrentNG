@@ -35,7 +35,6 @@ impl Client {
                     hash.into(),
                     "".into(),
                     "t.url=".into(),
-                    "t.id=".into(),
                     "t.group=".into(),
                     "t.is_enabled=".into(),
                     "t.is_open=".into(),
@@ -85,26 +84,29 @@ fn parse_tracker_rows(rows: Vec<XmlValue>) -> Result<Vec<RawTracker>> {
     let mut out = Vec::with_capacity(rows.len());
     for (idx, row) in rows.into_iter().enumerate() {
         let f = row.try_into_array()?;
-        if f.len() < 15 {
+        if f.len() < 14 {
             bail!("rTorrent tracker row {idx} returned {} fields", f.len());
         }
         out.push(RawTracker {
             url: required_url(&f, 0)?,
-            id: required_nonnegative_i64(&f, 1, "t.id")?,
-            group: required_nonnegative_i64(&f, 2, "t.group")?,
+            // rTorrent's `t.id` is an opaque tracker-session string. The qBittorrent
+            // API instead requires a numeric row identifier, so expose the stable
+            // row index from this `t.multicall` snapshot.
+            id: idx as i64,
+            group: required_nonnegative_i64(&f, 1, "t.group")?,
             group_index: idx as i64,
-            is_enabled: required_bool(&f, 3, "t.is_enabled")?,
-            is_open: required_bool(&f, 4, "t.is_open")?,
-            is_extra_tracker: required_bool(&f, 5, "t.is_extra_tracker")?,
-            activity_time_last: required_i64(&f, 6, "t.activity_time_last")?,
-            activity_time_next: required_i64(&f, 7, "t.activity_time_next")?,
-            min_interval: required_i64(&f, 8, "t.min_interval")?,
-            normal_interval: required_i64(&f, 9, "t.normal_interval")?,
-            failed_counter: required_nonnegative_i64(&f, 10, "t.failed_counter")?,
-            success_counter: required_nonnegative_i64(&f, 11, "t.success_counter")?,
-            scrape_incomplete: required_nonnegative_i64(&f, 12, "t.scrape_incomplete")?,
-            scrape_complete: required_nonnegative_i64(&f, 13, "t.scrape_complete")?,
-            scrape_downloaded: required_nonnegative_i64(&f, 14, "t.scrape_downloaded")?,
+            is_enabled: required_bool(&f, 2, "t.is_enabled")?,
+            is_open: required_bool(&f, 3, "t.is_open")?,
+            is_extra_tracker: required_bool(&f, 4, "t.is_extra_tracker")?,
+            activity_time_last: required_i64(&f, 5, "t.activity_time_last")?,
+            activity_time_next: required_i64(&f, 6, "t.activity_time_next")?,
+            min_interval: required_i64(&f, 7, "t.min_interval")?,
+            normal_interval: required_i64(&f, 8, "t.normal_interval")?,
+            failed_counter: required_nonnegative_i64(&f, 9, "t.failed_counter")?,
+            success_counter: required_nonnegative_i64(&f, 10, "t.success_counter")?,
+            scrape_incomplete: required_nonnegative_i64(&f, 11, "t.scrape_incomplete")?,
+            scrape_complete: required_nonnegative_i64(&f, 12, "t.scrape_complete")?,
+            scrape_downloaded: required_nonnegative_i64(&f, 13, "t.scrape_downloaded")?,
             message: String::new(),
         });
     }
@@ -148,10 +150,9 @@ mod tests {
     use crate::rtorrent::XmlValue;
 
     #[test]
-    fn parse_tracker_rows_accepts_requested_field_count() {
+    fn parse_tracker_rows_uses_numeric_row_ids_for_qbittorrent() {
         let rows = vec![XmlValue::Array(vec![
             "udp://tracker.example/announce".into(),
-            7_i64.into(),
             1_i64.into(),
             true.into(),
             false.into(),
@@ -171,7 +172,7 @@ mod tests {
 
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].url, "udp://tracker.example/announce");
-        assert_eq!(parsed[0].id, 7);
+        assert_eq!(parsed[0].id, 0);
         assert_eq!(parsed[0].group, 1);
         assert_eq!(parsed[0].group_index, 0);
         assert!(parsed[0].is_enabled);
@@ -180,6 +181,44 @@ mod tests {
         assert_eq!(parsed[0].scrape_complete, 6);
         assert_eq!(parsed[0].scrape_downloaded, 7);
         assert_eq!(parsed[0].message, "");
+    }
+
+    #[test]
+    fn parse_tracker_rows_assigns_each_tracker_its_row_index() {
+        let rows = (0..2)
+            .map(|group| {
+                XmlValue::Array(vec![
+                    format!("https://tracker{group}.example/announce").into(),
+                    (group as i64).into(),
+                    true.into(),
+                    false.into(),
+                    false.into(),
+                    0_i64.into(),
+                    0_i64.into(),
+                    0_i64.into(),
+                    0_i64.into(),
+                    0_i64.into(),
+                    0_i64.into(),
+                    0_i64.into(),
+                    0_i64.into(),
+                    0_i64.into(),
+                ])
+            })
+            .collect();
+
+        let parsed = parse_tracker_rows(rows).unwrap();
+
+        assert_eq!(
+            parsed.iter().map(|tracker| tracker.id).collect::<Vec<_>>(),
+            [0, 1]
+        );
+        assert_eq!(
+            parsed
+                .iter()
+                .map(|tracker| tracker.group)
+                .collect::<Vec<_>>(),
+            [0, 1]
+        );
     }
 
     #[test]
@@ -192,12 +231,11 @@ mod tests {
     }
 
     #[test]
-    fn parse_tracker_rows_rejects_negative_identity_and_counters() {
-        for field in [1, 2, 10, 11, 12, 13, 14] {
+    fn parse_tracker_rows_rejects_negative_group_and_counters() {
+        for field in [1, 9, 10, 11, 12, 13] {
             let mut row = vec![
                 "udp://tracker.example/announce".into(),
                 7_i64.into(),
-                1_i64.into(),
                 true.into(),
                 false.into(),
                 true.into(),
@@ -216,6 +254,34 @@ mod tests {
             assert!(
                 parse_tracker_rows(vec![XmlValue::Array(row)]).is_err(),
                 "field index {field} should reject a negative value"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_tracker_rows_rejects_non_boolean_flags() {
+        for field in [2, 3, 4] {
+            let mut row = vec![
+                "udp://tracker.example/announce".into(),
+                7_i64.into(),
+                true.into(),
+                false.into(),
+                true.into(),
+                10_i64.into(),
+                20_i64.into(),
+                30_i64.into(),
+                40_i64.into(),
+                3_i64.into(),
+                4_i64.into(),
+                5_i64.into(),
+                6_i64.into(),
+                7_i64.into(),
+            ];
+            row[field] = XmlValue::String("not-a-boolean".to_owned());
+
+            assert!(
+                parse_tracker_rows(vec![XmlValue::Array(row)]).is_err(),
+                "field index {field} should reject a non-boolean value"
             );
         }
     }

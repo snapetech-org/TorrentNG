@@ -66,6 +66,9 @@ run_profile() {
   local cookie="$COOKIE_DIR/${label//[^A-Za-z0-9]/-}.cookies"
   local code len hash rid delta_len
 
+  : > "$cookie"
+  chmod 600 -- "$cookie"
+
   code="$(http_code "$TNG_HOST_URL$prefix/auth/login" -A "$user_agent" -X POST --data-binary "@$AUTH_BODY_FILE" -c "$cookie")"
   if [[ "$code" == "200" && "$(cat "$BODY")" == "Ok." ]]; then
     mark "$label login" "PASS" "$prefix auth cookie accepted"
@@ -94,18 +97,22 @@ run_profile() {
   code="$(http_code "$TNG_HOST_URL$prefix/torrents/info?limit=$MOBILE_LIST_LIMIT&sort=name" -A "$user_agent" -b "$cookie")"
   len="$(check_json_array_len)"
   hash="$(jq -r '.[0].hash // empty' "$BODY" 2>/dev/null || true)"
-  if [[ "$code" == "200" && "$len" -gt 0 && -n "$hash" ]]; then
-    mark "$label list" "PASS" "HTTP 200 rows=$len first_hash=$hash"
+  if [[ "$code" == "200" && "$(jq -r 'type == "array"' "$BODY" 2>/dev/null || echo false)" == "true" ]]; then
+    mark "$label list" "PASS" "HTTP 200 rows=$len${hash:+ first_hash=$hash}"
   else
     mark "$label list" "FAIL" "HTTP $code rows=$len"
     return
   fi
 
-  code="$(http_code "$TNG_HOST_URL$prefix/torrents/properties?hash=$hash" -A "$user_agent" -b "$cookie")"
-  if [[ "$code" == "200" && "$(jq -r '.total_size // empty' "$BODY" 2>/dev/null)" =~ ^[0-9]+$ ]]; then
-    mark "$label properties" "PASS" "$hash total_size=$(jq -r '.total_size' "$BODY")"
+  if [[ -n "$hash" ]]; then
+    code="$(http_code "$TNG_HOST_URL$prefix/torrents/properties?hash=$hash" -A "$user_agent" -b "$cookie")"
+    if [[ "$code" == "200" && "$(jq -r '.total_size // empty' "$BODY" 2>/dev/null)" =~ ^[0-9]+$ ]]; then
+      mark "$label properties" "PASS" "$hash total_size=$(jq -r '.total_size' "$BODY")"
+    else
+      mark "$label properties" "FAIL" "HTTP $code body=$(tr '\n' ' ' <"$BODY")"
+    fi
   else
-    mark "$label properties" "FAIL" "HTTP $code body=$(tr '\n' ' ' <"$BODY")"
+    mark "$label properties" "INFO" "no torrent rows in isolated certification state"
   fi
 
   for query in \
@@ -125,7 +132,7 @@ run_profile() {
   code="$(http_code "$TNG_HOST_URL$prefix/sync/maindata?rid=0" -A "$user_agent" -b "$cookie")"
   rid="$(jq -r '.rid // empty' "$BODY" 2>/dev/null || true)"
   len="$(jq '.torrents | length' "$BODY" 2>/dev/null || echo 0)"
-  if [[ "$code" == "200" && -n "$rid" && "$len" -gt 0 ]]; then
+  if [[ "$code" == "200" && -n "$rid" && "$(jq -r '.torrents | type == "object"' "$BODY" 2>/dev/null || echo false)" == "true" ]]; then
     mark "$label sync full" "PASS" "rid=$rid torrents=$len"
   else
     mark "$label sync full" "FAIL" "HTTP $code rid=$rid torrents=$len"

@@ -543,6 +543,10 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertNotRegex(clients, r"/tmp/tng-(?:arr|autobrr)-")
         self.assertLess(clients.index(': >"$cookies"'), clients.index('-c "$cookies"'))
 
+        mobile = (ROOT / "scripts" / "mobile_compat_certification.sh").read_text(encoding="utf-8")
+        self.assertLess(mobile.index(': > "$cookie"'), mobile.index('-c "$cookie"'))
+        self.assertIn('chmod 600 -- "$cookie"', mobile)
+
     def test_arr_client_connection_test_accepts_no_content_success(self) -> None:
         clients = (ROOT / "scripts" / "configure_certification_clients.sh").read_text(encoding="utf-8")
         self.assertIn('if [[ ! "$code" =~ ^(200|202|204)$ ]]; then', clients)
@@ -706,6 +710,35 @@ class WorkflowSecurityTests(unittest.TestCase):
         for source in (live, app, churn):
             self.assertIn("67108864", source)
             self.assertIn("tng_write_qbit_login_body", source)
+
+    def test_live_transfer_authenticates_mutations_and_starts_peer_fixture(self) -> None:
+        live = (ROOT / "scripts" / "live_transfer_certification.sh").read_text(encoding="utf-8")
+        self.assertIn('QBIT_AUTH_HEADER_FILE="$(mktemp', live)
+        self.assertIn('printf \'Authorization: Basic \'', live)
+        self.assertIn('chmod 600 -- "$QBIT_AUTH_HEADER_FILE"', live)
+        self.assertIn('transmission-cli -w /downloads/$FIXTURE_DOWNLOAD_DIR/seed', live)
+        self.assertIn('mark "stock seeder" "PASS"', live)
+        self.assertEqual(live.count('-H "@$QBIT_AUTH_HEADER_FILE"'), 3)
+        self.assertIn('torrents=@$FIXTURE_TORRENT_FILE;type=application/x-bittorrent', live)
+        self.assertIn('mark "public Linux torrent add" "INFO"', live)
+        self.assertNotIn('urls=http://$TRACKER_NAME:', live)
+
+    def test_release_grab_environment_targets_its_isolated_compose_project(self) -> None:
+        release_grab = (ROOT / "scripts" / "release_grab_certification.sh").read_text(encoding="utf-8")
+        for assignment in (
+            'COMPOSE_PROJECT_NAME="$PROJECT"',
+            'CERT_COMPOSE_PROJECT="$PROJECT"',
+            'CERT_COMPOSE_NETWORK="${PROJECT}_default"',
+            'CERT_DOCKER_NETWORK="${PROJECT}_default"',
+            'CERT_DOWNLOADS_VOLUME="${PROJECT}_downloads"',
+            'TNG_CONTAINER="${PROJECT}-torrentng-1"',
+            'SONARR_CONTAINER="${PROJECT}-sonarr-1"',
+            'RADARR_CONTAINER="${PROJECT}-radarr-1"',
+            'PROWLARR_CONTAINER="${PROJECT}-prowlarr-1"',
+            'AUTOBRR_CONTAINER="${PROJECT}-autobrr-1"',
+            'CROSS_SEED_CONTAINER="${PROJECT}-cross-seed-1"',
+        ):
+            self.assertIn(assignment, release_grab)
 
     def test_transfer_churn_requires_payload_evidence_and_checked_cleanup(self) -> None:
         churn = (ROOT / "scripts" / "transfer_churn_soak.sh").read_text(encoding="utf-8")
