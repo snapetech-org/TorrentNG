@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check that the candidate image route stays exact, private, and non-publishing."""
+"""Check that the candidate image route stays exact and non-publishing."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ WORKFLOW = ROOT / ".github/workflows/ci.yml"
 
 
 class CandidateArtifactRouteTests(unittest.TestCase):
-    def test_candidate_image_uses_exact_private_artifact_route(self) -> None:
+    def test_candidate_image_uses_exact_github_artifact_route(self) -> None:
         source = WORKFLOW.read_text(encoding="utf-8")
         match = re.search(
             r"(?ms)^  candidate-artifact:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
@@ -27,7 +27,7 @@ class CandidateArtifactRouteTests(unittest.TestCase):
             "github.actor == 'snapetech'",
             "github.ref == 'refs/heads/main'",
             "inputs.action == 'build'",
-            "inputs.runner_pool == 'private'",
+            "inputs.runner_pool == 'github'",
             "inputs.candidate_sha != ''",
             "inputs.candidate_sha == github.sha",
             "inputs.pr_number == ''",
@@ -38,13 +38,7 @@ class CandidateArtifactRouteTests(unittest.TestCase):
 
         runner = re.search(r"(?m)^    runs-on: (?P<runner>.+)$", body)
         self.assertIsNotNone(runner)
-        for route in (
-            '"group":"ng-shared-main-jit"',
-            '"ng-shared-main-torrentng"',
-            '"gha-{0}-candidate-artifact"',
-        ):
-            self.assertIn(route, runner.group("runner"))
-        self.assertNotIn("ubuntu-latest", runner.group("runner"))
+        self.assertEqual(runner.group("runner"), "ubuntu-24.04")
 
         for build_step in (
             "CANDIDATE_SHA: ${{ github.sha }}",

@@ -1,4 +1,4 @@
-# ng-runner-policy: private-jit-only-v1
+# ng-runner-policy: github-hosted-default-v1
 name: Backend Evidence
 run-name: action:${{ inputs.action }} pool:${{ inputs.runner_pool }}
 
@@ -15,7 +15,7 @@ on:
         description: Runner pool for this operation
         required: true
         type: choice
-        options: [private]
+        options: [github]
       run_live_fault:
         description: "Run release-daemon crash, SQLite-failure, and storage-failure matrix"
         required: true
@@ -58,8 +58,8 @@ permissions:
 jobs:
   deterministic-fault:
     name: Deterministic fault matrix
-    if: github.ref == 'refs/heads/main' && inputs.action == 'backend-evidence' && inputs.runner_pool == 'private'
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-backend-evidence-deterministic-fault"]}}', github.run_id)) }}
+    if: github.ref == 'refs/heads/main' && inputs.action == 'backend-evidence' && inputs.runner_pool == 'github'
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -87,8 +87,8 @@ jobs:
 
   live-fault:
     name: Live release-daemon fault matrix
-    if: github.ref == 'refs/heads/main' && inputs.action == 'backend-evidence' && inputs.runner_pool == 'private' && inputs.run_live_fault == true
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-backend-evidence-live-fault"]}}', github.run_id)) }}
+    if: github.ref == 'refs/heads/main' && inputs.action == 'backend-evidence' && inputs.runner_pool == 'github' && inputs.run_live_fault == true
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Route temporary files to runner temp
@@ -139,8 +139,8 @@ jobs:
 
   api-load:
     name: Live many-client and slow-SSE load
-    if: github.ref == 'refs/heads/main' && inputs.action == 'backend-evidence' && inputs.runner_pool == 'private' && inputs.run_api_load == true
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-backend-evidence-api-load"]}}', github.run_id)) }}
+    if: github.ref == 'refs/heads/main' && inputs.action == 'backend-evidence' && inputs.runner_pool == 'github' && inputs.run_api_load == true
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Route temporary files to runner temp
@@ -189,8 +189,8 @@ jobs:
 
   public-compatibility:
     name: API and storage compatibility contracts
-    if: github.ref == 'refs/heads/main' && inputs.action == 'backend-evidence' && inputs.runner_pool == 'private' && inputs.run_public_compat == true
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-backend-evidence-public-compatibility"]}}', github.run_id)) }}
+    if: github.ref == 'refs/heads/main' && inputs.action == 'backend-evidence' && inputs.runner_pool == 'github' && inputs.run_public_compat == true
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - name: Route temporary files to runner temp
@@ -225,8 +225,8 @@ jobs:
 
   local-client-interop:
     name: Local/client interop (${{ matrix.suite }})
-    if: github.ref == 'refs/heads/main' && inputs.action == 'backend-evidence' && inputs.runner_pool == 'private' && inputs.run_public_compat == true
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-{1}-backend-evidence-local-client-interop"]}}', github.run_id, strategy.job-index)) }}
+    if: github.ref == 'refs/heads/main' && inputs.action == 'backend-evidence' && inputs.runner_pool == 'github' && inputs.run_public_compat == true
+    runs-on: ubuntu-24.04
     timeout-minutes: 300
     strategy:
       fail-fast: false
@@ -267,8 +267,8 @@ jobs:
 
   public-torrent-interop:
     name: Public torrent client interop (${{ matrix.torrent }})
-    if: github.ref == 'refs/heads/main' && inputs.action == 'backend-evidence' && inputs.runner_pool == 'private' && inputs.run_public_compat == true
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-{1}-backend-evidence-public-torrent-interop"]}}', github.run_id, strategy.job-index)) }}
+    if: github.ref == 'refs/heads/main' && inputs.action == 'backend-evidence' && inputs.runner_pool == 'github' && inputs.run_public_compat == true
+    runs-on: ubuntu-24.04
     timeout-minutes: 240
     strategy:
       fail-fast: false

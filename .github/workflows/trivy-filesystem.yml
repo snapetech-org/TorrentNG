@@ -1,4 +1,4 @@
-# ng-runner-policy: private-jit-only-v1
+# ng-runner-policy: github-hosted-default-v1
 name: Trivy filesystem scan
 
 run-name: action:${{ inputs.action }} pool:${{ inputs.runner_pool }}
@@ -16,7 +16,7 @@ on:
         description: Runner pool for this operation
         required: true
         type: choice
-        options: [private]
+        options: [github]
 permissions:
   contents: read
 
@@ -27,11 +27,11 @@ concurrency:
 jobs:
   trivy:
     if: >-
-      github.event_name == 'workflow_dispatch' && inputs.action == 'scan' && inputs.runner_pool == 'private' && github.ref == 'refs/heads/main'
+      github.event_name == 'workflow_dispatch' && inputs.action == 'scan' && inputs.runner_pool == 'github' && github.ref == 'refs/heads/main'
     name: Trivy source, dependency, and configuration scan
     env:
       TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-trivy"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - name: Checkout

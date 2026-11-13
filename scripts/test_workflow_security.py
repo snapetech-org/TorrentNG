@@ -201,7 +201,7 @@ class WorkflowSecurityTests(unittest.TestCase):
             source,
             r"(?m)^\s*if: github\.ref == 'refs/heads/main' && "
             r"inputs\.action == 'transfer-rebuild' && "
-            r"inputs\.runner_pool == 'private' && "
+            r"inputs\.runner_pool == 'github' && "
             r"inputs\.run_dedicated_hardware == true\s*$",
         )
         self.assertRegex(
@@ -214,7 +214,7 @@ class WorkflowSecurityTests(unittest.TestCase):
             source,
             r"(?m)^\s*environment: transfer-rebuild-hardware\s*$",
         )
-        self.assertIn("needs: private-jit-correctness", source)
+        self.assertIn("needs: hosted-correctness", source)
         self.assertIn("persist-credentials: false", source)
         self.assertNotIn("TRUSTED_MAIN_RUNNERS_ENABLED", source)
 
@@ -222,9 +222,8 @@ class WorkflowSecurityTests(unittest.TestCase):
         for workflow_path in WORKFLOWS.glob("*.y*"):
             source = workflow_path.read_text(encoding="utf-8")
             if workflow_path.name == "fork-safe-validation.yml":
-                self.assertIn("group: public-fork-jit", source)
-                self.assertIn("self-hosted", source)
-                self.assertNotIn("ubuntu-latest", source)
+                self.assertIn("runs-on: ubuntu-24.04", source)
+                self.assertNotIn("self-hosted", source)
                 self.assertNotIn("ng-shared-main-jit", source)
                 self.assertIn(
                     "github.event.pull_request.base.repo.full_name == 'snapetech-org/TorrentNG'",
@@ -239,70 +238,45 @@ class WorkflowSecurityTests(unittest.TestCase):
                 continue
             if workflow_path.name == TRANSFER_HARDWARE_WORKFLOW:
                 self.assertIn('"group":"ng-shared-main-jit"', source)
-                self.assertIn('"gha-{0}-transfer-rebuild-correctness"', source)
-                self.assertNotIn("runs-on: ubuntu-latest", source)
+                self.assertIn("runs-on: ubuntu-24.04", source)
                 self.assert_transfer_hardware_runner_is_opt_in_and_main_only(source)
                 continue
             if workflow_path.name == "windows-smoke.yml":
-                self.assertIn("packer-windows-jit-v1", source)
-                self.assertIn('"group":"packer-windows"', source)
-                self.assertIn('"on-demand"', source)
-                self.assertIn('"TorrentNG"', source)
-                self.assertIn("gha-{0}-smoke", source)
-                self.assertNotIn("runs-on: windows-latest", source)
+                self.assertIn("runs-on: windows-2022", source)
                 self.assertIn(
                     "scripts/enable-msvc-environment.ps1", source.replace("\\", "/")
                 )
                 continue
             if workflow_path.name in {
-                "release-notes.yml",
-                "semgrep-community.yml",
-                "trivy-filesystem.yml",
-                "release.yml",
-                "release-aur.yml",
-                "release-copr.yml",
-                "release-ppa.yml",
-                "backend-evidence.yml",
-                "package-smoke-disabled.yml",
+                "release-notes.yml", "semgrep-community.yml", "trivy-filesystem.yml",
+                "release.yml", "release-aur.yml", "release-copr.yml", "release-ppa.yml",
+                "backend-evidence.yml", "package-smoke-disabled.yml",
             }:
                 expressions = re.findall(r"(?m)^\s*runs-on: (?P<runner>[^\n]+)$", source)
-                routed = [expression for expression in expressions if "ng-shared-main-jit" in expression]
-                self.assertTrue(routed, workflow_path.name)
-                for expression in routed:
-                    self.assertIn('"group":"ng-shared-main-jit"', expression)
-                    if workflow_path.name == "release.yml":
-                        self.assertNotIn("workflow_dispatch", expression)
-                        self.assertNotIn("ubuntu-latest", expression)
-                        if "strategy.job-index" in expression:
-                            self.assertIn("matrix.os == 'windows-x64'", expression)
-                            self.assertIn("matrix.os == 'macos-arm64'", expression)
-                            self.assertIn("matrix.os == 'linux-arm64'", expression)
-                            self.assertIn('"group":"packer-windows"', expression)
-                            self.assertIn('"group":"private-apple-builds"', expression)
-                            self.assertIn('"on-demand"', expression)
-                            self.assertIn('"TorrentNG"', expression)
-                            self.assertRegex(
-                                expression,
-                                r"gha-\{0\}-\{1\}-(?:native-binaries|desktop-bundles)",
-                            )
-                        else:
-                            self.assertIn("fromJSON(format(", expression)
-                    else:
-                        self.assertNotIn("ubuntu-latest", expression)
-                        self.assertNotIn("||", expression)
+                self.assertTrue(expressions, workflow_path.name)
+                self.assertTrue(
+                    any(expression == "ubuntu-24.04" for expression in expressions),
+                    workflow_path.name,
+                )
+                self.assertIn("options: [github]", source, workflow_path.name)
+                self.assertIn("inputs.runner_pool == 'github'", source, workflow_path.name)
+                self.assertNotIn('"group":"ng-shared-main-jit"', source, workflow_path.name)
+                if workflow_path.name in {"release-aur.yml", "release-copr.yml", "release-ppa.yml"}:
+                    self.assertIn("github.ref == 'refs/heads/main'", source)
                 if workflow_path.name == "semgrep-community.yml":
                     self.assertIn("docker info", source)
                     self.assertIn("docker run", source)
                 continue
             if workflow_path.name == "ci.yml":
                 continue
-            self.assertNotRegex(source, r"(?m)^\s*(?:runs-on|labels):.*self-hosted")
+            if workflow_path.name == "gvisor-runner-smoke.yml":
+                self.assertIn("group: gvisor-sandbox", source)
+                self.assertIn("labels: gvisor-sandbox", source)
+                continue
+            self.assertNotRegex(source, r"(?m)^\s*runs-on:.*self-hosted")
             self.assertNotIn("TRUSTED_MAIN_RUNNERS_ENABLED", source)
         windows = (WORKFLOWS / "windows-smoke.yml").read_text(encoding="utf-8")
-        self.assertIn("packer-windows-jit-v1", windows)
-        self.assertIn('"group":"packer-windows"', windows)
-        self.assertIn("gha-{0}-smoke", windows)
-        self.assertNotIn("runs-on: windows-latest", windows)
+        self.assertIn("runs-on: windows-2022", windows)
 
     def test_cargo_validation_steps_keep_the_selected_rust_toolchain(self) -> None:
         ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
@@ -431,7 +405,9 @@ class WorkflowSecurityTests(unittest.TestCase):
 
         self.assertIn("target: aarch64-unknown-linux-gnu", native_job)
         self.assertIn("target: x86_64-pc-windows-msvc", native_job)
-        self.assertIn('"labels":["self-hosted","linux","arm64","ng-shared-main-torrentng"', native_job)
+        self.assertIn("matrix.os == 'linux-arm64' && 'ubuntu-24.04-arm'", native_job)
+        self.assertIn("matrix.os == 'macos-arm64' && 'macos-15'", native_job)
+        self.assertIn("matrix.os == 'windows-x64' && 'windows-2022'", native_job)
         self.assertIn("scripts/enable-msvc-environment.ps1", native_job.replace("\\", "/"))
         self.assertNotIn("x86_64-pc-windows-gnu", native_job)
 
@@ -464,7 +440,7 @@ class WorkflowSecurityTests(unittest.TestCase):
                 source,
                 r"(?m)^  pull_request(?:_target)?:",
             )
-            self.assertIn("inputs.runner_pool == 'private'", source, workflow_name)
+            self.assertIn("inputs.runner_pool == 'github'", source, workflow_name)
             self.assertIn("github.ref == 'refs/heads/main'", source, workflow_name)
 
         windows_smoke = (WORKFLOWS / "windows-smoke.yml").read_text(encoding="utf-8")

@@ -12,8 +12,11 @@ Per the owner directive dated 2026-10-30, CodeQL analysis is disabled for
 snapetech-org repositories. TorrentNG intentionally has no
 `.github/workflows/codeql.yml`, and the runner-policy test keeps it absent.
 Historical CodeQL results remain archival; they are not current release
-evidence. Continue the private-JIT Semgrep, Trivy, dependency-audit, and secret
-scanning gates.
+evidence. The owner directive dated 2026-11-12 allows GitHub-hosted runners
+again: standard builds, tests, security scans, and release jobs use compatible
+GitHub-hosted labels by default. Keep OS and architecture requirements intact.
+Use private JIT only for checks that need task-specific private hardware,
+network, or files. Fork code remains secret-free with read-only permissions.
 
 ## Risk areas to cover
 
@@ -85,7 +88,7 @@ Run these stages against a clean checkout of the intended release commit. During
 
 - Build, inspect, and smoke the exact optimized binaries/images. Verify architecture, version, source revision, checksums, SBOM/provenance, signatures where configured, release notes, and immutable image/tag promotion rules.
 - Validate supported install/update paths (Docker/Compose, native package formats, YunoHost, Kubernetes/systemd as applicable) in disposable environments; test config migration, permissions, health, rollback, and backup restore.
-- Run the release workflow's required jobs on the authorized hosted/private runner. A local approximation cannot replace required hosted CI or runner isolation checks.
+- Run the release workflow's required jobs on the authorized GitHub-hosted runner, or private JIT when a check requires task-specific private resources. A local approximation cannot replace required hosted CI or runner isolation checks.
 
 ### 8. External release qualification
 
@@ -112,7 +115,7 @@ Agents must report exact commands, revisions, results, and artifact/log paths. C
 
 - [ ] Candidate is a clean, immutable commit; every report and binary/image names that full SHA/digest.
 - [ ] All required source, feature, sidecar, desktop, WebUI, API, migration, storage, recovery, security, dependency, and artifact gates pass.
-- [ ] CI/private-runner checks and declared MSRV checks pass on the candidate.
+- [ ] Hosted CI and declared MSRV checks pass on the candidate; any private-resource gates run on the required target.
 - [ ] Required real-device, client/public-swarm, crash/recovery, and soak gates have fresh passing evidence; no required row is skipped, stale, warning, or missing.
 - [ ] No open release-blocking defect; all known exceptions have an owner, rationale, and expiry.
 - [ ] `scripts/release_evidence_suite.sh` and `scripts/release_readiness_gate.sh` pass in strict scope against the same evidence directory.

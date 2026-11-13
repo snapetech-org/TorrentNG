@@ -1,4 +1,4 @@
-# ng-runner-policy: private-jit-only-v1
+# ng-runner-policy: github-hosted-default-v1
 name: Transfer Rebuild Qualification
 run-name: action:${{ inputs.action }} pool:${{ inputs.runner_pool }}
 
@@ -15,7 +15,7 @@ on:
         description: Runner pool for this operation
         required: true
         type: choice
-        options: [private]
+        options: [github]
       run_dedicated_hardware:
         description: "Use the protected TorrentNG transfer performance runner"
         required: true
@@ -35,10 +35,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  private-jit-correctness:
-    name: Private JIT transfer-core correctness
-    if: github.ref == 'refs/heads/main' && inputs.action == 'transfer-rebuild' && inputs.runner_pool == 'private'
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-transfer-rebuild-correctness"]}}', github.run_id)) }}
+  hosted-correctness:
+    name: GitHub-hosted transfer-core correctness
+    if: github.ref == 'refs/heads/main' && inputs.action == 'transfer-rebuild' && inputs.runner_pool == 'github'
+    runs-on: ubuntu-24.04
     timeout-minutes: 75
     steps:
       - name: Route temporary files to runner temp
@@ -110,8 +110,8 @@ jobs:
 
   dedicated-hardware:
     name: Dedicated storage and performance qualification
-    if: github.ref == 'refs/heads/main' && inputs.action == 'transfer-rebuild' && inputs.runner_pool == 'private' && inputs.run_dedicated_hardware == true
-    needs: private-jit-correctness
+    if: github.ref == 'refs/heads/main' && inputs.action == 'transfer-rebuild' && inputs.runner_pool == 'github' && inputs.run_dedicated_hardware == true
+    needs: hosted-correctness
     runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","torrentng-transfer-perf","ng-main-run-{0}","gha-{0}-transfer-rebuild-dedicated-hardware"]}}', github.run_id)) }}
     environment: transfer-rebuild-hardware
     timeout-minutes: 180

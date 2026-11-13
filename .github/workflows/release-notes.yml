@@ -1,4 +1,4 @@
-# ng-runner-policy: private-jit-only-v1
+# ng-runner-policy: github-hosted-default-v1
 name: Release-note validation
 run-name: action:${{ inputs.action }} pool:${{ inputs.runner_pool }}
 
@@ -15,7 +15,7 @@ on:
         description: Runner pool for this operation
         required: true
         type: choice
-        options: [private]
+        options: [github]
       base_sha:
         description: Commit to compare against; blank checks the parent of the current main commit
         required: false
@@ -33,9 +33,9 @@ jobs:
       github.event_name == 'workflow_dispatch' &&
       github.ref == 'refs/heads/main' &&
       inputs.action == 'release-note' &&
-      inputs.runner_pool == 'private'
+      inputs.runner_pool == 'github'
     name: Validate release-note choice
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-release-note"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

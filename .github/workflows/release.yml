@@ -1,5 +1,4 @@
-# ng-runner-policy: private-jit-only-v1
-# packer-windows-jit-v1
+# ng-runner-policy: github-hosted-default-v1
 name: Release
 run-name: action:${{ inputs.action }}:pool:${{ inputs.runner_pool }}:tag:${{ inputs.release_tag }}
 
@@ -16,7 +15,7 @@ on:
         description: Runner pool for this operation
         required: true
         type: choice
-        options: [private]
+        options: [github]
       release_tag:
         description: Existing version tag to publish
         required: true
@@ -32,9 +31,9 @@ jobs:
       github.event_name == 'workflow_dispatch' &&
       github.ref == 'refs/heads/main' &&
       inputs.action == 'release' &&
-      inputs.runner_pool == 'private' &&
+      inputs.runner_pool == 'github' &&
       inputs.release_tag != ''
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-validate-release-tag"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     outputs:
@@ -80,13 +79,13 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'release' &&
-          inputs.runner_pool == 'private'
+          inputs.runner_pool == 'github'
         )
       ) &&
       (
         true
       )
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-release-notes"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     outputs:
@@ -146,13 +145,13 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'release' &&
-          inputs.runner_pool == 'private'
+          inputs.runner_pool == 'github'
         )
       ) &&
       (
         true
       )
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-native-quality"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -209,13 +208,13 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'release' &&
-          inputs.runner_pool == 'private'
+          inputs.runner_pool == 'github'
         )
       ) &&
       (
         true
       )
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-msrv-check"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -251,13 +250,13 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'release' &&
-          inputs.runner_pool == 'private'
+          inputs.runner_pool == 'github'
         )
       ) &&
       (
         true
       )
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-msrv-check-sidecar"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -295,13 +294,13 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'release' &&
-          inputs.runner_pool == 'private'
+          inputs.runner_pool == 'github'
         )
       ) &&
       (
         true
       )
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-security-audit"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -368,13 +367,13 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'release' &&
-          inputs.runner_pool == 'private'
+          inputs.runner_pool == 'github'
         )
       ) &&
       (
         true
       )
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-native-release-smoke"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -458,13 +457,13 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'release' &&
-          inputs.runner_pool == 'private'
+          inputs.runner_pool == 'github'
         )
       ) &&
       (
         true
       )
-    runs-on: ${{ matrix.os == 'windows-x64' && fromJSON(format('{{"group":"packer-windows","labels":["self-hosted","Windows","X64","on-demand","packer-windows","TorrentNG","gha-{0}-{1}-native-binaries"]}}', github.run_id, strategy.job-index)) || matrix.os == 'macos-arm64' && fromJSON(format('{{"group":"private-apple-builds","labels":["self-hosted","macOS","ARM64","on-demand","private-apple","TorrentNG","gha-{0}-{1}-native-binaries"]}}', github.run_id, strategy.job-index)) || matrix.os == 'linux-arm64' && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","arm64","ng-shared-main-torrentng","TorrentNG","ng-main-run-{0}","gha-{0}-{1}-native-binaries"]}}', github.run_id, strategy.job-index)) || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-{1}-native-binaries"]}}', github.run_id, strategy.job-index)) }}
+    runs-on: ${{ matrix.os == 'windows-x64' && 'windows-2022' || matrix.os == 'macos-arm64' && 'macos-15' || matrix.os == 'linux-arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -616,13 +615,13 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'release' &&
-          inputs.runner_pool == 'private'
+          inputs.runner_pool == 'github'
         )
       ) &&
       (
         true
       )
-    runs-on: ${{ matrix.os == 'windows-x64' && fromJSON(format('{{"group":"packer-windows","labels":["self-hosted","Windows","X64","on-demand","packer-windows","TorrentNG","gha-{0}-{1}-desktop-bundles"]}}', github.run_id, strategy.job-index)) || matrix.os == 'macos-arm64' && fromJSON(format('{{"group":"private-apple-builds","labels":["self-hosted","macOS","ARM64","on-demand","private-apple","TorrentNG","gha-{0}-{1}-desktop-bundles"]}}', github.run_id, strategy.job-index)) || matrix.os == 'linux-arm64' && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","arm64","ng-shared-main-torrentng","TorrentNG","ng-main-run-{0}","gha-{0}-{1}-desktop-bundles"]}}', github.run_id, strategy.job-index)) || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-{1}-desktop-bundles"]}}', github.run_id, strategy.job-index)) }}
+    runs-on: ${{ matrix.os == 'windows-x64' && 'windows-2022' || matrix.os == 'macos-arm64' && 'macos-15' || matrix.os == 'linux-arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -702,13 +701,13 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'release' &&
-          inputs.runner_pool == 'private'
+          inputs.runner_pool == 'github'
         )
       ) &&
       (
         true
       )
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-linux-release-assets"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -987,13 +986,13 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'release' &&
-          inputs.runner_pool == 'private'
+          inputs.runner_pool == 'github'
         )
       ) &&
       (
         true
       )
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-publish"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     needs:
       - validate-release-tag
       - release-notes

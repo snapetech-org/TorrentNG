@@ -1,5 +1,4 @@
-# ng-runner-policy: private-jit-only-v1
-# packer-windows-jit-v1
+# ng-runner-policy: github-hosted-windows-v1
 name: Windows Smoke
 run-name: action:${{ inputs.action }} pool:${{ inputs.runner_pool }}
 
@@ -16,7 +15,7 @@ on:
         description: Runner pool for this operation
         required: true
         type: choice
-        options: [private]
+        options: [github]
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: false
@@ -26,9 +25,9 @@ permissions:
 
 jobs:
   smoke:
-    if: github.ref == 'refs/heads/main' && inputs.action == 'windows-smoke' && inputs.runner_pool == 'private'
+    if: github.ref == 'refs/heads/main' && inputs.action == 'windows-smoke' && inputs.runner_pool == 'github'
     timeout-minutes: 45
-    runs-on: ${{ fromJSON(format('{{"group":"packer-windows","labels":["self-hosted","Windows","X64","on-demand","packer-windows","TorrentNG","gha-{0}-smoke"]}}', github.run_id)) }}
+    runs-on: windows-2022
     # The certification evidence contains paths longer than Win32's default
     # MAX_PATH. Expose Git's long-path setting to checkout and later Git calls.
     env:
