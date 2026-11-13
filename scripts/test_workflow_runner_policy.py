@@ -101,6 +101,11 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         self.assertNotIn("ref: ${{ inputs.candidate_sha }}", body)
         self.assertNotIn("gh release", body.lower())
         self.assertNotIn("git push", body.lower())
+        fixture_path = ROOT / "certification" / "fixtures" / "backend-burndown-native-release-smoke.toml"
+        fixture = fixture_path.read_text(encoding="utf-8")
+        token_match = re.search(r'(?m)^api_tokens = \["([^\"]+)"\]$', fixture)
+        self.assertIsNotNone(token_match, "release-smoke fixture must declare one API token")
+        self.assertIn(f"TNG_RELEASE_TOKEN={token_match.group(1)}", body)
 
     def test_standard_workflows_use_github_hosted_runners(self) -> None:
         for workflow_name in (

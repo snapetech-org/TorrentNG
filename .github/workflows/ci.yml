@@ -929,6 +929,7 @@ jobs:
         run: |
           set -euo pipefail
           binary="$GITHUB_WORKSPACE/target/release/torrentngd"
+          TNG_RELEASE_TOKEN=backend-burndown-token-20260902 \
           TNG_RELEASE_BINARY="$GITHUB_WORKSPACE/target/release/torrentngd" \
           TNG_RELEASE_CONFIG="$SMOKE_CONFIG" \
           TNG_STATIC_DIR="$GITHUB_WORKSPACE/sidecar/static" \
