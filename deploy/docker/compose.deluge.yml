@@ -36,7 +36,7 @@ services:
     depends_on:
       - deluge
     healthcheck:
-      test: ["CMD", "/bin/sh", "-c", "wget -qO- http://localhost:8080/health >/dev/null"]
+      test: ["CMD", "/bin/sh", "-c", "wget -qO- http://127.0.0.1:8080/health >/dev/null"]
       interval: 15s
       timeout: 5s
       retries: 3
