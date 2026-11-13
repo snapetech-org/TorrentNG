@@ -77,7 +77,7 @@ if [[ -n "$LIVE_HEALTH_URL" ]]; then
       and .engine.capabilities.networking.dht == true
       and .engine.capabilities.networking.utp_packet_codec == true
       and .engine.capabilities.networking.utp_transport == true
-      and (.engine.capabilities.networking.utp_transport_paths | index("outgoing_peer_wire") != null)
+      and (.engine.capabilities.networking.utp_transport_paths | index(\"outgoing_peer_wire\") != null)
       and .engine.capabilities.compatibility.qbittorrent_v2 == true
       and .engine.capabilities.compatibility.transmission_rpc == true
       and .engine.capabilities.compatibility.deluge_rpc == true
