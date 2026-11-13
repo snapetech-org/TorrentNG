@@ -41,7 +41,7 @@ services:
       # production deployments must override both with unique secrets.
       TNG_SECRET_KEY: "${TNG_SECRET_KEY:-local-cert-session-secret-20260904-0123456789abcdef}"
       TNG_API_TOKENS: "${TNG_API_TOKEN:-local-cert-api-token-20260904}"
-      TNG_USER_AGENT: "${TNG_USER_AGENT:-rtorrent/0.16.11/0.16.11}"
+      TNG_USER_AGENT: "${TNG_USER_AGENT:-rtorrent/0.16.28/0.16.28}"
       # TNG_PEER_ID is deliberately not defaulted here: the compatible-client service generates
       # and persists a unique per-install id under data_dir on first start
       # (see docs/TRACKER-IDENTITY.md). Set TNG_PEER_ID only to pin a value.

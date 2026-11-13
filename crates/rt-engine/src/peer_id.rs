@@ -1,12 +1,12 @@
 use std::path::Path;
 use std::sync::{OnceLock, RwLock};
 
-/// Upstream rTorrent/libtorrent 0.16.11 peer ID family prefix (8 bytes).
+/// Upstream rTorrent/libtorrent 0.16.28 peer ID family prefix (8 bytes).
 ///
-/// libtorrent 0.16.11 uses PEER_NAME "-lt100B-". Keep this fixed: some
+/// libtorrent 0.16.28 uses PEER_NAME "-lt101C-". Keep this fixed: some
 /// private trackers only allow known client families through, matched on
 /// this prefix.
-pub const PEER_ID_PREFIX: &[u8; 8] = b"-lt100B-";
+pub const PEER_ID_PREFIX: &[u8; 8] = b"-lt101C-";
 
 /// Historical fully-pinned peer ID. Every install that has not resolved a
 /// real per-install identity yet compares against this literal.
@@ -18,15 +18,15 @@ pub const PEER_ID_PREFIX: &[u8; 8] = b"-lt100B-";
 /// running multiple simultaneous instances — a bannable multi-client
 /// signature — even though each install is actually a different, unrelated
 /// user. See docs/TRACKER-IDENTITY.md.
-pub const DEFAULT_PEER_ID: [u8; 20] = *b"-lt100B-000000000000";
+pub const DEFAULT_PEER_ID: [u8; 20] = *b"-lt101C-000000000000";
 
 /// HTTP `User-Agent` header sent on tracker announces and scrapes.
 ///
-/// Do not strip this to "rtorrent/0.16.11"; some trackers validate the full
+/// Do not strip this to "rtorrent/0.16.28"; some trackers validate the full
 /// upstream rTorrent/libtorrent pair. Unlike peer_id, sharing this string
 /// across installs is fine: the User-Agent header is not expected to be a
 /// per-instance-unique identifier.
-pub const DEFAULT_USER_AGENT: &str = "rtorrent/0.16.11/0.16.11";
+pub const DEFAULT_USER_AGENT: &str = "rtorrent/0.16.28/0.16.28";
 
 const PEER_ID_SUFFIX_FILE: &str = "peer_id_suffix";
 
@@ -164,10 +164,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_identity_is_upstream_rtorrent_0_16_11_pair() {
+    fn default_identity_is_upstream_rtorrent_0_16_28_pair() {
         assert_eq!(DEFAULT_PEER_ID.len(), 20);
         assert!(DEFAULT_PEER_ID.starts_with(PEER_ID_PREFIX));
-        assert_eq!(DEFAULT_USER_AGENT, "rtorrent/0.16.11/0.16.11");
+        assert_eq!(DEFAULT_USER_AGENT, "rtorrent/0.16.28/0.16.28");
     }
 
     #[test]

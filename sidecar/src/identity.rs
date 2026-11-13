@@ -1,7 +1,7 @@
 //! Per-install tracker peer identity.
 //!
 //! See docs/TRACKER-IDENTITY.md. The 8-byte client-family prefix
-//! (`-lt100B-`) is intentionally shared across every TorrentNG install so
+//! (`-lt101C-`) is intentionally shared across every TorrentNG install so
 //! trackers that whitelist known client families accept it. The remaining
 //! 12 bytes are NOT supposed to be shared: they exist specifically so a
 //! tracker can tell separate client instances apart. A hardcoded suffix
@@ -18,7 +18,7 @@ use std::{
 
 use crate::safe_file::open_regular_read_no_follow;
 
-pub const PEER_ID_PREFIX: &str = "-lt100B-";
+pub const PEER_ID_PREFIX: &str = "-lt101C-";
 const PEER_ID_SUFFIX_FILE: &str = "peer_id_suffix";
 const MAX_PEER_ID_SUFFIX_BYTES: u64 = 4096;
 

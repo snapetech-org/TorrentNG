@@ -6,7 +6,7 @@ import pathlib
 import subprocess
 import tempfile
 
-SOURCE_SHA256 = '209354ca3b02b803171e96e65a43fbb40127ac8bc29a42d9bd12eed50f8810a5'
+SOURCE_SHA256 = '7998a8db07c87236151607496b6d6173a0e58d8be07b74c4f241e3fd99dbf2e9'
 FIXTURE = r'''
 #include <algorithm>
 #include <cassert>
@@ -77,7 +77,7 @@ int main(int argc,char**){
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=pathlib.Path, required=True)
-    parser.add_argument('--patch', type=pathlib.Path, default=pathlib.Path(__file__).resolve().parents[2] / 'deploy/docker/patches/rtorrent-0.16.11-multicall-range.patch')
+    parser.add_argument('--patch', type=pathlib.Path, default=pathlib.Path(__file__).resolve().parents[2] / 'deploy/docker/patches/rtorrent-0.16.28-multicall-range.patch')
     parser.add_argument('--expect-original-repetition', action='store_true')
     args = parser.parse_args()
     raw = args.source.read_bytes()

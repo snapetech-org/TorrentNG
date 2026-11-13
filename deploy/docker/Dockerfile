@@ -43,11 +43,10 @@ RUN npm run build
 
 # Stage 3: Build modern rTorrent/libtorrent.
 # The patches expose tracker identity controls used by the compatible-client service.
-# These commits are the v0.16.11 source revisions. Fetch by object ID rather
-# than by a mutable tag so a retagged upstream release cannot change the image.
+# Pin the current stable rTorrent/libtorrent pair to immutable release commits.
 FROM alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS rtorrent-build
-ARG RTORRENT_COMMIT=2700b3141f966d8533a6153491e1c76b3cf5c2b9
-ARG LIBTORRENT_COMMIT=dafcba711114af2274a45ca55a7bcd4abdf5ca9a
+ARG RTORRENT_COMMIT=0c23d278a7838402d4cec9689bf71e051332be67
+ARG LIBTORRENT_COMMIT=392030e0fddbe4e423d059d9322382cf44aaaaf6
 RUN apk add --no-cache \
     autoconf automake build-base cmake curl-dev git libtool linux-headers \
     ncurses-dev ninja openssl-dev pkgconf tinyxml2-dev zlib-dev
@@ -62,19 +61,19 @@ RUN git init libtorrent && \
     git -C rtorrent fetch --depth=1 origin "$RTORRENT_COMMIT" && \
     git -C rtorrent checkout --detach FETCH_HEAD && \
     test "$(git -C rtorrent rev-parse HEAD)" = "$RTORRENT_COMMIT"
-COPY deploy/docker/patches/rtorrent-0.16.11-user-agent-command.patch /tmp/rtorrent-user-agent-command.patch
-COPY deploy/docker/patches/rtorrent-0.16.11-local-id-command.patch /tmp/rtorrent-local-id-command.patch
-COPY deploy/docker/patches/rtorrent-0.16.11-multicall-range.patch /tmp/rtorrent-multicall-range.patch
-COPY deploy/docker/patches/rtorrent-0.16.11-tracker-identity-gate.patch /tmp/rtorrent-tracker-identity-gate.patch
-COPY deploy/docker/patches/rtorrent-0.16.11-unlimited-queue-refill.patch /tmp/rtorrent-unlimited-queue-refill.patch
-COPY deploy/docker/patches/rtorrent-0.16.11-scgi-accept-eagain.patch /tmp/rtorrent-scgi-accept-eagain.patch
+COPY deploy/docker/patches/rtorrent-0.16.28-user-agent-command.patch /tmp/rtorrent-user-agent-command.patch
+COPY deploy/docker/patches/rtorrent-0.16.28-local-id-command.patch /tmp/rtorrent-local-id-command.patch
+COPY deploy/docker/patches/rtorrent-0.16.28-multicall-range.patch /tmp/rtorrent-multicall-range.patch
+COPY deploy/docker/patches/rtorrent-0.16.28-tracker-identity-gate.patch /tmp/rtorrent-tracker-identity-gate.patch
+COPY deploy/docker/patches/rtorrent-0.16.28-unlimited-queue-refill.patch /tmp/rtorrent-unlimited-queue-refill.patch
+COPY deploy/docker/patches/rtorrent-0.16.28-scgi-task-ring.patch /tmp/rtorrent-scgi-task-ring.patch
 RUN cd rtorrent && \
     git apply /tmp/rtorrent-user-agent-command.patch && \
     git apply /tmp/rtorrent-local-id-command.patch && \
     git apply /tmp/rtorrent-multicall-range.patch && \
     git apply /tmp/rtorrent-tracker-identity-gate.patch && \
     git apply /tmp/rtorrent-unlimited-queue-refill.patch && \
-    git apply /tmp/rtorrent-scgi-accept-eagain.patch
+    git apply /tmp/rtorrent-scgi-task-ring.patch
 RUN cd libtorrent && autoreconf -fi && \
     ./configure --prefix=/usr/local && \
     make -j"$(nproc)" && make install
@@ -110,9 +109,9 @@ ENV TNG_STATIC_DIR=/usr/share/torrentng/webui
 ENV LD_LIBRARY_PATH=/usr/local/lib
 ENV TNG_DEFAULT_UID="${TNG_UID}"
 ENV TNG_DEFAULT_GID="${TNG_GID}"
-ENV TNG_PACKAGED_RTORRENT_VERSION=0.16.11
-ENV TNG_PACKAGED_LIBTORRENT_VERSION=0.16.11
-ENV TNG_RTORRENT_PATCHES=rtorrent-0.16.11-user-agent-command,rtorrent-0.16.11-local-id-command,rtorrent-0.16.11-multicall-range,rtorrent-0.16.11-tracker-identity-gate,rtorrent-0.16.11-unlimited-queue-refill,rtorrent-0.16.11-scgi-accept-eagain
+ENV TNG_PACKAGED_RTORRENT_VERSION=0.16.28
+ENV TNG_PACKAGED_LIBTORRENT_VERSION=0.16.28
+ENV TNG_RTORRENT_PATCHES=rtorrent-0.16.28-user-agent-command,rtorrent-0.16.28-local-id-command,rtorrent-0.16.28-multicall-range,rtorrent-0.16.28-tracker-identity-gate,rtorrent-0.16.28-unlimited-queue-refill,rtorrent-0.16.28-scgi-task-ring
 
 LABEL org.opencontainers.image.title="TorrentNG Compatible-Client Service" \
       org.opencontainers.image.description="TorrentNG compatible-client WebUI/API service for existing qBittorrent, rTorrent, Transmission, and Deluge deployments." \

@@ -34,7 +34,7 @@ const TORRENT_FIELDS: &[&str] = &[
 pub const MULTICALL_RANGE_PAGE_SIZE: i64 = 100;
 const MAX_LEGACY_FULL_LIST_ENTRIES: usize = 10_000;
 
-const RTORRENT_MULTICALL_RANGE_PATCH: &str = "rtorrent-0.16.11-multicall-range";
+const RTORRENT_MULTICALL_RANGE_PATCH: &str = "rtorrent-0.16.28-multicall-range";
 const LEGACY_RTORRENT_NONZERO_RATE_PATCH: &str = "rtorrent-0.16.11-multicall-nonzero-rate";
 const LEGACY_RTORRENT_LIVE_SUMMARY_PATCH: &str = "rtorrent-0.16.11-tng-live-summary";
 const RTORRENT_DEFAULT_SAVE_PATH: &str = "/downloads/temp";
@@ -907,7 +907,7 @@ mod tests {
     #[test]
     fn multicall_range_patch_enables_bounded_live_features() {
         assert!(rtorrent_patch_manifest_enables_bounded_live(
-            "rtorrent-0.16.11-user-agent-command,rtorrent-0.16.11-multicall-range"
+            "rtorrent-0.16.28-user-agent-command,rtorrent-0.16.28-multicall-range"
         ));
     }
 
@@ -924,7 +924,7 @@ mod tests {
     #[test]
     fn unrelated_patch_manifest_does_not_enable_bounded_live_features() {
         assert!(!rtorrent_patch_manifest_enables_bounded_live(
-            "rtorrent-0.16.11-user-agent-command"
+            "rtorrent-0.16.28-user-agent-command"
         ));
     }
 
@@ -1004,7 +1004,7 @@ mod tests {
     fn rtorrent_peer_id_default_is_valid() {
         assert_eq!(crate::config::DEFAULT_PEER_ID.len(), 20);
         assert!(crate::config::DEFAULT_PEER_ID.is_ascii());
-        assert!(crate::config::DEFAULT_PEER_ID.starts_with("-lt100B-"));
+        assert!(crate::config::DEFAULT_PEER_ID.starts_with("-lt101C-"));
     }
 
     #[test]

@@ -1,0 +1,39 @@
+diff --git a/src/rpc/scgi.cc b/src/rpc/scgi.cc
+index e009b2c..4464fb0 100644
+--- a/src/rpc/scgi.cc
++++ b/src/rpc/scgi.cc
+@@ -149,11 +149,15 @@ SCgi::event_read() {
+   while (true) {
+     // TODO: Optimize this by keeping track of count.
+     auto prev = m_current;
+-
+-    m_current = std::find_if(m_current + 1, m_tasks.end(), [](const auto& task) { return !task->is_open(); });
+-
+-    if (m_current == m_tasks.end())
+-      m_current = std::find_if(m_tasks.begin(), prev, [](const auto& task) { return !task->is_open(); });
++    auto next = std::find_if(m_current + 1, m_tasks.end(), [](const auto& task) { return !task->is_open(); });
++
++    if (next == m_tasks.end()) {
++      const auto wrap_end = prev + 1;
++      next = std::find_if(m_tasks.begin(), wrap_end, [](const auto& task) { return !task->is_open(); });
++      // find_if returns the end of the searched range, not m_tasks.end().
++      if (next == wrap_end)
++        next = m_tasks.end();
++    }
+ 
+     int fd = torrent::fd_accept(file_descriptor());
+ 
+@@ -175,11 +179,12 @@ SCgi::event_read() {
+       throw torrent::resource_error("Listener port accept() failed: " + std::string(std::strerror(errno)));
+     }
+ 
+-    if (m_current == prev) {
++    if (next == m_tasks.end()) {
+       torrent::fd_close(fd);
+       continue;
+     }
+ 
++    m_current = next;
+     auto open_func = [this, fd, task = m_current->get()]() {
+         task->open(this, fd);
+       };

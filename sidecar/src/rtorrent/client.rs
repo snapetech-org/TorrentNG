@@ -127,7 +127,7 @@ impl Client {
     /// connection + request/response per call. rTorrent processes them in
     /// array order within a single request; each entry reports its own
     /// success/fault independently of the others. Confirmed supported by
-    /// this project's patched rTorrent 0.16.11 build (see docs/TRACKER-IDENTITY.md
+    /// this project's patched rTorrent 0.16.28 build (see docs/TRACKER-IDENTITY.md
     /// for the other rTorrent patches this codebase carries).
     ///
     /// `calls` is `(method, single_arg)` pairs, e.g. `("d.stop", hash)`.
@@ -941,7 +941,7 @@ fn describe_xml_value(value: &XmlValue) -> String {
 /// input call. Per the XMLRPC multicall convention: a successful entry is
 /// a one-element array wrapping the real return value; a failed entry is a
 /// `{faultCode, faultString}` struct. Confirmed against this project's
-/// patched rTorrent 0.16.11 build via a raw SCGI probe (both shapes).
+/// patched rTorrent 0.16.28 build via a raw SCGI probe (both shapes).
 fn parse_multicall_response(
     response: XmlValue,
     expected_count: usize,
@@ -1203,7 +1203,7 @@ mod multicall_tests {
     use super::*;
 
     // Exact shapes observed from a real raw SCGI probe against this
-    // project's patched rTorrent 0.16.11 build:
+    // project's patched rTorrent 0.16.28 build:
     //   success: <value><array><data><value><i8>0</i8></value></data></array></value>
     //   fault:   <value><struct><member><name>faultCode</name>...
     //                    <member><name>faultString</name>

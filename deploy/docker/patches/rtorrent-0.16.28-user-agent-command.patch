@@ -1,0 +1,21 @@
+diff --git a/src/command_network.cc b/src/command_network.cc
+index bb1d19d..bcdd17a 100644
+--- a/src/command_network.cc
++++ b/src/command_network.cc
+@@ -347,6 +347,8 @@ initialize_command_network() {
+   CMD_ANY_STRING_V("network.http.capath.set",                [http_stack](auto, auto& str)   { return http_stack->set_http_capath(str); });
+   CMD_ANY         ("network.http.dns_cache_timeout",         [http_stack](auto, auto)        { return http_stack->dns_timeout(); });
+   CMD_ANY_VALUE_V ("network.http.dns_cache_timeout.set",     [http_stack](auto, auto& value) { return http_stack->set_dns_timeout(value); });
++  CMD_ANY         ("network.http.user_agent",                [http_stack](auto, auto) { return http_stack->user_agent(); });
++  CMD_ANY_STRING_V("network.http.user_agent.set",            [http_stack](auto, auto& str) { return http_stack->set_user_agent(str); });
+   CMD_ANY         ("network.http.current_open",              [http_stack](auto, auto)        { return http_stack->size(); });
+   CMD_ANY         ("network.http.max_cache_connections",     [http_stack](auto, auto)        { return http_stack->max_cache_connections(); });
+   CMD_ANY_VALUE_V ("network.http.max_cache_connections.set", [http_stack](auto, auto& value) { return http_stack->set_max_cache_connections(value); });
+@@ -458,6 +460,7 @@ initialize_command_network() {
+ 
+   rpc::rpc.mark_safe("network.http.cacert");
+   rpc::rpc.mark_safe("network.http.capath");
++  rpc::rpc.mark_safe("network.http.user_agent");
+   rpc::rpc.mark_safe("network.proxy.global");
+   rpc::rpc.mark_safe("network.proxy.http");
+   rpc::rpc.mark_safe("network.scgi.dont_route");

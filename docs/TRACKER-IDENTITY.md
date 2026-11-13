@@ -1,11 +1,11 @@
 # Tracker Identity
 
-TorrentNG pins one tracker-facing rTorrent 0.16.11 identity **family** for
+TorrentNG pins one tracker-facing rTorrent 0.16.28 identity **family** for
 the TorrentNG client and the compatible rTorrent integration:
 
 ```toml
-user_agent = "rtorrent/0.16.11/0.16.11"
-peer_id_prefix = "-lt100B-"
+user_agent = "rtorrent/0.16.28/0.16.28"
+peer_id_prefix = "-lt101C-"
 ```
 
 The peer ID is exactly 20 ASCII bytes: the 8-byte prefix above plus a
@@ -44,7 +44,7 @@ purely the static
 peer_id suffix. Fixed by generating a random 12-byte suffix per install and
 persisting it (`crates/rt-engine/src/peer_id.rs::init`,
 `sidecar/src/identity.rs::load_or_generate_peer_id`), so every install
-still presents the `-lt100B-` family prefix (needed for trackers that
+still presents the `-lt101C-` family prefix (needed for trackers that
 whitelist known clients) but a suffix unique to that one install.
 
 **Do not revert the suffix to a shared/hardcoded value.** If you need a
@@ -60,12 +60,12 @@ multi-clienting, produced the earlier flag before removing a standing ban.
 
 ## Source Of Truth
 
-This pair is derived from upstream rTorrent/libtorrent 0.16.11 source:
+This pair is derived from upstream rTorrent/libtorrent 0.16.28 source:
 
-- libtorrent `configure.ac` sets `PEER_NAME` to `-lt100B-` for 0.16.11.
+- libtorrent `configure.ac` sets `PEER_NAME` to `-lt101C-` for 0.16.28.
 - rTorrent `configure.ac` builds `USER_AGENT` as `PACKAGE/VERSION/` plus
-  `torrent::version()`, which is `rtorrent/0.16.11/0.16.11` when linked with
-  libtorrent 0.16.11.
+  `torrent::version()`, which is `rtorrent/0.16.28/0.16.28` when linked with
+  libtorrent 0.16.28.
 
 Both halves matter. Private trackers can reject a client when the peer ID family
 and HTTP User-Agent do not match the client/version pair they allow.
@@ -87,7 +87,7 @@ the same way, in priority order:
    written to that same file so future restarts stay on the same identity.
 
 The compatible rTorrent integration additionally treats `rtorrent.peer_id` in `config.toml` as a
-sentinel: if it is still exactly `-lt100B-000000000000` after config-file and
+sentinel: if it is still exactly `-lt101C-000000000000` after config-file and
 env overrides are applied (i.e. nobody actually customized it), `Config::load`
 resolves and persists a real per-install id in its place before startup
 continues. This makes upgrading self-healing — an old config file or deploy
@@ -103,16 +103,16 @@ and peer-wire code) reads the value `init` resolved.
 Explicit overrides:
 
 ```sh
-TNG_USER_AGENT="rtorrent/0.16.11/0.16.11" \
-TNG_PEER_ID="-lt100B-000000000000" \
+TNG_USER_AGENT="rtorrent/0.16.28/0.16.28" \
+TNG_PEER_ID="-lt101C-000000000000" \
 torrentngd
 ```
 
 Legacy override names also exist for TorrentNG-client compatibility:
 
 ```sh
-TORRENTNG_USER_AGENT="rtorrent/0.16.11/0.16.11"
-TORRENTNG_PEER_ID="-lt100B-000000000000"
+TORRENTNG_USER_AGENT="rtorrent/0.16.28/0.16.28"
+TORRENTNG_PEER_ID="-lt101C-000000000000"
 ```
 
 Only set `TNG_PEER_ID`/`TORRENTNG_PEER_ID` to a literal like the example
@@ -128,15 +128,15 @@ above (packaged configs no longer set it):
 
 ```toml
 [rtorrent]
-user_agent = "rtorrent/0.16.11/0.16.11"
+user_agent = "rtorrent/0.16.28/0.16.28"
 # peer_id intentionally omitted — see "Per-install peer ID generation"
 ```
 
 Explicit override (only for pinning a specific install, not for templates):
 
 ```sh
-TNG_USER_AGENT="rtorrent/0.16.11/0.16.11"
-TNG_PEER_ID="-lt100B-000000000000"
+TNG_USER_AGENT="rtorrent/0.16.28/0.16.28"
+TNG_PEER_ID="-lt101C-000000000000"
 ```
 
 The compatible integration also accepts `RTNG_USER_AGENT` and `RTNG_PEER_ID` for older host
@@ -175,7 +175,8 @@ manual file edits are required:
 - **TorrentNG client (`torrentngd`)**: on next start, `peer_id::init` finds no
   `<session_dir>/peer_id_suffix`, generates one, and persists it.
 - **Compatible rTorrent integration**: on next start, `Config::load` sees `rtorrent.peer_id` is
-  still the sentinel `-lt100B-000000000000` (whether from an old packaged
+  still a current or legacy sentinel (`-lt101C-000000000000` or
+  `-lt100B-000000000000`, whether from an old packaged
   config file or from having never set it) and replaces it with a generated,
   persisted id — unless the config or `TNG_PEER_ID`/`RTNG_PEER_ID` was
   explicitly set to something else, which is left untouched.
@@ -193,11 +194,11 @@ Do not use these:
 
 | Bad value | Why it is wrong |
 |---|---|
-| `user_agent = "rtorrent/0.16.11"` | Strips the linked libtorrent version from rTorrent's upstream User-Agent. |
-| `peer_id = "rtorrent/0.16.11/000"` | Starts with `rto`; trackers parse it as the wrong client family. |
-| `peer_id = "-lt1011-000000000000"` | Guessed decimal version encoding; upstream libtorrent 0.16.11 uses `-lt100B-`. |
+| `user_agent = "rtorrent/0.16.28"` | Strips the linked libtorrent version from rTorrent's upstream User-Agent. |
+| `peer_id = "rtorrent/0.16.28/000"` | Starts with `rto`; trackers parse it as the wrong client family. |
+| `peer_id = "-lt1011-000000000000"` | Guessed decimal version encoding; upstream libtorrent 0.16.28 uses `-lt101C-`. |
 | Any hardcoded/shared 12-byte peer_id suffix, in code, a config template, or a fleet-wide env var | Recreates the 2026-09 MAM multi-client incident above — the suffix must be generated per install, never shared. |
-| `libtorrent-0.16.11-rtorrent-peer-name.patch` | Wrong fix path; do not patch libtorrent's upstream peer name for this. |
+| `libtorrent-0.16.28-rtorrent-peer-name.patch` | Wrong fix path; do not patch libtorrent's upstream peer name for this. |
 
 ## Verification
 
@@ -209,9 +210,9 @@ xmlrpc localhost network.http.user_agent
 xmlrpc localhost d.multicall.range '' main 0 5 d.hash= d.local_id=
 ```
 
-Expected: `network.http.user_agent` is `rtorrent/0.16.11/0.16.11`, and
-`d.local_id` (hex) starts with the prefix bytes for `-lt100B-`
-(`2D6C74313030422D`) followed by 12 bytes that are **not** all `30`
+Expected: `network.http.user_agent` is `rtorrent/0.16.28/0.16.28`, and
+`d.local_id` (hex) starts with the prefix bytes for `-lt101C-`
+(`2D6C74313031432D`) followed by 12 bytes that are **not** all `30`
 (ASCII `0`) — an all-`30` suffix means resolution fell back to the historical
 sentinel and something is wrong (check `data_dir`/`session_dir` is writable).
 
@@ -238,10 +239,10 @@ independent installs. The image should also contain the upstream peer
 prefix:
 
 ```sh
-strings /usr/local/lib/libtorrent.so | grep -E -- '-lt100B-|-lt1011-'
+strings /usr/local/lib/libtorrent.so | grep -E -- '-lt101C-|-lt1011-'
 printenv TNG_USER_AGENT RTNG_USER_AGENT
 ```
 
-Expected result: `-lt100B-` is present, `-lt1011-` is absent, and any
+Expected result: `-lt101C-` is present, `-lt1011-` is absent, and any
 `TNG_USER_AGENT` or `RTNG_USER_AGENT` override is
-`rtorrent/0.16.11/0.16.11`.
+`rtorrent/0.16.28/0.16.28`.

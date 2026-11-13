@@ -1,0 +1,33 @@
+diff --git a/src/command_download.cc b/src/command_download.cc
+index d8c0b4f..9190113 100644
+--- a/src/command_download.cc
++++ b/src/command_download.cc
+@@ -657,11 +657,20 @@ int64_t            cg_d_group(core::Download* download);
+ const std::string& cg_d_group_name(core::Download* download);
+ void               cg_d_group_set(core::Download* download, const torrent::Object& arg);
+ 
++void
++apply_d_local_id(core::Download* download, const std::string& local_id) {
++  if (local_id.size() != 20)
++    throw torrent::input_error("invalid argument: local id must be exactly 20 bytes");
++
++  const_cast<torrent::DownloadInfo*>(download->info())->mutable_local_id().assign(local_id.c_str());
++}
++
+ void
+ initialize_command_download() {
+   CMD2_DL("d.hash",                           [](auto* download, auto) { return torrent::utils::transform_to_hex_str(download->info()->hash()); });
+   CMD2_DL("d.local_id",                       [](auto* download, auto) { return torrent::utils::transform_to_hex_str(download->info()->local_id()); });
+   CMD2_DL("d.local_id_html",                  [](auto* download, auto) { return torrent::utils::copy_escape_html_str(download->info()->local_id()); });
++  CMD2_DL_STRING_V("d.local_id.set", std::bind(&apply_d_local_id, std::placeholders::_1, std::placeholders::_2));
+   CMD2_DL("d.bitfield",                       [](auto* download, auto) { return torrent::utils::transform_to_hex_str(*download->download()->file_list()->bitfield()); });
+   CMD2_DL("d.base_path",                      [](auto* download, auto) { return retrieve_d_base_path(download).str(); });
+   CMD2_DL("d.base_path.hex",                  [](auto* download, auto) { return retrieve_d_base_path(download).object_hex(); });
+@@ -933,6 +942,7 @@ initialize_command_download() {
+   rpc::rpc.mark_safe("d.hash");
+   rpc::rpc.mark_safe("d.local_id");
+   rpc::rpc.mark_safe("d.local_id_html");
++  rpc::rpc.mark_safe("d.local_id.set");
+   rpc::rpc.mark_safe("d.bitfield");
+   rpc::rpc.mark_safe("d.base_path");
+   rpc::rpc.mark_safe("d.base_path.realpath.or_empty");

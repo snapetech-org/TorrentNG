@@ -1,0 +1,14 @@
+diff --git a/src/command_scheduler.cc b/src/command_scheduler.cc
+index 19bf218..cd0c4aa 100644
+--- a/src/command_scheduler.cc
++++ b/src/command_scheduler.cc
+@@ -31,7 +31,8 @@ cmd_scheduler_simple_removed(core::Download* download) {
+   unsigned int numActive = viewActive->size_visible();
+   int64_t maxActive = rpc::call_command("scheduler.max_active", torrent::Object()).as_value();
+ 
+-  if ((int64_t)numActive >= maxActive)
++  // A negative max_active value means there is no active-torrent limit.
++  if (maxActive >= 0 && (int64_t)numActive >= maxActive)
+     return torrent::Object();
+ 
+   // The 'started' view contains all the views we may choose amongst.

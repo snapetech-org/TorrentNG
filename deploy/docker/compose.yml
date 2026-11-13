@@ -37,7 +37,7 @@ services:
       TNG_RTORRENT_OVERLAY: /var/lib/torrentng/rtorrent-ui-overlay.rc
       TNG_SECRET_KEY: "${TNG_SECRET_KEY:?TNG_SECRET_KEY must be set to a random secret}"
       TNG_API_TOKENS: "${TNG_API_TOKENS:?TNG_API_TOKENS must be set to one or more tokens}"
-      TNG_USER_AGENT: "${TNG_USER_AGENT:-rtorrent/0.16.11/0.16.11}"
+      TNG_USER_AGENT: "${TNG_USER_AGENT:-rtorrent/0.16.28/0.16.28}"
       # TNG_PEER_ID is deliberately not defaulted here: the compatible-client service generates
       # and persists a unique per-install id under data_dir on first start
       # (see docs/TRACKER-IDENTITY.md). Set TNG_PEER_ID only to pin a value.

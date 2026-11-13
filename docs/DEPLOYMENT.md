@@ -24,7 +24,7 @@ Choose the application that owns transfers before configuring it:
 
 ## Phase 1 bundle
 
-The Phase 1 bundle packages rTorrent 0.16.11, libtorrent 0.16.11, ruTorrent 5.3.1, nginx, PHP-FPM, and the TorrentNG engine profile.
+The Phase 1 bundle packages rTorrent 0.16.28, libtorrent 0.16.28, ruTorrent 5.3.1, nginx, PHP-FPM, and the TorrentNG engine profile.
 
 Build and start:
 
@@ -290,16 +290,15 @@ curl -H "Authorization: Bearer $TNG_API_TOKEN" http://localhost:28080/api/v1/eng
 ```
 
 `/api/v1/engine` reports packaged/live rTorrent versions, bundled patch provenance, rTorrent HTTP tracker-stack settings, available XMLRPC capabilities, and drift from `engine-profile/rtorrent.rc`.
-The drift gate intentionally checks only settings with stable readback commands in rTorrent `0.16.11`; set-only commands such as `protocol.encryption.set` and `dht.mode.set` remain covered by the packaged profile and source-controlled config.
+The drift gate intentionally checks only settings with stable readback commands in rTorrent `0.16.28`; set-only commands such as `protocol.encryption.set` and `dht.mode.set` remain covered by the packaged profile and source-controlled config.
 
 The Docker image declares the packaged rTorrent patches in
 `TNG_RTORRENT_PATCHES`. Production-like deployments should verify
 `d.multicall.range` and `tng.live_summary` through `/api/v1/engine/commands`
 or startup logs before relying on large-list compatible-client synchronization.
-The compatible-client image also carries
-`rtorrent-0.16.11-scgi-accept-eagain`, which returns from rTorrent's full-task
-SCGI accept loop when a nonblocking `accept()` has no queued connection and
-checks the current task slot when wrapping the 100-slot task ring.
+rTorrent 0.16.28's SCGI accept loop handles nonblocking accept errors and
+full task slots upstream. `engine-profile/build/check-scgi-accept-regression.py`
+compiles that exact upstream handler with deterministic socket fixtures.
 The service must keep rTorrent's leading XMLRPC target argument on patched
 calls; for global calls that argument is the empty string, followed by the
 view/range parameters.

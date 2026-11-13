@@ -5,8 +5,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 
 const PRESETS = [
-  { label: 'rTorrent 0.16.11',     value: 'rtorrent/0.16.11/0.16.11' },
-  { label: 'libtorrent 0.16.11',   value: 'libtorrent/0.16.11' },
+  { label: 'rTorrent 0.16.28',     value: 'rtorrent/0.16.28/0.16.28' },
+  { label: 'libtorrent 0.16.28',   value: 'libtorrent/0.16.28' },
   { label: 'qBittorrent 5.0.0',    value: 'qBittorrent/5.0.0' },
   { label: 'Deluge 2.2.0',         value: 'Deluge/2.2.0 libtorrent/2.0.10' },
 ]

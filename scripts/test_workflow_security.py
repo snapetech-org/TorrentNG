@@ -649,6 +649,28 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("type: RuntimeDefault", statefulset)
         self.assertIn("automountServiceAccountToken: false", statefulset)
 
+    def test_rtorrent_builds_pin_the_current_upstream_pair_and_local_patches(self) -> None:
+        dockerfile = (ROOT / "deploy/docker/Dockerfile").read_text(encoding="utf-8")
+        phase1 = (ROOT / "deploy/docker/Dockerfile.phase1").read_text(encoding="utf-8")
+
+        for source in (dockerfile, phase1):
+            self.assertIn("RTORRENT_COMMIT=0c23d278a7838402d4cec9689bf71e051332be67", source)
+            self.assertIn("LIBTORRENT_COMMIT=392030e0fddbe4e423d059d9322382cf44aaaaf6", source)
+            self.assertIn("TNG_PACKAGED_RTORRENT_VERSION=0.16.28", source)
+            self.assertIn("TNG_PACKAGED_LIBTORRENT_VERSION=0.16.28", source)
+            self.assertNotIn("0.16.11", source)
+
+        for patch in (
+            "user-agent-command",
+            "local-id-command",
+            "multicall-range",
+            "tracker-identity-gate",
+            "unlimited-queue-refill",
+            "scgi-task-ring",
+        ):
+            self.assertIn(f"rtorrent-0.16.28-{patch}.patch", dockerfile)
+        self.assertIn("rtorrent-0.16.28-user-agent-command.patch", phase1)
+
     def test_default_rtorrent_settings_overlay_uses_persistent_writable_state(self) -> None:
         compose = (ROOT / "deploy/docker/compose.yml").read_text(encoding="utf-8")
         entrypoint = (ROOT / "deploy/docker/entrypoint.sh").read_text(encoding="utf-8")
