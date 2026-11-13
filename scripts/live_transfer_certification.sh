@@ -21,6 +21,8 @@ python3 "$ROOT/scripts/protected_target.py" "$TNG_HOST_URL"
 COMPOSE_PROJECT="${CERT_COMPOSE_PROJECT:-certification}"
 COMPOSE_NETWORK="${CERT_COMPOSE_NETWORK:-${COMPOSE_PROJECT}_default}"
 DOWNLOADS_VOLUME="${CERT_DOWNLOADS_VOLUME:-${COMPOSE_PROJECT}_downloads}"
+RUNTIME_UID="${CERT_RUNTIME_UID:-${PUID:-1000}}"
+RUNTIME_GID="${CERT_RUNTIME_GID:-${PGID:-1000}}"
 FIXTURE_ID_SEED="${CERT_FIXTURE_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 FIXTURE_BYTES="${CERT_FIXTURE_BYTES:-1048576}"
 PUBLIC_TORRENT_URL="${PUBLIC_TORRENT_URL:-https://mirror.arizona.edu/debian-cd/current/amd64/bt-cd/debian-13.4.0-amd64-netinst.iso.torrent}"
@@ -46,6 +48,13 @@ if [[ "$PUBLIC_TRANSFER" != "0" && "$PUBLIC_TRANSFER" != "1" ]]; then
   echo "PUBLIC_TRANSFER must be 0 or 1" >&2
   exit 2
 fi
+for identity_name in RUNTIME_UID RUNTIME_GID; do
+  identity_value="${!identity_name}"
+  if [[ ! "$identity_value" =~ ^[1-9][0-9]{0,8}$ ]]; then
+    echo "$identity_name must be a nonzero numeric ID" >&2
+    exit 2
+  fi
+done
 for timeout_name in TRANSFER_TIMEOUT_SECS PUBLIC_TIMEOUT_SECS; do
   timeout_value="${!timeout_name}"
   if [[ ! "$timeout_value" =~ ^[0-9]{1,5}$ ]]; then
@@ -202,10 +211,14 @@ fi
 delete_category_torrents "$LOCAL_CATEGORY"
 delete_category_torrents "$PUBLIC_CATEGORY"
 
-docker run -d --rm --name "$TRACKER_NAME" --network "$COMPOSE_NETWORK" alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
-  sh -lc 'apk add --no-cache opentracker >/dev/null && exec opentracker -i 0.0.0.0 -p 6969 -P 6969' >/dev/null
-sleep 2
-mark "local tracker" "PASS" "$TRACKER_NAME listening on http://$TRACKER_NAME:6969/announce"
+docker run -d --rm --name "$TRACKER_NAME" --network "$COMPOSE_NETWORK" \
+  lednerb/opentracker-docker@sha256:a055447e44450036b7b2a923618b12d4ecf1eff3c894e969cc2c42f466b2c6f6 >/dev/null
+if docker run --rm --network "$COMPOSE_NETWORK" alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
+  sh -lc "for attempt in \$(seq 1 20); do nc -z -w 1 $TRACKER_NAME 6969 && exit 0; sleep 1; done; exit 1"; then
+  mark "local tracker" "PASS" "$TRACKER_NAME accepts HTTP connections on port 6969"
+else
+  mark "local tracker" "FAIL" "$TRACKER_NAME did not accept HTTP connections on port 6969"
+fi
 
 docker run --rm --network "$COMPOSE_NETWORK" -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -lc "
   set -e
@@ -213,10 +226,17 @@ docker run --rm --network "$COMPOSE_NETWORK" -v "$DOWNLOADS_VOLUME:/downloads" a
   mkdir -p /downloads/$FIXTURE_DOWNLOAD_DIR/seed /downloads/$FIXTURE_DOWNLOAD_DIR/leech
   dd if=/dev/urandom of=/downloads/$FIXTURE_DOWNLOAD_DIR/seed/tng-fixture.bin bs=$FIXTURE_BYTES count=1 status=none
   mktorrent -a http://$TRACKER_NAME:6969/announce -o /downloads/$FIXTURE_DOWNLOAD_DIR/tng-fixture.torrent /downloads/$FIXTURE_DOWNLOAD_DIR/seed/tng-fixture.bin >/dev/null
+  chown -R $RUNTIME_UID:$RUNTIME_GID /downloads/$FIXTURE_DOWNLOAD_DIR
 "
 docker run --rm -v "$DOWNLOADS_VOLUME:/downloads:ro" alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
   cat "/downloads/$FIXTURE_DOWNLOAD_DIR/tng-fixture.torrent" > "$FIXTURE_TORRENT_FILE"
 mark "fixture torrent" "PASS" "$FIXTURE_BYTES byte torrent generated in Docker volume"
+owner="$(docker run --rm -v "$DOWNLOADS_VOLUME:/downloads:ro" alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf stat -c '%u:%g' "/downloads/$FIXTURE_DOWNLOAD_DIR/leech")"
+if [[ "$owner" == "$RUNTIME_UID:$RUNTIME_GID" ]]; then
+  mark "fixture ownership" "PASS" "download directory is writable by TorrentNG runtime $owner"
+else
+  mark "fixture ownership" "FAIL" "download directory owner is $owner, expected $RUNTIME_UID:$RUNTIME_GID"
+fi
 
 docker run -d --rm --name "$SEEDER_NAME" --network "$COMPOSE_NETWORK" -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
   sh -lc "apk add --no-cache transmission-cli >/dev/null && exec transmission-cli -w /downloads/$FIXTURE_DOWNLOAD_DIR/seed /downloads/$FIXTURE_DOWNLOAD_DIR/tng-fixture.torrent" >/dev/null
@@ -240,13 +260,29 @@ else
   mark "TorrentNG add local fixture file" "FAIL" "HTTP $code body=$(tr '\n' ' ' <"$BODY")"
 fi
 
+row="$(wait_for_torrent "tng-fixture.bin" 0 30 || true)"
+hash="$(jq -r '.hash // empty' <<<"${row:-null}" 2>/dev/null || true)"
+if [[ -n "$hash" ]]; then
+  code="$(curl -q -sS --noproxy "*" -o "$BODY" -w '%{http_code}' -b "$COOKIE_JAR" \
+    "$TNG_HOST_URL/api/qb/v2/torrents/trackers?hash=$hash" || true)"
+  if [[ "$code" == "200" ]] && jq -e 'type == "array" and length > 0' "$BODY" >/dev/null; then
+    mark "qB tracker listing" "PASS" "HTTP 200 with $(jq 'length' "$BODY") tracker row(s)"
+  else
+    mark "qB tracker listing" "FAIL" "HTTP $code body=$(tr '\n' ' ' <"$BODY")"
+  fi
+else
+  mark "qB tracker listing" "FAIL" "torrent row missing after accepted add"
+fi
+
 if row="$(wait_for_torrent "tng-fixture.bin" 1)"; then
   mark "local fixture transfer" "PASS" "$(jq -r '"progress=\(.progress) size=\(.size) downloaded=\(.downloaded)"' <<<"$row")"
 elif docker run --rm -v "$DOWNLOADS_VOLUME:/downloads:ro" alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
   sh -lc "test \"\$(wc -c </downloads/$FIXTURE_DOWNLOAD_DIR/leech/tng-fixture.bin 2>/dev/null || echo 0)\" -eq $FIXTURE_BYTES"; then
   mark "local fixture transfer" "PASS" "peer payload completed on disk; qBit cache did not report before timeout"
 else
-  mark "local fixture transfer" "FAIL" "fixture did not complete within timeout"
+  row="$(curl -q -sS --noproxy "*" -b "$COOKIE_JAR" "$TNG_HOST_URL/api/qb/v2/torrents/info?category=$LOCAL_CATEGORY" \
+    | jq -c '.[0] | {state,progress,downloaded,size,num_seeds,num_leechs,dlspeed} // empty' || true)"
+  mark "local fixture transfer" "FAIL" "fixture did not complete within timeout; latest=${row:-none}"
 fi
 
 code="$(curl -q -sS --noproxy "*" -o "$BODY" -w '%{http_code}' -b "$COOKIE_JAR" \
