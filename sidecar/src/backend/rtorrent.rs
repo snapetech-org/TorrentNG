@@ -4,6 +4,7 @@ use std::{collections::HashSet, sync::Arc};
 
 use super::{BackendCapabilities, BackendStatus, BackendType, RemoveOutcome, TorrentBackend};
 use crate::rtorrent::{
+    client::global_target_args,
     files::RawFile,
     torrents::{LiveSummary, RawTorrent},
     trackers::RawTracker,
@@ -252,13 +253,15 @@ impl TorrentBackend for RtorrentBackend {
 
     async fn set_dht(&self, enabled: bool) -> Result<()> {
         let mode = if enabled { "auto" } else { "disable" };
-        self.client.call("dht.mode.set", &[mode.into()]).await?;
+        self.client
+            .call("dht.mode.set", &global_target_args(mode.into()))
+            .await?;
         Ok(())
     }
 
     async fn set_pex(&self, enabled: bool) -> Result<()> {
         self.client
-            .call("protocol.pex.set", &[enabled.into()])
+            .call("protocol.pex.set", &global_target_args(enabled.into()))
             .await?;
         Ok(())
     }

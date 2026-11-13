@@ -46,7 +46,7 @@ use crate::cache::{
     ratio::{validate_ratio_group, MAX_RATIO_GROUPS},
     views::validate_saved_view,
 };
-use crate::rtorrent::{engine::ProbeValue, XmlValue};
+use crate::rtorrent::{client::global_target_args, engine::ProbeValue, XmlValue};
 use crate::safe_file::open_regular_read;
 
 const MAX_RSS_RULE_ID_BYTES: usize = 128;
@@ -858,8 +858,8 @@ pub async fn set_rtorrent_settings(
                 restart_required = true;
                 continue;
             }
-            let arg = xml_arg(desc, value);
-            match s.rt.call(desc.setter, &[arg]).await {
+            let args = global_target_args(xml_arg(desc, value));
+            match s.rt.call(desc.setter, &args).await {
                 Ok(_) => applied.push(desc.key.to_owned()),
                 Err(e) => {
                     restart_required = true;
@@ -5061,6 +5061,7 @@ mod tests {
         RTORRENT_MANAGED_END,
     };
     use crate::cache::TorrentLiveRow;
+    use crate::rtorrent::XmlValue;
     use std::collections::BTreeMap;
     use tokio::io::{duplex, AsyncWriteExt};
 
@@ -5191,6 +5192,26 @@ mod tests {
         assert_eq!(merged.get("max_uploads"), Some(&"77".to_owned()));
         assert_eq!(merged.get("max_downloads"), Some(&"88".to_owned()));
         assert_eq!(custom, "custom.setting = yes");
+    }
+
+    #[test]
+    fn rtorrent_setting_rpc_args_include_global_target_and_typed_value() {
+        let settings = rtorrent_settings();
+        let integer_setting = settings
+            .iter()
+            .find(|setting| setting.key == "http_max_host_connections")
+            .unwrap();
+        let args = super::global_target_args(super::xml_arg(integer_setting, "64"));
+        assert!(matches!(&args[0], XmlValue::String(target) if target.is_empty()));
+        assert_eq!(args[1].as_i64(), Some(64));
+
+        let boolean_setting = settings
+            .iter()
+            .find(|setting| setting.key == "hash_on_completion")
+            .unwrap();
+        let args = super::global_target_args(super::xml_arg(boolean_setting, "yes"));
+        assert!(matches!(&args[0], XmlValue::String(target) if target.is_empty()));
+        assert_eq!(args[1].as_bool(), Some(true));
     }
 
     #[test]

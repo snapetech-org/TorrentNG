@@ -406,6 +406,13 @@ impl From<bool> for XmlValue {
     }
 }
 
+/// rTorrent's XMLRPC/JSON-RPC bridge expects an explicit target argument for
+/// global (`ANY`) commands. An empty string selects the global target; the
+/// command's value is the second argument.
+pub(crate) fn global_target_args(value: XmlValue) -> [XmlValue; 2] {
+    [XmlValue::String(String::new()), value]
+}
+
 fn xml_to_json(value: &XmlValue) -> Value {
     match value {
         XmlValue::String(s) | XmlValue::Base64(s) => Value::String(s.clone()),
@@ -1201,6 +1208,17 @@ fn read_text_string(reader: &mut Reader<&[u8]>, end: QName<'_>) -> Result<String
 #[cfg(test)]
 mod multicall_tests {
     use super::*;
+
+    #[test]
+    fn global_setting_calls_include_an_empty_target_argument() {
+        let args = global_target_args(64_i64.into());
+        assert!(matches!(&args[0], XmlValue::String(target) if target.is_empty()));
+        assert_eq!(args[1].as_i64(), Some(64));
+
+        let args = global_target_args(true.into());
+        assert!(matches!(&args[0], XmlValue::String(target) if target.is_empty()));
+        assert_eq!(args[1].as_bool(), Some(true));
+    }
 
     // Exact shapes observed from a real raw SCGI probe against this
     // project's patched rTorrent 0.16.28 build:
