@@ -41,7 +41,7 @@ $encoding = [System.Text.UTF8Encoding]::new($false)
 $writer = [System.IO.StreamWriter]::new($env:GITHUB_ENV, $true, $encoding)
 try {
   foreach ($name in @('PATH', 'INCLUDE', 'LIB', 'LIBPATH')) {
-    $writer.WriteLine('{0}={1}' -f $name, $toolchainEnvironment[$name])
+    $writer.WriteLine($name + '=' + [string]$toolchainEnvironment[$name])
   }
 } finally {
   $writer.Dispose()

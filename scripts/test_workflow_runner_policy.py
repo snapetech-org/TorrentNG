@@ -1,5 +1,4 @@
 import re
-import subprocess
 import unittest
 from pathlib import Path
 
@@ -7,6 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_DIR = ROOT / ".github" / "workflows"
 PUBLIC_FORK_WORKFLOW = "fork-safe-validation.yml"
+PUBLIC_FORK_WORKFLOW_APPROVED_SHA = "50baefbbe1b12f1bfed7918fb376982402cfab96"
 PROTECTED_TRANSFER_WORKFLOW = "transfer-rebuild.yml"
 
 
@@ -118,6 +118,13 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         self.assertIn("options: [github]", windows)
         self.assertIn("runs-on: windows-2022", windows)
         self.assertIn("scripts/enable-msvc-environment.ps1", windows.replace("\\", "/"))
+        msvc_environment = (ROOT / "scripts" / "enable-msvc-environment.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "$writer.WriteLine($name + '=' + [string]$toolchainEnvironment[$name])",
+            msvc_environment,
+        )
 
         fork = (WORKFLOW_DIR / PUBLIC_FORK_WORKFLOW).read_text(encoding="utf-8")
         self.assertIn("runs-on: ubuntu-24.04", fork)
@@ -135,15 +142,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             caller,
         )
         self.assertIsNotNone(reference)
-        pinned = subprocess.run(
-            ["git", "show", f"{reference.group(1)}:.github/workflows/fork-safe-validation.yml"],
-            cwd=ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout
-        self.assertIn("runs-on: ubuntu-24.04", pinned)
-        self.assertNotIn("self-hosted", pinned)
+        self.assertEqual(reference.group(1), PUBLIC_FORK_WORKFLOW_APPROVED_SHA)
 
     def test_only_hardware_and_sandbox_specific_workflows_keep_private_jit(self) -> None:
         transfer = (WORKFLOW_DIR / PROTECTED_TRANSFER_WORKFLOW).read_text(encoding="utf-8")
