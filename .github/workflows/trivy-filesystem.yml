@@ -27,7 +27,7 @@ concurrency:
 jobs:
   trivy:
     if: >-
-      github.event_name == 'workflow_dispatch' && inputs.action == 'scan' && inputs.runner_pool == 'github' && github.ref == 'refs/heads/main'
+      github.event_name == 'workflow_dispatch' && inputs.action == 'trivy' && inputs.runner_pool == 'github' && github.ref == 'refs/heads/main'
     name: Trivy source, dependency, and configuration scan
     env:
       TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2

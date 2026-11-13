@@ -107,8 +107,11 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             self.assertIn("runs-on: ubuntu-24.04", source, workflow_name)
             self.assertNotIn('"group":"ng-shared-main-jit"', source, workflow_name)
         semgrep = (WORKFLOW_DIR / "semgrep-community.yml").read_text(encoding="utf-8")
+        self.assertIn("inputs.action == 'semgrep'", semgrep)
         self.assertIn("docker info", semgrep)
         self.assertIn("docker run", semgrep)
+        trivy = (WORKFLOW_DIR / "trivy-filesystem.yml").read_text(encoding="utf-8")
+        self.assertIn("inputs.action == 'trivy'", trivy)
 
     def test_windows_and_untrusted_fork_jobs_use_isolated_hosted_runners(self) -> None:
         windows = (WORKFLOW_DIR / "windows-smoke.yml").read_text(encoding="utf-8")

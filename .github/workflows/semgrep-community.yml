@@ -27,7 +27,7 @@ concurrency:
 jobs:
   semgrep:
     if: >-
-      github.event_name == 'workflow_dispatch' && inputs.action == 'scan' && inputs.runner_pool == 'github' && github.ref == 'refs/heads/main'
+      github.event_name == 'workflow_dispatch' && inputs.action == 'semgrep' && inputs.runner_pool == 'github' && github.ref == 'refs/heads/main'
     name: Semgrep CE (community rules)
     runs-on: ubuntu-24.04
     timeout-minutes: 90
