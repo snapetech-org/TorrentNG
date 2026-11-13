@@ -100,10 +100,17 @@ struct DhtTokenSecrets {
     // the two preceding epochs, which keeps tokens valid for up to ten
     // minutes without allowing the cache to grow.
     values: Vec<([u8; 20], Instant)>,
+    last_observed_at: Instant,
 }
 
 impl DhtTokenSecrets {
-    fn current(&mut self, now: Instant) -> Vec<[u8; 20]> {
+    fn current(&mut self, observed_at: Instant) -> Vec<[u8; 20]> {
+        // Some platforms can report a brief monotonic-clock regression across
+        // threads. Clamp observations so concurrent lookups and announces do
+        // not rotate the token secret differently for the same address.
+        let now = observed_at.max(self.last_observed_at);
+        self.last_observed_at = now;
+
         if self
             .values
             .first()
@@ -129,11 +136,8 @@ impl DhtTokenSecrets {
             return current;
         }
 
-        // A backwards monotonic-clock observation, or a cache restored past
-        // its acceptance window, must not turn token generation into a
-        // process panic. Invalidate the old epochs and establish a fresh
-        // current secret; callers that generated a token from it will see
-        // the same secret on their subsequent validation call.
+        // A cache restored past its acceptance window must not turn token
+        // generation into a process panic. Establish a fresh current secret.
         let secret = *rt_dht::NodeId::random().as_bytes();
         self.values = vec![(secret, now)];
         vec![secret]
@@ -146,6 +150,7 @@ fn dht_token_secrets(now: Instant) -> Vec<[u8; 20]> {
     let mutex = DHT_TOKEN_SECRETS.get_or_init(|| {
         Mutex::new(DhtTokenSecrets {
             values: vec![(*rt_dht::NodeId::random().as_bytes(), now)],
+            last_observed_at: now,
         })
     });
     let mut secrets = mutex
@@ -3293,18 +3298,21 @@ mod tests {
     }
 
     #[test]
-    fn token_secret_cache_recovers_from_a_clock_regression() {
+    fn token_secret_cache_clamps_a_clock_regression_without_rotating() {
         let now = Instant::now();
+        let observed_at = now + Duration::from_secs(1);
         let mut cache = DhtTokenSecrets {
-            values: vec![([1; 20], now + Duration::from_secs(1))],
+            values: vec![([1; 20], observed_at)],
+            last_observed_at: observed_at,
         };
 
         let current = cache.current(now);
 
-        assert_eq!(current.len(), 1);
+        assert_eq!(current, vec![[1; 20]]);
         assert_eq!(cache.values.len(), 1);
         assert_eq!(cache.values[0].0, current[0]);
-        assert_eq!(cache.values[0].1, now);
+        assert_eq!(cache.values[0].1, observed_at);
+        assert_eq!(cache.last_observed_at, observed_at);
     }
 
     #[tokio::test]
