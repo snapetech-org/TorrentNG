@@ -394,9 +394,11 @@ other_metric 999
         self.assertNotIn("other_metric", selected)
 
     def test_host_proc_mapping_resolves_child_pid(self):
-        child = subprocess.Popen(["/bin/sleep", "5"])
+        # Use the running Python interpreter rather than a coreutils path that
+        # may resolve to a different executable on hosted runners.
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(5)"])
         try:
-            host_pid = probe.host_proc_pid(child.pid, "/bin/sleep")
+            host_pid = probe.host_proc_pid(child.pid, sys.executable)
             self.assertGreater(host_pid, 0)
             sample = probe.process_sample(host_pid)
             self.assertIn(host_pid, sample["pids"])
