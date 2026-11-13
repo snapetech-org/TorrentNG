@@ -368,7 +368,16 @@ impl PiecePicker {
     }
 
     fn refresh_candidate(&mut self, piece: usize) {
-        if self.piece_is_requestable(piece) {
+        let requestable = self.piece_is_requestable(piece);
+        self.set_candidate_requestable(piece, requestable);
+    }
+
+    fn set_candidate_requestable(&mut self, piece: usize, requestable: bool) {
+        if piece < self.piece_count
+            && self.wanted.get(piece)
+            && self.enabled.get(piece)
+            && requestable
+        {
             self.availability.reinstate(piece);
         } else {
             self.availability.retire(piece);
@@ -550,14 +559,12 @@ impl PiecePicker {
             }
             return None;
         }
-        let piece = self
-            .partial_piece(|piece| self.piece_is_requestable(piece))
-            .or_else(|| {
-                self.availability.candidate_matching_random(
-                    |piece| self.piece_can_be_picked(piece),
-                    &mut rand::rng(),
-                )
-            })?;
+        let piece = self.partial_piece(|_| true).or_else(|| {
+            self.availability.candidate_matching_random(
+                |piece| self.piece_can_be_picked(piece),
+                &mut rand::rng(),
+            )
+        })?;
         self.pick_block_from(piece)
     }
 
@@ -608,24 +615,36 @@ impl PiecePicker {
     }
 
     fn piece_can_be_picked(&self, piece: usize) -> bool {
-        self.piece_is_requestable(piece)
-            && (self.in_progress.contains_key(&piece)
-                || self.can_admit_piece_state(self.piece_length_for(piece)))
+        // Candidate-index membership already proves the piece is wanted,
+        // enabled, and has a fresh block. Rechecking its PieceState here adds
+        // a SipHash lookup for every candidate probe in the transfer hot path.
+        // Partial pieces are checked by `partial_piece` before reaching this
+        // predicate.
+        self.in_progress.contains_key(&piece)
+            || (piece < self.piece_count
+                && self.can_admit_piece_state(self.piece_length_for(piece)))
     }
 
     /// Common case is one O(1) continuation lookup. After a peer/policy change,
     /// inspect only admitted partial state, never the whole torrent.
     fn partial_piece(&self, accept: impl Fn(usize) -> bool) -> Option<usize> {
-        if let Some(piece) = self
-            .continuation
-            .filter(|&piece| self.in_progress.contains_key(&piece) && accept(piece))
-        {
+        let acceptable_partial = |piece: usize, state: &PieceState| {
+            piece < self.piece_count
+                && self.wanted.get(piece)
+                && self.enabled.get(piece)
+                && state.next_unrequested().is_some()
+                && accept(piece)
+        };
+        if let Some(piece) = self.continuation.filter(|&piece| {
+            self.in_progress
+                .get(&piece)
+                .is_some_and(|state| acceptable_partial(piece, state))
+        }) {
             return Some(piece);
         }
         self.in_progress
-            .keys()
-            .copied()
-            .filter(|&piece| accept(piece))
+            .iter()
+            .filter_map(|(&piece, state)| acceptable_partial(piece, state).then_some(piece))
             .min_by_key(|&piece| (self.availability.count(piece), piece))
     }
 
@@ -646,8 +665,7 @@ impl PiecePicker {
         &self,
         peer_has: &A,
     ) -> Option<usize> {
-        let preferred = self
-            .partial_piece(|piece| self.piece_is_requestable(piece) && peer_has.has_piece(piece));
+        let preferred = self.partial_piece(|piece| peer_has.has_piece(piece));
         self.availability.rarest_matching_from_peer_with_preference(
             peer_has,
             |piece| self.piece_can_be_picked(piece),
@@ -740,26 +758,31 @@ impl PiecePicker {
             return None;
         }
         let pl = self.piece_length_for(piece);
-        let is_new = !self.in_progress.contains_key(&piece);
-        if is_new && !self.can_admit_piece_state(pl) {
-            return None;
-        }
-        if is_new {
-            self.in_progress_bytes = self
-                .in_progress_bytes
-                .saturating_add(piece_state_memory_bytes(pl));
-        }
-        let request = {
-            let state = self
-                .in_progress
-                .entry(piece)
-                .or_insert_with(|| PieceState::new(pl));
-            state.next_unrequested().map(|block_idx| {
-                state.mark_requested(block_idx);
-                state.block_request_for(piece, block_idx)
-            })
+        let state_bytes = piece_state_memory_bytes(pl);
+        let can_admit = self.can_admit_piece_state(pl);
+        let (request, remains_requestable) = match self.in_progress.entry(piece) {
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                let state = entry.get_mut();
+                let request = state.next_unrequested().map(|block_idx| {
+                    state.mark_requested(block_idx);
+                    state.block_request_for(piece, block_idx)
+                });
+                (request, state.next_unrequested().is_some())
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                if !can_admit {
+                    return None;
+                }
+                self.in_progress_bytes = self.in_progress_bytes.saturating_add(state_bytes);
+                let state = entry.insert(PieceState::new(pl));
+                let request = state.next_unrequested().map(|block_idx| {
+                    state.mark_requested(block_idx);
+                    state.block_request_for(piece, block_idx)
+                });
+                (request, state.next_unrequested().is_some())
+            }
         };
-        self.refresh_candidate(piece);
+        self.set_candidate_requestable(piece, remains_requestable);
         if request.is_some() {
             self.continuation = Some(piece);
         }
@@ -774,11 +797,14 @@ impl PiecePicker {
     /// Returns true when every block has arrived.
     pub fn block_received_pending(&mut self, piece: usize, begin: u32) -> bool {
         let block_idx = (begin / MAX_BLOCK_SIZE) as usize;
-        let complete = self.in_progress.get_mut(&piece).is_some_and(|state| {
-            state.mark_received(block_idx);
-            state.is_complete()
-        });
-        self.refresh_candidate(piece);
+        let (complete, requestable) =
+            self.in_progress
+                .get_mut(&piece)
+                .map_or((false, true), |state| {
+                    state.mark_received(block_idx);
+                    (state.is_complete(), state.next_unrequested().is_some())
+                });
+        self.set_candidate_requestable(piece, requestable);
         complete
     }
 
@@ -973,7 +999,7 @@ impl PiecePicker {
     /// Cancel an outstanding block request (e.g., peer disconnected).
     pub fn cancel_request(&mut self, piece: usize, begin: u32) {
         let block_idx = (begin / MAX_BLOCK_SIZE) as usize;
-        if let Some(state) = self.in_progress.get_mut(&piece) {
+        let requestable = if let Some(state) = self.in_progress.get_mut(&piece) {
             let was_received = state.block_received(block_idx);
             if let Some(r) = state.requested.get_mut(block_idx) {
                 let was_last_request = *r == 1;
@@ -985,8 +1011,11 @@ impl PiecePicker {
                     state.next_unrequested_hint = state.next_unrequested_hint.min(block_idx);
                 }
             }
-        }
-        self.refresh_candidate(piece);
+            state.next_unrequested().is_some()
+        } else {
+            true
+        };
+        self.set_candidate_requestable(piece, requestable);
     }
 
     /// Drop all outstanding block request bookkeeping without discarding
