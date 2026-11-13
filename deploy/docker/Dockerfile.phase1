@@ -11,7 +11,7 @@ FROM base AS rtorrent-build
 RUN apk add --no-cache \
     build-base git cmake ninja pkgconf \
     libtool autoconf automake \
-    openssl-dev zlib-dev curl-dev \
+    openssl-dev zlib-dev=1.4-r0 curl-dev \
     ncurses-dev tinyxml2-dev \
     linux-headers
 
@@ -52,7 +52,7 @@ ARG TORRENTNG_SOURCE_REVISION=unknown
 RUN apk add --no-cache \
     php83 php83-fpm php83-json php83-session php83-curl php83-posix \
     nginx curl ca-certificates tini tzdata util-linux \
-    libcurl ncurses tinyxml2 openssl zlib \
+    libcurl ncurses tinyxml2 openssl zlib=1.4-r0 \
     && case "$TNG_UID" in ''|*[!0-9]*) echo "TNG_UID must be a nonzero numeric ID" >&2; exit 1;; *[1-9]*) :;; *) echo "TNG_UID must be a nonzero numeric ID" >&2; exit 1;; esac \
     && case "$TNG_GID" in ''|*[!0-9]*) echo "TNG_GID must be a nonzero numeric ID" >&2; exit 1;; *[1-9]*) :;; *) echo "TNG_GID must be a nonzero numeric ID" >&2; exit 1;; esac
 

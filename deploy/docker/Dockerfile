@@ -3,7 +3,7 @@
 # locked dependency graph -- see docs/BACKEND_AUDIT_BURN_DOWN.md TNG-028).
 # libsqlite3-sys's build script uses cfg_select!, requiring 1.97+.
 FROM rust:1.97-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900 AS torrentng-service-build
-RUN apk add --no-cache musl-dev pkgconf openssl-dev openssl-libs-static
+RUN apk add --no-cache musl-dev pkgconf openssl-dev openssl-libs-static zlib=1.4-r0
 WORKDIR /src
 RUN printf '%s\n' \
     '[workspace]' \
@@ -49,7 +49,7 @@ ARG RTORRENT_COMMIT=0c23d278a7838402d4cec9689bf71e051332be67
 ARG LIBTORRENT_COMMIT=392030e0fddbe4e423d059d9322382cf44aaaaf6
 RUN apk add --no-cache \
     autoconf automake build-base cmake curl-dev git libtool linux-headers \
-    ncurses-dev ninja openssl-dev pkgconf tinyxml2-dev zlib-dev
+    ncurses-dev ninja openssl-dev pkgconf tinyxml2-dev zlib-dev=1.4-r0
 WORKDIR /src
 RUN git init libtorrent && \
     git -C libtorrent remote add origin https://github.com/rakshasa/libtorrent.git && \
@@ -86,7 +86,7 @@ FROM alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0
 ARG TNG_UID=1000
 ARG TNG_GID=1000
 ARG TORRENTNG_SOURCE_REVISION=unknown
-RUN apk add --no-cache ca-certificates curl libcurl ncurses openssl socat tinyxml2 tini tzdata util-linux zlib \
+RUN apk add --no-cache ca-certificates curl libcurl ncurses openssl socat tinyxml2 tini tzdata util-linux zlib=1.4-r0 \
     && case "$TNG_UID" in ''|*[!0-9]*) echo "TNG_UID must be a nonzero numeric ID" >&2; exit 1;; *[1-9]*) :;; *) echo "TNG_UID must be a nonzero numeric ID" >&2; exit 1;; esac \
     && case "$TNG_GID" in ''|*[!0-9]*) echo "TNG_GID must be a nonzero numeric ID" >&2; exit 1;; *[1-9]*) :;; *) echo "TNG_GID must be a nonzero numeric ID" >&2; exit 1;; esac
 

@@ -2,7 +2,7 @@
 
 FROM rust:1.96-alpine AS build
 
-RUN apk add --no-cache build-base linux-headers musl-dev
+RUN apk add --no-cache build-base linux-headers musl-dev zlib=1.4-r0
 
 WORKDIR /src
 ARG TORRENTNG_CARGO_FEATURES=system-allocator
@@ -30,7 +30,7 @@ ARG TORRENTNG_SOURCE_REVISION=unknown
 ARG TORRENTNG_SOURCE_FINGERPRINT=unknown
 ARG TORRENTNG_CARGO_FEATURES=default
 
-RUN apk add --no-cache ca-certificates curl jq tini util-linux \
+RUN apk add --no-cache ca-certificates curl jq tini util-linux zlib=1.4-r0 \
     && case "$TNG_UID" in ''|*[!0-9]*) echo "TNG_UID must be a nonzero numeric ID" >&2; exit 1;; *[1-9]*) :;; *) echo "TNG_UID must be a nonzero numeric ID" >&2; exit 1;; esac \
     && case "$TNG_GID" in ''|*[!0-9]*) echo "TNG_GID must be a nonzero numeric ID" >&2; exit 1;; *[1-9]*) :;; *) echo "TNG_GID must be a nonzero numeric ID" >&2; exit 1;; esac \
     && mkdir -p /data /downloads /config /var/lib/torrentngd /usr/share/torrentng/webui /run/secrets \

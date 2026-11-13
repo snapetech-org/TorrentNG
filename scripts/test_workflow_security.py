@@ -685,6 +685,17 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("type: RuntimeDefault", statefulset)
         self.assertIn("automountServiceAccountToken: false", statefulset)
 
+    def test_alpine_images_pin_the_fixed_zlib_package(self) -> None:
+        native = (ROOT / "deploy/native/Dockerfile").read_text(encoding="utf-8")
+        compatible = (ROOT / "deploy/docker/Dockerfile").read_text(encoding="utf-8")
+        phase1 = (ROOT / "deploy/docker/Dockerfile.phase1").read_text(encoding="utf-8")
+
+        self.assertIn("zlib=1.4-r0", native)
+        self.assertIn("zlib=1.4-r0", compatible)
+        self.assertIn("zlib-dev=1.4-r0", compatible)
+        self.assertIn("zlib=1.4-r0", phase1)
+        self.assertIn("zlib-dev=1.4-r0", phase1)
+
     def test_qbittorrent_compatibility_build_info_matches_packaged_libtorrent(self) -> None:
         config = (ROOT / "sidecar/src/config.rs").read_text(encoding="utf-8")
         self.assertIn('qbittorrent_build_libtorrent: "0.16.28".to_owned()', config)
