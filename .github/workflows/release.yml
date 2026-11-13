@@ -233,8 +233,8 @@ jobs:
           restore-keys: |
             cargo-${{ runner.os }}-
 
-      - name: Install Rust 1.88.0
-        uses: dtolnay/rust-toolchain@688313b0823df1393bcebb1b4add0438a6d36884 # 1.88.0
+      - name: Install Rust 1.89.0
+        uses: dtolnay/rust-toolchain@599c45df1a24c1c63ae1129a7e59f46654b8fb66 # 1.89.0
 
       - name: Build TorrentNG client workspace at declared MSRV
         run: cargo build --workspace --all-targets --locked
@@ -847,7 +847,7 @@ jobs:
             docker run --rm --entrypoint /bin/sh \
               -v "$log_volume:/var/log/rtorrent" \
               -v "$default_volume:/var/lib/torrentng" \
-              -v "$override_volume:/var/lib/rtorrentng" alpine:3.20 \
+              -v "$override_volume:/var/lib/rtorrentng" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
               -c 'touch /var/log/rtorrent/rtorrent.log /var/lib/torrentng/cache.db /var/lib/rtorrentng/cache.db && chmod 0664 /var/log/rtorrent/rtorrent.log /var/lib/torrentng/cache.db /var/lib/rtorrentng/cache.db'
             docker run -d --name "$name" --network none --read-only \
               --tmpfs /tmp:rw,nosuid,nodev,size=1g \

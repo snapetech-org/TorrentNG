@@ -3,7 +3,7 @@
 # rTorrent 0.16.11, libtorrent 0.16.11, ruTorrent 5.3.1,
 # tinyxml2 XMLRPC backend, nginx proxy.
 
-FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc AS base
+FROM alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS base
 
 # Build rTorrent with tinyxml2 (avoids xmlrpc-c erratic behavior, rtorrent#1636)
 # and expose the libtorrent HTTP user-agent getter/setter over XMLRPC.

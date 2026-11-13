@@ -45,7 +45,7 @@ RUN npm run build
 # The patches expose tracker identity controls used by the compatible-client service.
 # These commits are the v0.16.11 source revisions. Fetch by object ID rather
 # than by a mutable tag so a retagged upstream release cannot change the image.
-FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc AS rtorrent-build
+FROM alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS rtorrent-build
 ARG RTORRENT_COMMIT=2700b3141f966d8533a6153491e1c76b3cf5c2b9
 ARG LIBTORRENT_COMMIT=dafcba711114af2274a45ca55a7bcd4abdf5ca9a
 RUN apk add --no-cache \
@@ -83,7 +83,7 @@ RUN cd rtorrent && autoreconf -fi && \
     make -j"$(nproc)" && make install
 
 # Stage 4: Runtime
-FROM alpine:3.20
+FROM alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 ARG TNG_UID=1000
 ARG TNG_GID=1000
 ARG TORRENTNG_SOURCE_REVISION=unknown

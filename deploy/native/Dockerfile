@@ -23,7 +23,7 @@ RUN --mount=type=cache,id=torrentng-client-benchmark-npm,target=/root/.npm,shari
 COPY webui/ ./
 RUN TNG_WEBUI_OUT_DIR=dist npm run build
 
-FROM alpine:3.24.2
+FROM alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 ARG TNG_UID=1000
 ARG TNG_GID=1000
 ARG TORRENTNG_SOURCE_REVISION=unknown

@@ -277,7 +277,7 @@ jobs:
           if-no-files-found: warn
 
   # TNG-025: native-quality tracks stable; this separate gate builds and
-  # tests the locked workspace at the declared Rust 1.88 MSRV.
+  # tests the locked workspace at the declared Rust 1.89 MSRV.
   msrv-check:
     if: >-
       github.event_name == 'workflow_dispatch' &&
@@ -320,17 +320,17 @@ jobs:
           restore-keys: |
             cargo-${{ runner.os }}-
 
-      - name: Install Rust 1.88.0 (declared MSRV)
-        uses: dtolnay/rust-toolchain@688313b0823df1393bcebb1b4add0438a6d36884 # 1.88.0
+      - name: Install Rust 1.89.0 (declared MSRV)
+        uses: dtolnay/rust-toolchain@599c45df1a24c1c63ae1129a7e59f46654b8fb66 # 1.89.0
 
       - name: Build TorrentNG client workspace at declared MSRV
         env:
-          RUSTUP_TOOLCHAIN: "1.88.0"
+          RUSTUP_TOOLCHAIN: "1.89.0"
         run: cargo build --workspace --all-targets --locked
 
       - name: Test TorrentNG client workspace at declared MSRV
         env:
-          RUSTUP_TOOLCHAIN: "1.88.0"
+          RUSTUP_TOOLCHAIN: "1.89.0"
         # The scale targets contain wall-clock assertions. Run the MSRV
         # suite serially so unrelated 15k/50k fixtures cannot steal CPU from
         # the endpoint being measured and turn the gate into scheduler noise.

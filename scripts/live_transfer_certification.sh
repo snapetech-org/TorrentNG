@@ -89,7 +89,7 @@ cleanup() {
     delete_category_torrents "$PUBLIC_CATEGORY" || true
   fi
   docker rm -f "$SEEDER_NAME" "$FILESERVER_NAME" "$TRACKER_NAME" >/dev/null 2>&1 || true
-  docker run --rm -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.20 \
+  docker run --rm -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
     sh -c "rm -rf -- /downloads/$FIXTURE_DOWNLOAD_DIR" >/dev/null 2>&1 || true
   rm -f -- "$COOKIE_JAR" "$BODY" "$AUTH_BODY_FILE" "$FIXTURE_TORRENT_FILE"
 }
@@ -195,33 +195,33 @@ fi
 delete_category_torrents "$LOCAL_CATEGORY"
 delete_category_torrents "$PUBLIC_CATEGORY"
 
-docker run -d --rm --name "$TRACKER_NAME" --network "$COMPOSE_NETWORK" alpine:3.20 \
+docker run -d --rm --name "$TRACKER_NAME" --network "$COMPOSE_NETWORK" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
   sh -lc 'apk add --no-cache opentracker >/dev/null && exec opentracker -i 0.0.0.0 -p 6969 -P 6969' >/dev/null
 sleep 2
 mark "local tracker" "PASS" "$TRACKER_NAME listening on http://$TRACKER_NAME:6969/announce"
 
-docker run --rm --network "$COMPOSE_NETWORK" -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.20 sh -lc "
+docker run --rm --network "$COMPOSE_NETWORK" -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -lc "
   set -e
   apk add --no-cache mktorrent >/dev/null
   mkdir -p /downloads/$FIXTURE_DOWNLOAD_DIR/seed /downloads/$FIXTURE_DOWNLOAD_DIR/leech
   dd if=/dev/urandom of=/downloads/$FIXTURE_DOWNLOAD_DIR/seed/tng-fixture.bin bs=$FIXTURE_BYTES count=1 status=none
   mktorrent -a http://$TRACKER_NAME:6969/announce -o /downloads/$FIXTURE_DOWNLOAD_DIR/tng-fixture.torrent /downloads/$FIXTURE_DOWNLOAD_DIR/seed/tng-fixture.bin >/dev/null
 "
-docker run --rm -v "$DOWNLOADS_VOLUME:/downloads:ro" alpine:3.20 \
+docker run --rm -v "$DOWNLOADS_VOLUME:/downloads:ro" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
   cat "/downloads/$FIXTURE_DOWNLOAD_DIR/tng-fixture.torrent" > "$FIXTURE_TORRENT_FILE"
 mark "fixture torrent" "PASS" "$FIXTURE_BYTES byte torrent generated in Docker volume"
 
-docker run -d --rm --name "$FILESERVER_NAME" --network "$COMPOSE_NETWORK" -v "$DOWNLOADS_VOLUME:/downloads:ro" alpine:3.20 \
+docker run -d --rm --name "$FILESERVER_NAME" --network "$COMPOSE_NETWORK" -v "$DOWNLOADS_VOLUME:/downloads:ro" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
   sh -lc "apk add --no-cache busybox-extras >/dev/null && exec httpd -f -p 8081 -h /downloads/$FIXTURE_DOWNLOAD_DIR" >/dev/null
 sleep 1
-if docker run --rm --network "$COMPOSE_NETWORK" alpine:3.20 \
+if docker run --rm --network "$COMPOSE_NETWORK" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
   wget -qO /dev/null "http://$FILESERVER_NAME:8081/tng-fixture.torrent"; then
   mark "fixture torrent HTTP" "PASS" "http://$FILESERVER_NAME:8081/tng-fixture.torrent"
 else
   mark "fixture torrent HTTP" "FAIL" "file server not reachable"
 fi
 
-docker run -d --rm --name "$SEEDER_NAME" --network "$COMPOSE_NETWORK" -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.20 \
+docker run -d --rm --name "$SEEDER_NAME" --network "$COMPOSE_NETWORK" -v "$DOWNLOADS_VOLUME:/downloads" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
   sh -lc "apk add --no-cache transmission-cli >/dev/null && exec transmission-cli -w /downloads/$FIXTURE_DOWNLOAD_DIR/seed /downloads/$FIXTURE_DOWNLOAD_DIR/tng-fixture.torrent" >/dev/null
 sleep 4
 mark "stock seeder" "PASS" "$SEEDER_NAME running transmission-cli"
@@ -240,7 +240,7 @@ fi
 
 if row="$(wait_for_torrent "tng-fixture.bin" 1)"; then
   mark "local fixture transfer" "PASS" "$(jq -r '"progress=\(.progress) size=\(.size) downloaded=\(.downloaded)"' <<<"$row")"
-elif docker run --rm -v "$DOWNLOADS_VOLUME:/downloads:ro" alpine:3.20 \
+elif docker run --rm -v "$DOWNLOADS_VOLUME:/downloads:ro" alpine:3.24.4:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
   sh -lc "test \"\$(wc -c </downloads/$FIXTURE_DOWNLOAD_DIR/leech/tng-fixture.bin 2>/dev/null || echo 0)\" -eq $FIXTURE_BYTES"; then
   mark "local fixture transfer" "PASS" "completed on disk; qBit cache did not report before timeout"
 else
