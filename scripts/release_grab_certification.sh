@@ -161,6 +161,12 @@ else
   exit 1
 fi
 
+# These are fresh, task-scoped named volumes. The app containers run as the
+# configured PUID/PGID, while Docker initializes an empty named volume as root.
+# Give the unprivileged app processes ownership before creating root folders.
+docker exec "$SONARR_CONTAINER" chown "${PUID:-1000}:${PGID:-1000}" /tv
+docker exec "$RADARR_CONTAINER" chown "${PUID:-1000}:${PGID:-1000}" /movies
+
 run_gate "live API/app readiness" "$REPORT_DIR/live-cert-${PROJECT}-$(date -u +%Y%m%dT%H%M%SZ).md" "$ROOT/scripts/live_certification.sh"
 run_gate "client configuration" "$REPORT_DIR/client-config-${PROJECT}-$(date -u +%Y%m%dT%H%M%SZ).md" "$ROOT/scripts/configure_certification_clients.sh"
 run_gate "Prowlarr release grab/transfer" "$REPORT_DIR/app-add-job-${PROJECT}-$(date -u +%Y%m%dT%H%M%SZ).md" "$ROOT/scripts/app_add_job_certification.sh"

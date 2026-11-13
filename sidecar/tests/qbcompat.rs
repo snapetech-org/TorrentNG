@@ -2571,6 +2571,36 @@ async fn native_torrent_add_accepts_the_full_64_mib_payload_with_multipart_envel
 }
 
 #[tokio::test]
+async fn qb_torrent_add_accepts_dotnet_boolean_form_values() {
+    let adds = Arc::new(AtomicUsize::new(0));
+    let (addr, client, _) = spawn_server_with_backend(
+        Config::test_default(),
+        successful_backend_with_add_counter(adds.clone()),
+    )
+    .await;
+    let form = reqwest::multipart::Form::new()
+        .part(
+            "torrents",
+            reqwest::multipart::Part::bytes(b"torrent bytes".to_vec()).file_name("fixture.torrent"),
+        )
+        .text("stopped", "False")
+        .text("paused", "False")
+        .text("skip_checking", "False")
+        .text("autoTMM", "False");
+
+    let response = client
+        .post(url(addr, "/api/qb/v2/torrents/add"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.text().await.unwrap(), "Ok.");
+    assert_eq!(adds.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn qb_torrent_add_accepts_the_full_64_mib_payload_with_multipart_envelope() {
     const MAX_TORRENT_BYTES: usize = 64 * 1024 * 1024;
     let adds = Arc::new(AtomicUsize::new(0));

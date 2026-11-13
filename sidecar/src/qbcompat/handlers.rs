@@ -2336,10 +2336,9 @@ async fn torrents_add(State(s): State<AppState>, mut multipart: Multipart) -> im
                         return (StatusCode::BAD_REQUEST, "Fails.").into_response();
                     }
                 };
-                paused = match value.as_str() {
-                    "true" => true,
-                    "false" => false,
-                    _ => return (StatusCode::BAD_REQUEST, "Fails.").into_response(),
+                paused = match parse_wire_bool(&value) {
+                    Some(value) => value,
+                    None => return (StatusCode::BAD_REQUEST, "Fails.").into_response(),
                 };
             }
             Some("stopped") => {
@@ -2357,10 +2356,9 @@ async fn torrents_add(State(s): State<AppState>, mut multipart: Multipart) -> im
                         return (StatusCode::BAD_REQUEST, "Fails.").into_response();
                     }
                 };
-                stopped = match value.as_str() {
-                    "true" => true,
-                    "false" => false,
-                    _ => return (StatusCode::BAD_REQUEST, "Fails.").into_response(),
+                stopped = match parse_wire_bool(&value) {
+                    Some(value) => value,
+                    None => return (StatusCode::BAD_REQUEST, "Fails.").into_response(),
                 };
             }
             Some("tags") => {
@@ -2401,10 +2399,9 @@ async fn torrents_add(State(s): State<AppState>, mut multipart: Multipart) -> im
                         return (StatusCode::BAD_REQUEST, "Fails.").into_response();
                     }
                 };
-                skip_checking = match value.as_str() {
-                    "true" => true,
-                    "false" => false,
-                    _ => return (StatusCode::BAD_REQUEST, "Fails.").into_response(),
+                skip_checking = match parse_wire_bool(&value) {
+                    Some(value) => value,
+                    None => return (StatusCode::BAD_REQUEST, "Fails.").into_response(),
                 };
             }
             Some("contentLayout") => {
@@ -2445,10 +2442,9 @@ async fn torrents_add(State(s): State<AppState>, mut multipart: Multipart) -> im
                         return (StatusCode::BAD_REQUEST, "Fails.").into_response();
                     }
                 };
-                auto_tmm = Some(match value.as_str() {
-                    "true" => true,
-                    "false" => false,
-                    _ => return (StatusCode::BAD_REQUEST, "Fails.").into_response(),
+                auto_tmm = Some(match parse_wire_bool(&value) {
+                    Some(value) => value,
+                    None => return (StatusCode::BAD_REQUEST, "Fails.").into_response(),
                 });
             }
             Some("ratioLimit") => {
