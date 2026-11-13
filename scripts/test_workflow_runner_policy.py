@@ -1,4 +1,5 @@
 import re
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -123,6 +124,23 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         self.assertIn("contents: read", fork)
         self.assertNotIn("secrets:", fork)
         self.assertNotIn("self-hosted", fork)
+
+        caller = (WORKFLOW_DIR / "public-fork-pr.yml").read_text(encoding="utf-8")
+        reference = re.search(
+            r"(?m)^\s+uses: snapetech-org/TorrentNG/\.github/workflows/"
+            r"fork-safe-validation\.yml@([0-9a-f]{40})$",
+            caller,
+        )
+        self.assertIsNotNone(reference)
+        pinned = subprocess.run(
+            ["git", "show", f"{reference.group(1)}:.github/workflows/fork-safe-validation.yml"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        self.assertIn("runs-on: ubuntu-24.04", pinned)
+        self.assertNotIn("self-hosted", pinned)
 
     def test_only_hardware_and_sandbox_specific_workflows_keep_private_jit(self) -> None:
         transfer = (WORKFLOW_DIR / PROTECTED_TRANSFER_WORKFLOW).read_text(encoding="utf-8")
