@@ -37,7 +37,7 @@ const MAX_LEGACY_FULL_LIST_ENTRIES: usize = 10_000;
 const RTORRENT_MULTICALL_RANGE_PATCH: &str = "rtorrent-0.16.28-multicall-range";
 const LEGACY_RTORRENT_NONZERO_RATE_PATCH: &str = "rtorrent-0.16.11-multicall-nonzero-rate";
 const LEGACY_RTORRENT_LIVE_SUMMARY_PATCH: &str = "rtorrent-0.16.11-tng-live-summary";
-const RTORRENT_DEFAULT_SAVE_PATH: &str = "/downloads/temp";
+const RTORRENT_DEFAULT_SAVE_PATH: &str = "/data/downloads";
 fn append_started_load_commands(args: &mut Vec<XmlValue>, start: bool) {
     if start {
         args.extend(["d.open=", "d.resume=", "d.try_start=", "d.start="].map(XmlValue::from));
@@ -1042,21 +1042,21 @@ mod tests {
 
     #[test]
     fn normalizes_relative_rtorrent_save_paths_under_writable_download_root() {
-        assert_eq!(normalize_rtorrent_save_path(""), "/downloads/temp");
-        assert_eq!(normalize_rtorrent_save_path("."), "/downloads/temp");
+        assert_eq!(normalize_rtorrent_save_path(""), "/data/downloads");
+        assert_eq!(normalize_rtorrent_save_path("."), "/data/downloads");
         assert_eq!(normalize_rtorrent_save_path("/"), "/");
         assert_eq!(normalize_rtorrent_save_path("////"), "/");
         assert_eq!(
             normalize_rtorrent_save_path("./Movie.Name.2026"),
-            "/downloads/temp/Movie.Name.2026"
+            "/data/downloads/Movie.Name.2026"
         );
         assert_eq!(
             normalize_rtorrent_save_path("Movie.Name.2026"),
-            "/downloads/temp/Movie.Name.2026"
+            "/data/downloads/Movie.Name.2026"
         );
         assert_eq!(
             normalize_rtorrent_save_path("../Movie.Name.2026"),
-            "/downloads/temp/Movie.Name.2026"
+            "/data/downloads/Movie.Name.2026"
         );
         assert_eq!(
             normalize_rtorrent_save_path("/downloads/download/movies"),

@@ -2,7 +2,7 @@
 set -e
 
 TNG_INIT=/sbin/tini
-TNG_IDENTITY_PATHS="/data /session /var/lib/torrentng /var/lib/rtorrentng /var/log/rtorrent /run/rtorrent"
+TNG_IDENTITY_PATHS="/data /data/downloads /session /var/lib/torrentng /var/lib/rtorrentng /var/log/rtorrent /run/rtorrent"
 TNG_IDENTITY_FILES="/var/log/rtorrent/rtorrent.log /var/lib/torrentng/cache.db /var/lib/rtorrentng/cache.db"
 . /usr/local/lib/torrentng/identity.sh
 tng_identity_enter "$@"
