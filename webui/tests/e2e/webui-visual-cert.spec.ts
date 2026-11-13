@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 
-// CI uses one hosted font baseline across pull requests and main pushes.
+// CI and local certification use the same pinned Playwright container image.
 const snapshotProfile = 'hosted'
 
 const torrents = Array.from({ length: 80 }, (_, i) => {

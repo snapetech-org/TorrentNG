@@ -6,13 +6,62 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/curl_policy.sh"
 REPORT_DIR="${REPORT_DIR:-$ROOT/certification/reports}"
 BIN="${TNG_RELEASE_BINARY:-$ROOT/target/release/torrentngd}"
-CONFIG="${TNG_RELEASE_CONFIG:-$REPORT_DIR/backend-burndown-native-config-20260902.toml}"
+CONFIG="${TNG_RELEASE_CONFIG:-}"
 STATIC_DIR="${TNG_STATIC_DIR:-$ROOT/sidecar/static}"
-TOKEN="${TNG_RELEASE_TOKEN:-backend-burndown-token-20260902}"
+TOKEN="${TNG_RELEASE_TOKEN:-backend-burndown-token-local-smoke}"
 OUT="${1:-$REPORT_DIR/backend-burndown-native-release-smoke-$(date -u +%Y%m%dT%H%M%SZ).md}"
 PREFIX="${OUT%.md}"
+smoke_tmp=""
+daemon_pid=""
 
 mkdir -p "$(dirname "$OUT")"
+cleanup() {
+  if [[ -n "$daemon_pid" ]] && kill -0 "$daemon_pid" 2>/dev/null; then
+    kill -TERM "$daemon_pid" 2>/dev/null || true
+    wait "$daemon_pid" 2>/dev/null || true
+  fi
+  if [[ -n "$smoke_tmp" && -d "$smoke_tmp" ]]; then
+    rm -rf -- "$smoke_tmp"
+  fi
+}
+trap cleanup EXIT
+
+if [[ -z "$CONFIG" ]]; then
+  smoke_tmp="$(mktemp -d "${TMPDIR:-/tmp}/torrentng-native-release-smoke.XXXXXX")"
+  CONFIG="$smoke_tmp/config.toml"
+  TNG_SMOKE_TMP="$smoke_tmp" TNG_SMOKE_CONFIG="$CONFIG" TNG_RELEASE_TOKEN="$TOKEN" \
+    python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+root = Path(os.environ["TNG_SMOKE_TMP"])
+quote = lambda value: json.dumps(str(value))
+config = "\n".join(
+    [
+        "[daemon]",
+        'api_bind = "127.0.0.1:28080"',
+        f"session_dir = {quote(root / 'session')}",
+        "log_level = \"info\"",
+        "",
+        "[network]",
+        "listen_port = 0",
+        "",
+        "[storage]",
+        f"download_dir = {quote(root / 'downloads')}",
+        "",
+        "[dht]",
+        "enabled = false",
+        "",
+        "[auth]",
+        f"api_tokens = [{quote(os.environ['TNG_RELEASE_TOKEN'])}]",
+        "",
+    ]
+)
+Path(os.environ["TNG_SMOKE_CONFIG"]).write_text(config, encoding="utf-8")
+PY
+fi
+
 test -x "$BIN"
 test -f "$CONFIG"
 
@@ -23,15 +72,6 @@ TRANSFER="${PREFIX}.transfer.json"
 QBIT="${PREFIX}.qbit.json"
 QBIT_TRANSFER="${PREFIX}.qbit-transfer.json"
 METRICS="${PREFIX}.metrics.txt"
-
-daemon_pid=""
-cleanup() {
-  if [[ -n "$daemon_pid" ]] && kill -0 "$daemon_pid" 2>/dev/null; then
-    kill -TERM "$daemon_pid" 2>/dev/null || true
-    wait "$daemon_pid" 2>/dev/null || true
-  fi
-}
-trap cleanup EXIT
 
 start_epoch_ms="$(date +%s%3N)"
 TORRENTNGD_CONFIG="$CONFIG" TNG_STATIC_DIR="$STATIC_DIR" "$BIN" >"$LOG" 2>&1 &

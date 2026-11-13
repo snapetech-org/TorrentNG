@@ -674,11 +674,11 @@ jobs:
         working-directory: webui
         run: npm test
 
-      - name: Install pinned Playwright browser
+      - name: Verify pinned Playwright package
         working-directory: webui
         run: |
           node -e 'const version = require("@playwright/test/package.json").version; if (version !== "1.64.1") throw new Error(`Expected Playwright 1.64.1 but package-lock resolves ${version}`)'
-          npx playwright install --with-deps chromium
+          npx playwright --version
 
       - name: Build webui
         working-directory: webui
@@ -689,10 +689,17 @@ jobs:
         run: npm run lint
 
       - name: Run webui browser certification
-        working-directory: webui
         env:
           DBUS_SESSION_BUS_ADDRESS: unix:path=/dev/null
-        run: npm run test:e2e -- --reporter=line
+        run: |
+          # Keep this digest aligned with scripts/webui_certification.sh.
+          docker run --rm --init --ipc=host \
+            -e CI=1 \
+            -e DBUS_SESSION_BUS_ADDRESS=unix:path=/dev/null \
+            --mount "type=bind,source=$GITHUB_WORKSPACE,target=/work" \
+            --workdir /work/webui \
+            mcr.microsoft.com/playwright@sha256:2f05f8a734509a7b3f26a912639488ee08f58a7b292d14d62271bcff9038768f \
+            npm run test:e2e -- --reporter=line
 
       - name: Upload WebUI browser failure evidence
         if: failure()
