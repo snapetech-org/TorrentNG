@@ -126,7 +126,7 @@ else
   mark "ruTorrent version evidence" "FAIL" "$EXPECTED_RUTORRENT not found under /var/www/rutorrent"
 fi
 
-php_version="$(container_exec "php -r 'echo PHP_VERSION;'")"
+php_version="$(container_exec "php83 -r 'echo PHP_VERSION;'")"
 if [[ "$php_version" == 8.3.* ]]; then
   mark "PHP version" "PASS" "$php_version"
 else
