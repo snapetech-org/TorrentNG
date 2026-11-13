@@ -815,21 +815,6 @@ impl TorrentTask {
             ledger: &self.transfer_ledger,
             conn: transfer_conn,
         };
-        let useful_fresh = self
-            .picker
-            .useful_missing_for_peer(&available, PEER_REQUEST_PIPELINE_ADAPTIVE_MAX);
-        let useful_missing = if useful_fresh >= PEER_REQUEST_PIPELINE_ADAPTIVE_MAX
-            || !self.picker.endgame_active()
-            || other_sources_outstanding == 0
-        {
-            useful_fresh
-        } else {
-            useful_fresh.saturating_add(self.picker.useful_endgame_duplicate_work_for_peer(
-                &available,
-                &handle.requested,
-                PEER_REQUEST_PIPELINE_ADAPTIVE_MAX.saturating_sub(useful_fresh),
-            ))
-        };
         let peer_buffer = self.resources.snapshot().classes[MemoryClass::PeerBuffer as usize];
         let peer_buffer_available_bytes =
             peer_buffer.cap_bytes.saturating_sub(peer_buffer.used_bytes);
@@ -861,24 +846,54 @@ impl TorrentTask {
             device_queue_capacity.saturating_sub(device_queue_available) as f64
                 / device_queue_capacity as f64
         };
-        let controlled_window = handle.request_window.window(&WindowInputs {
-            useful_missing,
-            outstanding: handle.outstanding,
-            credit_blocks: rate_credit_blocks,
-            buffer_blocks,
-            device_backlog,
-        });
-
         let memory_pipeline = memory_aware_request_pipeline(
             self.piece_assembly_bytes,
             self.piece_assembly_soft_cap_bytes,
         );
-        let request_pipeline = adaptive_request_pipeline(
+        let adaptive_pipeline = adaptive_request_pipeline(
             memory_pipeline,
             peer_rate(download_rate, download_rate_started) as f64,
             other_peers_outstanding,
-        )
-        .min(controlled_window);
+        );
+        let window_inputs = WindowInputs {
+            // Compute the current window ceiling before counting picker work.
+            // Work beyond the number of slots this ceiling can open cannot
+            // change admission, so the picker need only count up to that many
+            // blocks. Actual requests still pass through picker selection and
+            // the transfer ledger below.
+            useful_missing: usize::MAX,
+            outstanding: handle.outstanding,
+            credit_blocks: rate_credit_blocks,
+            buffer_blocks,
+            device_backlog,
+        };
+        let request_target = adaptive_pipeline.min(handle.request_window.window(&window_inputs));
+        let additional_request_slots = request_target.saturating_sub(handle.outstanding);
+        // When memory is exhausted the window cannot open a request yet, but
+        // keep probing for one useful block so the existing capacity retry is
+        // armed only when work can resume.
+        let useful_limit = additional_request_slots.max(usize::from(buffer_blocks == 0));
+        let useful_fresh = self
+            .picker
+            .useful_missing_for_peer(&available, useful_limit);
+        let useful_missing = if useful_fresh >= useful_limit
+            || !self.picker.endgame_active()
+            || other_sources_outstanding == 0
+        {
+            useful_fresh
+        } else {
+            useful_fresh.saturating_add(self.picker.useful_endgame_duplicate_work_for_peer(
+                &available,
+                &handle.requested,
+                useful_limit.saturating_sub(useful_fresh),
+            ))
+        };
+        let controlled_window = handle.request_window.window(&WindowInputs {
+            useful_missing,
+            ..window_inputs
+        });
+
+        let request_pipeline = adaptive_pipeline.min(controlled_window);
         // The request window can avoid a doomed allocation entirely when
         // less than one full block of payload headroom remains. Keep the
         // capacity retry armed for that path too, or a peer can stay idle
