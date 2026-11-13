@@ -98,8 +98,7 @@ if [ "$MANAGE_RTORRENT" = "1" ]; then
            -o "system.daemon.set=true" \
            -o "session.path=/session" \
            -o "network.scgi.open_local=$RTORRENT_SOCKET" \
-           -o "network.port_range.set=$INCOMING_PORT-$INCOMING_PORT" \
-           -o "dht.port.set=$INCOMING_PORT" \
+           -o "network.listen.port.range.set=$INCOMING_PORT-$INCOMING_PORT" \
            -o "dht.override_port.set=$INCOMING_PORT" &
 
   # Wait for socket

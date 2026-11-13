@@ -174,11 +174,11 @@ impl Client {
 
     async fn dht_diagnostics(&self) -> DhtDiagnostics {
         DhtDiagnostics {
-            enabled: self.probe_string("dht").await,
+            enabled: self.probe_dht_mode().await,
             port: self.probe_i64("dht.port").await,
             override_port: self.probe_i64("dht.override_port").await,
             listen_port: self.probe_i64("network.listen.port").await,
-            listen_range: self.probe_string("network.port_range").await,
+            listen_range: self.probe_string("network.listen.port.range").await,
             pex: self.probe_bool("protocol.pex").await,
             udp_trackers: self.probe_bool("trackers.use_udp").await,
             statistics: self.probe_display("dht.statistics").await,
@@ -193,7 +193,7 @@ impl Client {
             (
                 "port_random",
                 "Random listen port",
-                "network.port_random",
+                "network.listen.port.random",
                 "false",
             ),
             ("pex", "Peer exchange", "protocol.pex", "true"),
@@ -202,13 +202,13 @@ impl Client {
                 "max_uploads_global",
                 "Global upload slots",
                 "throttle.max_uploads.global",
-                "500",
+                "350",
             ),
             (
                 "max_downloads_global",
                 "Global download slots",
                 "throttle.max_downloads.global",
-                "50",
+                "300",
             ),
             (
                 "max_uploads",
@@ -220,7 +220,7 @@ impl Client {
                 "max_downloads",
                 "Per-torrent download slots",
                 "throttle.max_downloads",
-                "4",
+                "12",
             ),
             (
                 "hash_on_completion",
@@ -239,7 +239,7 @@ impl Client {
                 "tracker_numwant",
                 "Tracker numwant",
                 "trackers.numwant",
-                "80",
+                "200",
             ),
         ];
 
@@ -248,7 +248,7 @@ impl Client {
             self.drift_probe_owned(
                 "port_range",
                 "Listen port range",
-                "network.port_range",
+                "network.listen.port.range",
                 listen_range,
             )
             .await,
@@ -350,6 +350,19 @@ impl Client {
             Err(e) => ProbeValue::err(e.to_string()),
         }
     }
+
+    async fn probe_dht_mode(&self) -> ProbeValue<String> {
+        match self.call("dht.statistics", &[]).await {
+            Ok(XmlValue::Struct(fields)) => fields
+                .iter()
+                .find(|(key, _)| key == "dht")
+                .and_then(|(_, value)| value.as_str())
+                .map(|value| ProbeValue::ok(value.to_owned()))
+                .unwrap_or_else(|| ProbeValue::err("dht.statistics omitted the mode".to_owned())),
+            Ok(_) => ProbeValue::err("dht.statistics returned a non-struct value".to_owned()),
+            Err(error) => ProbeValue::err(error.to_string()),
+        }
+    }
 }
 
 fn xml_value_display(value: &XmlValue) -> String {
@@ -363,7 +376,11 @@ fn xml_value_display(value: &XmlValue) -> String {
             .map(xml_value_display)
             .collect::<Vec<_>>()
             .join(","),
-        XmlValue::Struct(_) => "struct".to_owned(),
+        XmlValue::Struct(fields) => fields
+            .iter()
+            .map(|(key, value)| format!("{key}={}", xml_value_display(value)))
+            .collect::<Vec<_>>()
+            .join(","),
         XmlValue::Nil => String::new(),
     }
 }

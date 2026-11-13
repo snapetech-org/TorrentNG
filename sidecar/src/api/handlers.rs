@@ -532,38 +532,29 @@ fn rtorrent_settings() -> Vec<RtorrentSettingDescriptor> {
         int_setting(
             "max_open_files",
             "Open files",
-            "network.max_open_files",
-            "network.max_open_files.set",
+            "system.sockets.files.max_alloc",
+            "system.sockets.files.max_alloc.set",
             None,
             true,
-            IntSettingBounds::new(64, 1_000_000, 4096),
+            IntSettingBounds::new(64, 65_536, 4096),
         ),
         int_setting(
             "max_open_sockets",
             "Open sockets",
-            "network.max_open_sockets",
-            "network.max_open_sockets.set",
+            "system.sockets.max_size",
+            "system.sockets.max_size.set",
             None,
             true,
-            IntSettingBounds::new(64, 1_000_000, 2048),
+            IntSettingBounds::new(512, 1_000_000, 2048),
         ),
         int_setting(
             "http_max_open",
             "Tracker HTTP open requests",
-            "network.http.max_open",
-            "network.http.max_open.set",
+            "system.sockets.http.max_alloc",
+            "system.sockets.http.max_alloc.set",
             None,
-            false,
-            IntSettingBounds::new(1, 100_000, 512),
-        ),
-        int_setting(
-            "http_max_total_connections",
-            "Tracker HTTP total connections",
-            "network.http.max_total_connections",
-            "network.http.max_total_connections.set",
-            None,
-            false,
-            IntSettingBounds::new(1, 100_000, 256),
+            true,
+            IntSettingBounds::new(1, 4096, 512),
         ),
         int_setting(
             "http_max_host_connections",
@@ -633,15 +624,14 @@ fn rtorrent_settings() -> Vec<RtorrentSettingDescriptor> {
             false,
             true,
         ),
-        bool_setting(
-            "udp_trackers",
-            "UDP trackers",
-            "trackers.use_udp",
-            "trackers.use_udp.set",
+        enum_setting(
+            "dht_mode",
+            "DHT mode",
+            "dht.statistics",
+            "dht.mode.set",
             false,
-            true,
+            "auto",
         ),
-        enum_setting("dht_mode", "DHT mode", "dht", "dht.mode.set", false, "auto"),
     ]
 }
 
@@ -1065,6 +1055,7 @@ fn read_rtorrent_overlay(path: &FsPath) -> std::io::Result<(BTreeMap<String, Str
     })?;
     let mut saved = BTreeMap::new();
     let mut custom = Vec::new();
+    let descriptors = rtorrent_settings();
     let mut in_managed = false;
     let mut in_custom = false;
     for line in raw.lines() {
@@ -1083,10 +1074,8 @@ fn read_rtorrent_overlay(path: &FsPath) -> std::io::Result<(BTreeMap<String, Str
             if let Some((command, value)) = trimmed.split_once('=') {
                 let command = command.trim().trim_end_matches(".set");
                 let value = value.trim();
-                if let Some(desc) = rtorrent_settings().into_iter().find(|desc| {
-                    desc.command == command || desc.setter.trim_end_matches(".set") == command
-                }) {
-                    saved.insert(desc.key.to_owned(), value.to_owned());
+                if let Some(key) = rtorrent_overlay_setting_key(command, &descriptors) {
+                    saved.insert(key.to_owned(), value.to_owned());
                 }
             }
         } else if in_custom && trimmed != RTORRENT_CUSTOM_HEADER {
@@ -1094,6 +1083,22 @@ fn read_rtorrent_overlay(path: &FsPath) -> std::io::Result<(BTreeMap<String, Str
         }
     }
     Ok((saved, custom.join("\n").trim().to_owned()))
+}
+
+fn rtorrent_overlay_setting_key(
+    command: &str,
+    descriptors: &[RtorrentSettingDescriptor],
+) -> Option<&'static str> {
+    descriptors
+        .iter()
+        .find(|desc| desc.command == command || desc.setter.trim_end_matches(".set") == command)
+        .map(|desc| desc.key)
+        .or_else(|| match command {
+            "network.max_open_files" => Some("max_open_files"),
+            "network.max_open_sockets" => Some("max_open_sockets"),
+            "network.http.max_open" | "network.http.max_total_connections" => Some("http_max_open"),
+            _ => None,
+        })
 }
 
 fn merge_rtorrent_overlay(
@@ -1202,6 +1207,11 @@ fn xml_setting_display(value: &XmlValue) -> String {
         XmlValue::String(value) => value.trim().to_owned(),
         XmlValue::Int(value) => value.to_string(),
         XmlValue::Bool(value) => if *value { "yes" } else { "no" }.to_owned(),
+        XmlValue::Struct(fields) => fields
+            .iter()
+            .find(|(key, _)| key == "dht")
+            .map(|(_, value)| xml_setting_display(value))
+            .unwrap_or_else(|| format!("{value:?}")),
         _ => format!("{value:?}"),
     }
 }
@@ -5043,11 +5053,12 @@ mod tests {
     use super::{
         automation_state_write_status, escape_script_log_output, live_row_response,
         merge_rtorrent_overlay, metadata_read_status, metadata_write_status,
-        parse_torrent_live_hashes, read_script_output, rss_magnet_failure_summary,
-        rtorrent_overlay_is_writable, rtorrent_settings, statvfs_block_size,
-        tracker_failure_summary, write_rtorrent_overlay, ApplyRssRuleBody, TestRssRuleBody,
-        MAX_RSS_RULE_FIELD_BYTES, MAX_RTORRENT_OVERLAY_BYTES, MAX_TORRENT_LIVE_HASH_QUERY_BYTES,
-        MAX_TORRENT_LIVE_STATS,
+        parse_torrent_live_hashes, read_rtorrent_overlay, read_script_output,
+        rss_magnet_failure_summary, rtorrent_overlay_is_writable, rtorrent_settings,
+        statvfs_block_size, tracker_failure_summary, write_rtorrent_overlay, ApplyRssRuleBody,
+        TestRssRuleBody, MAX_RSS_RULE_FIELD_BYTES, MAX_RTORRENT_OVERLAY_BYTES,
+        MAX_TORRENT_LIVE_HASH_QUERY_BYTES, MAX_TORRENT_LIVE_STATS, RTORRENT_MANAGED_BEGIN,
+        RTORRENT_MANAGED_END,
     };
     use crate::cache::TorrentLiveRow;
     use std::collections::BTreeMap;
@@ -5180,6 +5191,25 @@ mod tests {
         assert_eq!(merged.get("max_uploads"), Some(&"77".to_owned()));
         assert_eq!(merged.get("max_downloads"), Some(&"88".to_owned()));
         assert_eq!(custom, "custom.setting = yes");
+    }
+
+    #[test]
+    fn rtorrent_settings_reads_pre_01628_managed_commands() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("rtorrent.rc");
+        std::fs::write(
+            &path,
+            format!(
+                "{RTORRENT_MANAGED_BEGIN}\nnetwork.max_open_files.set = 2048\nnetwork.max_open_sockets.set = 4096\nnetwork.http.max_open.set = 512\nnetwork.http.max_total_connections.set = 256\n{RTORRENT_MANAGED_END}\n"
+            ),
+        )
+        .unwrap();
+
+        let (saved, custom) = read_rtorrent_overlay(&path).unwrap();
+        assert_eq!(saved.get("max_open_files"), Some(&"2048".to_owned()));
+        assert_eq!(saved.get("max_open_sockets"), Some(&"4096".to_owned()));
+        assert_eq!(saved.get("http_max_open"), Some(&"256".to_owned()));
+        assert!(custom.is_empty());
     }
 
     #[test]

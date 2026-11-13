@@ -325,7 +325,7 @@ and runs DHT certification. If no forward is present, it writes degraded state
 and keeps polling. Set `TNG_VPN_ON_MISSING=stop-cert` plus
 `TNG_VPN_MISS_LIMIT=N` to stop the certification service after repeated misses.
 
-The Docker entrypoints pin `network.port_range`, `dht.port`, and
+The Docker entrypoints pin `network.listen.port.range` and
 `dht.override_port` to `RTORRENT_INCOMING_PORT`, so the TCP peer listener and UDP
 DHT listener use the same forwarded public port.
 

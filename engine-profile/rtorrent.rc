@@ -2,17 +2,16 @@
 # Pinned for rTorrent 0.16.28, tinyxml2 XMLRPC backend
 
 # Network
-network.port_range.set = 50000-50000
-network.port_random.set = no
+network.listen.port.range.set = 50000-50000
+network.listen.port.random.set = no
 
 protocol.encryption.set = allow_incoming,try_outgoing,enable_retry
 
 # DHT / PEX / LSD
 dht.mode.set = on
-# Container/systemd launchers pin dht.port and dht.override_port to the public
-# incoming port so the UDP socket that Docker/firewalls expose is the one DHT uses.
+# Container/systemd launchers pin the DHT listener to the public incoming port
+# through dht.override_port.set in the launcher.
 protocol.pex.set = yes
-trackers.use_udp.set = yes
 
 # Performance tuning for large seed libraries
 # Home/test builds bias toward more concurrent activity; override in
@@ -29,10 +28,9 @@ pieces.hash.on_completion.set = yes
 pieces.memory.max.set = 4096M
 
 # File/socket and tracker concurrency
-network.max_open_files.set = 4096
-network.max_open_sockets.set = 2048
-network.http.max_open.set = 512
-network.http.max_total_connections.set = 256
+system.sockets.max_size.set = 2048
+system.sockets.files.max_alloc.set = 4096
+system.sockets.http.max_alloc.set = 512
 network.http.max_host_connections.set = 64
 network.http.max_cache_connections.set = 512
 
@@ -49,7 +47,7 @@ trackers.numwant.set = 200
 
 # Logging
 log.open_file = "rtorrent", /var/log/rtorrent/rtorrent.log
-log.add_output = "info", "rtorrent"
+log.add_output = "errors", "rtorrent"
 
 # File completion handling
 # Set directory via d.directory.set in load commands; no default download dir

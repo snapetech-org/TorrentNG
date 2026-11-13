@@ -85,6 +85,42 @@ def run_interop_preflight(
 
 
 class WorkflowSecurityTests(unittest.TestCase):
+    def test_packaged_rtorrent_profile_uses_current_01628_commands(self) -> None:
+        active_configs = (
+            ROOT / "engine-profile" / "rtorrent.rc",
+            ROOT / "deploy" / "docker" / "rtorrent.rc",
+            ROOT / "deploy" / "systemd" / "rtorrent.rc",
+        )
+        profile = active_configs[0].read_text(encoding="utf-8")
+        self.assertIn("network.listen.port.range.set =", profile)
+        self.assertIn("network.listen.port.random.set =", profile)
+        self.assertIn("system.sockets.max_size.set =", profile)
+        self.assertIn("system.sockets.http.max_alloc.set =", profile)
+
+        obsolete = (
+            "network.port_range.set =",
+            "network.port_random.set =",
+            "dht.port.set =",
+            "trackers.use_udp.set =",
+            "network.max_open_files.set =",
+            "network.max_open_sockets.set =",
+            "network.http.max_open.set =",
+            "network.http.max_total_connections.set =",
+            "schedule2 =",
+        )
+        entrypoints = (
+            ROOT / "deploy" / "docker" / "entrypoint.sh",
+            ROOT / "deploy" / "docker" / "entrypoint.phase1.sh",
+        )
+        for path in (*active_configs, *entrypoints):
+            source = path.read_text(encoding="utf-8")
+            for command in obsolete:
+                self.assertNotIn(command, source, f"{command} remains in {path.relative_to(ROOT)}")
+
+        docker_entrypoint = entrypoints[0].read_text(encoding="utf-8")
+        self.assertIn("network.listen.port.range.set=$INCOMING_PORT-$INCOMING_PORT", docker_entrypoint)
+        self.assertIn("dht.override_port.set=$INCOMING_PORT", docker_entrypoint)
+
     def test_backend_api_load_uses_an_isolated_default_target(self) -> None:
         workflow = (WORKFLOWS / "backend-evidence.yml").read_text(encoding="utf-8")
         api_job = workflow.split("  api-load:\n", 1)[1].split(
