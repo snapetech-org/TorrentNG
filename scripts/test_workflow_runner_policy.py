@@ -68,11 +68,18 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             self.assertNotIn("self-hosted", body, name)
         self.assertIn('"runner_pool": "github"', source)
 
-    def test_webui_uses_github_runner_and_installs_locked_playwright_browser(self) -> None:
+    def test_webui_uses_github_runner_and_pinned_playwright_container(self) -> None:
         body = self.job("ci.yml", "webui")
         self.assertIn("runs-on: ubuntu-24.04", body)
         self.assertNotIn("container:", body)
-        self.assertIn("npx playwright install --with-deps chromium", body)
+        self.assertIn(
+            "mcr.microsoft.com/playwright@sha256:2f05f8a734509a7b3f26a912639488ee08f58a7b292d14d62271bcff9038768f",
+            body,
+        )
+        self.assertIn("Expected Playwright 1.64.1", body)
+        self.assertIn("docker run --rm --init --ipc=host", body)
+        self.assertIn("npm run test:e2e -- --reporter=line", body)
+        self.assertNotIn("npx playwright install --with-deps chromium", body)
         self.assertIn("inputs.candidate_sha == ''", body)
 
     def test_candidate_artifact_uses_exact_source_and_never_publishes(self) -> None:
