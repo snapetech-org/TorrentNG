@@ -23,6 +23,7 @@ RUN printf '%s\n' \
     'tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }' \
     > Cargo.toml
 COPY sidecar/Cargo.toml sidecar/Cargo.lock ./sidecar/
+COPY vendor/openidconnect ./vendor/openidconnect
 COPY crates/rt-logging/Cargo.toml ./crates/rt-logging/
 COPY crates/rt-logging/src ./crates/rt-logging/src
 WORKDIR /src/sidecar
