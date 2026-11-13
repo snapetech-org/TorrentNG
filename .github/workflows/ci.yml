@@ -822,7 +822,7 @@ jobs:
         run: npm audit --audit-level=high
 
   candidate-artifact:
-    name: Private Linux x64 candidate build and smoke
+    name: GitHub-hosted Linux x64 candidate build and smoke
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.actor == 'snapetech' &&
@@ -899,7 +899,7 @@ jobs:
           output_path.write_text(text, encoding="utf-8")
           PY
 
-      - name: Verify private candidate artifact route
+      - name: Verify candidate artifact route
         run: python3 scripts/test_candidate_artifact_route.py
 
       - name: Cache Cargo package downloads
@@ -961,7 +961,7 @@ jobs:
             sha256sum torrentngd torrentngd-linux-x64.tar.gz > SHA256SUMS
           )
           {
-            printf '## Private candidate artifact\n\n'
+            printf '## GitHub-hosted candidate artifact\n\n'
             printf -- '- Source SHA: %s\n' "$CANDIDATE_SHA"
             printf -- '- Artifact SHA-256: %s\n' "$(awk '{print $1}' "$BUILD_BUNDLE/SHA256SUMS")"
             printf -- '- Bundle: torrentng-candidate-linux-x64-%s\n' "$CANDIDATE_SHA"
@@ -1009,7 +1009,7 @@ jobs:
             printf -- '- Image archive SHA-256: `%s`\n' "$(awk '{print $1}' "$BUILD_BUNDLE/rtorrentng-compatible-image.tar.gz.sha256")"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload private candidate artifact
+      - name: Upload GitHub-hosted candidate artifact
         id: upload-candidate
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:

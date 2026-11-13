@@ -15,6 +15,28 @@ certifies broader public-network, target-device, or scale behavior.
 
 ## Private Linux build-only candidate artifact — 2026-10-26
 
+This section records the runner policy in effect on 2026-10-26 and is retained
+as historical evidence. The current route is the GitHub-hosted candidate path
+below.
+
+## Current GitHub-hosted candidate artifact path — 2026-11-12
+
+The CI workflow has a separate manual path for producing a Linux x64 daemon
+and compatible-client image artifact without creating a tag or starting
+release publication:
+
+1. Read the exact main SHA to build with `git rev-parse origin/main`.
+2. Dispatch the candidate build with:
+   `gh workflow run ci.yml --ref main -f action=build -f runner_pool=github -f candidate_sha=<full-main-sha>`.
+3. Watch that run to completion and download its
+   `torrentng-candidate-linux-x64-<sha>` artifact into task-scoped scratch.
+4. Verify the metadata names the requested SHA, validate the provided
+   checksums, and confirm the authenticated smoke report says
+   `Overall status: PASS`.
+
+The current route runs on `ubuntu-24.04`, checks out the exact main candidate,
+and uploads a 30-day Actions artifact. It does not tag or publish a release.
+
 The CI workflow has a separate manual path for producing a Linux x64 daemon
 artifact without creating a tag or starting release publication:
 
