@@ -55,8 +55,9 @@ services:
       timeout: 5s
       retries: 8
 
+  # Public stable upstream images are pinned by multi-architecture digest for clean runners.
   sonarr:
-    image: snape/certification-sonarr-cve:latest
+    image: lscr.io/linuxserver/sonarr:latest@sha256:673dc4609a5672bc8e46069c86ffcea283a86b48d34a6c93d8da8c24a1b87571
     restart: unless-stopped
     ports:
       - "127.0.0.1:${SONARR_HOST_PORT:-18989}:8989"
@@ -72,7 +73,7 @@ services:
       - torrentng
 
   radarr:
-    image: snape/certification-radarr-cve:latest
+    image: lscr.io/linuxserver/radarr:latest@sha256:51a9ac2a9eb47afc833541e5fd6c11b86eb9f810694c22fa2429e3078e9194b2
     restart: unless-stopped
     ports:
       - "127.0.0.1:${RADARR_HOST_PORT:-17878}:7878"
@@ -88,7 +89,7 @@ services:
       - torrentng
 
   prowlarr:
-    image: snape/certification-prowlarr-cve:latest
+    image: lscr.io/linuxserver/prowlarr:latest@sha256:6660787a99b2e58203539583663c973b48979fc00ff2cb78dc0ea17429e1f6ef
     restart: unless-stopped
     ports:
       - "127.0.0.1:${PROWLARR_HOST_PORT:-19696}:9696"
@@ -102,7 +103,7 @@ services:
       - torrentng
 
   autobrr:
-    image: snape/autobrr-cve:latest
+    image: ghcr.io/autobrr/autobrr:latest@sha256:72bb5fe5e8c73f85660f92502d9015b21b07156495f039b55864633b9f8b7a89
     restart: unless-stopped
     ports:
       - "127.0.0.1:${AUTOBRR_HOST_PORT:-17474}:7474"

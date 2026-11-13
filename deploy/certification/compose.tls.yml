@@ -1,6 +1,6 @@
 services:
   torrentng-cert-tls:
-    image: nginx@sha256:62ff2089abf5a9ed33bd232895bef5e22f7bb4b200675cec49a5ebc48e3d4ac8
+    image: nginx:1.30-alpine@sha256:901e593c95dc85f5a729f5765516321366ef4ac401821431d408897e95287d0a
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true

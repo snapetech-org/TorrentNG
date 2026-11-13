@@ -75,7 +75,7 @@ Run the larger release-grab gate in a separate normal-sync compose project:
 ./scripts/release_grab_certification.sh
 ```
 
-That runner uses non-conflicting host ports, configures the app clients, then proves Prowlarr, Sonarr, and Radarr can search local Torznab fixtures, submit release grabs through their own APIs, and complete transfers through TorrentNG. It tears the temporary stack down by default; set `CERT_GRAB_KEEP_STACK=1` to keep it for debugging.
+That runner uses non-conflicting host ports, configures the app clients, then proves Prowlarr, Sonarr, and Radarr can search local Torznab fixtures, submit release grabs through their own APIs, and complete transfers through TorrentNG. It tears the temporary stack down by default; set `CERT_GRAB_KEEP_STACK=1` to keep it for debugging. The stack uses public upstream images for LinuxServer.io Sonarr/Radarr/Prowlarr and autobrr, pinned to current multi-architecture digests so clean runners need no private image access. Refresh these pins from the upstream stable tags when updating the certification clients.
 
 Run the Docker client interop matrix against torrentngd, qBittorrent,
 Transmission, Deluge, rTorrent, and opentracker:
