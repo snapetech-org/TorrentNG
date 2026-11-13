@@ -9,6 +9,13 @@ BIN="${TNG_RELEASE_BINARY:-$ROOT/target/release/torrentngd}"
 CONFIG="${TNG_RELEASE_CONFIG:-}"
 STATIC_DIR="${TNG_STATIC_DIR:-$ROOT/sidecar/static}"
 TOKEN="${TNG_RELEASE_TOKEN:-backend-burndown-token-local-smoke}"
+API_PORT="${TNG_RELEASE_API_PORT:-28080}"
+if [[ ! "$API_PORT" =~ ^[0-9]{1,5}$ ]] || (( API_PORT < 1 || API_PORT > 65535 )); then
+  echo "TNG_RELEASE_API_PORT must be an integer from 1 to 65535" >&2
+  exit 2
+fi
+API_BIND="127.0.0.1:$API_PORT"
+API_URL="http://$API_BIND"
 OUT="${1:-$REPORT_DIR/backend-burndown-native-release-smoke-$(date -u +%Y%m%dT%H%M%SZ).md}"
 PREFIX="${OUT%.md}"
 smoke_tmp=""
@@ -30,6 +37,7 @@ if [[ -z "$CONFIG" ]]; then
   smoke_tmp="$(mktemp -d "${TMPDIR:-/tmp}/torrentng-native-release-smoke.XXXXXX")"
   CONFIG="$smoke_tmp/config.toml"
   TNG_SMOKE_TMP="$smoke_tmp" TNG_SMOKE_CONFIG="$CONFIG" TNG_RELEASE_TOKEN="$TOKEN" \
+    TNG_RELEASE_API_PORT="$API_PORT" \
     python3 - <<'PY'
 import json
 import os
@@ -37,10 +45,11 @@ from pathlib import Path
 
 root = Path(os.environ["TNG_SMOKE_TMP"])
 quote = lambda value: json.dumps(str(value))
+api_bind = f"127.0.0.1:{os.environ['TNG_RELEASE_API_PORT']}"
 config = "\n".join(
     [
         "[daemon]",
-        'api_bind = "127.0.0.1:28080"',
+        f"api_bind = {quote(api_bind)}",
         f"session_dir = {quote(root / 'session')}",
         "log_level = \"info\"",
         "",
@@ -79,7 +88,7 @@ daemon_pid=$!
 
 ready=0
 for _ in $(seq 1 60); do
-  if curl -fsS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:28080/health >"$HEALTH" 2>/dev/null; then
+  if curl -fsS -H "Authorization: Bearer $TOKEN" "$API_URL/health" >"$HEALTH" 2>/dev/null; then
     ready=1
     break
   fi
@@ -91,15 +100,15 @@ if [[ "$ready" != "1" ]]; then
 fi
 
 curl -fsS -H "Authorization: Bearer $TOKEN" \
-  'http://127.0.0.1:28080/api/v1/torrents?limit=2' >"$TORRENTS"
+  "$API_URL/api/v1/torrents?limit=2" >"$TORRENTS"
 curl -fsS -H "Authorization: Bearer $TOKEN" \
-  http://127.0.0.1:28080/api/v1/transfer/info >"$TRANSFER"
+  "$API_URL/api/v1/transfer/info" >"$TRANSFER"
 curl -fsS -H "Authorization: Bearer $TOKEN" \
-  'http://127.0.0.1:28080/api/qb/v2/torrents/info?limit=2' >"$QBIT"
+  "$API_URL/api/qb/v2/torrents/info?limit=2" >"$QBIT"
 curl -fsS -H "Authorization: Bearer $TOKEN" \
-  http://127.0.0.1:28080/api/qb/v2/transfer/info >"$QBIT_TRANSFER"
+  "$API_URL/api/qb/v2/transfer/info" >"$QBIT_TRANSFER"
 curl -fsS -H "Authorization: Bearer $TOKEN" \
-  http://127.0.0.1:28080/metrics >"$METRICS"
+  "$API_URL/metrics" >"$METRICS"
 
 jq -e '.ready == true and .engine.subsystems.engine.alive == true and .engine.subsystems.storage_workers.healthy == true' "$HEALTH" >/dev/null
 jq -e 'has("snapshot") and has("total") and has("torrents")' "$TORRENTS" >/dev/null
@@ -142,6 +151,7 @@ fi
   echo "- Binary: $BIN"
   echo "- Binary bytes: $binary_bytes"
   echo "- Binary SHA-256: $build_hash"
+  echo "- API bind: $API_BIND"
   echo "- Config: $CONFIG"
   echo "- Worktree: $worktree"
   echo
