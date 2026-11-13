@@ -85,6 +85,26 @@ def run_interop_preflight(
 
 
 class WorkflowSecurityTests(unittest.TestCase):
+    def test_quinn_udp_locks_use_the_rustsec_patched_release(self) -> None:
+        lockfiles = (ROOT / "Cargo.lock", ROOT / "sidecar" / "Cargo.lock")
+        for lockfile in lockfiles:
+            package_blocks = re.split(
+                r"(?m)^\[\[package\]\]\s*$",
+                lockfile.read_text(encoding="utf-8"),
+            )
+            versions = []
+            for block in package_blocks:
+                if re.search(r'(?m)^name = "quinn-udp"$', block):
+                    match = re.search(r'(?m)^version = "([0-9.]+)"$', block)
+                    self.assertIsNotNone(match, f"missing quinn-udp version in {lockfile}")
+                    if match is not None:
+                        versions.append(
+                            tuple(int(part) for part in match.group(1).split("."))
+                        )
+
+            for version in versions:
+                self.assertGreaterEqual(version, (0, 5, 16), str(lockfile))
+
     def test_packaged_rtorrent_profile_uses_current_01628_commands(self) -> None:
         active_configs = (
             ROOT / "engine-profile" / "rtorrent.rc",
