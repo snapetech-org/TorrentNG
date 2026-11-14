@@ -1085,6 +1085,118 @@ async fn unauthenticated_cross_origin_login_is_rejected() {
 }
 
 #[tokio::test]
+async fn non_browser_qbit_token_session_supports_cross_seed_post_api_calls() {
+    let mut cfg = Config::test_default();
+    cfg.auth.api_tokens = vec!["cross-seed-native-api-token".to_owned()];
+    cfg.auth.secret_key = Some("cross-seed-native-session-signing-key".to_owned());
+    let (addr, client, db) = spawn_server_with_backend(cfg, successful_backend()).await;
+    seed_torrent(&db, "crossseed-hash", "cross-seed-cert");
+
+    let login = client
+        .post(url(addr, "/api/qb/v2/auth/login"))
+        .form(&[
+            ("username", "cross-seed-native-api-token"),
+            ("password", "cross-seed-native-api-token"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(login.status(), StatusCode::OK);
+    let cookie_value = |name: &str| {
+        login
+            .headers()
+            .get_all("set-cookie")
+            .iter()
+            .find_map(|value| {
+                value
+                    .to_str()
+                    .ok()?
+                    .strip_prefix(&format!("{name}="))?
+                    .split(';')
+                    .next()
+                    .map(str::to_owned)
+            })
+            .unwrap()
+    };
+    let native_session = cookie_value("tng_session");
+    let native_sid = cookie_value("SID");
+    assert!(native_session.starts_with("tngq1."));
+    assert!(native_sid.starts_with("tngq1."));
+
+    let read = Client::new()
+        .post(url(addr, "/api/qb/v2/torrents/info"))
+        .header("Cookie", format!("tng_session={native_session}"))
+        .header("Sec-Fetch-Mode", "cors")
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body("hashes=CROSSSEED-HASH")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(read.status(), StatusCode::OK);
+    let read_torrents = read.json::<Vec<serde_json::Value>>().await.unwrap();
+    assert_eq!(read_torrents.len(), 1);
+    assert_eq!(read_torrents[0]["hash"], "crossseed-hash");
+
+    let categories = Client::new()
+        .post(url(addr, "/api/qb/v2/torrents/categories"))
+        .header("Cookie", format!("tng_session={native_session}"))
+        .header("Sec-Fetch-Mode", "cors")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(categories.status(), StatusCode::OK);
+
+    let mutation = Client::new()
+        .post(url(addr, "/api/qb/v2/torrents/createTags"))
+        .header("Cookie", format!("SID={native_sid}"))
+        .header("Sec-Fetch-Mode", "cors")
+        .form(&[("tags", "cross-seed-cert")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(mutation.status(), StatusCode::OK);
+
+    let browser_login = Client::new()
+        .post(url(addr, "/api/qb/v2/auth/login"))
+        .header("Origin", format!("http://{addr}"))
+        .header("Sec-Fetch-Site", "same-origin")
+        .form(&[
+            ("username", "cross-seed-native-api-token"),
+            ("password", "cross-seed-native-api-token"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(browser_login.status(), StatusCode::OK);
+    let browser_sid = browser_login
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .find_map(|value| {
+            value
+                .to_str()
+                .ok()?
+                .strip_prefix("SID=")?
+                .split(';')
+                .next()
+                .map(str::to_owned)
+        })
+        .unwrap();
+    assert!(browser_sid.starts_with("tng1."));
+
+    let cross_site = Client::new()
+        .post(url(addr, "/api/qb/v2/torrents/createTags"))
+        .header("Cookie", format!("SID={browser_sid}"))
+        .header("Origin", "https://attacker.example")
+        .header("Sec-Fetch-Site", "cross-site")
+        .form(&[("tags", "blocked-cross-site")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(cross_site.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn login_and_logout_mark_session_cookies_secure_by_default() {
     let mut cfg = Config::test_default();
     cfg.auth.api_tokens = vec!["secure-cookie-test-token".to_owned()];

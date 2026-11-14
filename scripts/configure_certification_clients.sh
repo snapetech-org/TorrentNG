@@ -104,6 +104,7 @@ arr_payload() {
           elif .name=="port" then .value=$port
           elif .name=="useSsl" then .value=$tls
           elif .name=="urlBase" then .value=""
+          elif .name=="apiKey" then .value=$token
           elif .name=="username" then .value=$token
           elif .name=="password" then .value=$token
           elif .name==$category_field then .value=$category_value
@@ -112,7 +113,13 @@ arr_payload() {
           elif .name=="firstAndLast" then .value=false
           elif .name=="contentLayout" then .value=0
           else . end
-        )'
+        )
+      | if any(.fields[]; .name=="apiKey") then
+          .fields |= map(
+            if .name=="username" or .name=="password" then .value=""
+            else . end
+          )
+        else . end'
 }
 
 configure_arr_client() {
@@ -181,6 +188,7 @@ configure_autobrr_client() {
 
   local tls_json=false
   [[ "$CERT_TNG_CLIENT_TLS" == true ]] && tls_json=true
+  # Use the API-token bearer path when supported so HTTPS-only SID cookies remain secure.
   payload="$(jq -nc --arg token "$TNG_API_TOKEN" --arg host "$CERT_TNG_CLIENT_HOST" \
     --argjson port "$CERT_TNG_CLIENT_PORT" --argjson tls "$tls_json" '{
     name: "TorrentNG-qBit",
@@ -190,9 +198,10 @@ configure_autobrr_client() {
     port: $port,
     tls: $tls,
     tls_skip_verify: false,
-    username: $token,
-    password: $token,
+    username: "",
+    password: "",
     settings: {
+      apikey: $token,
       basic: {auth: false},
       rules: {enabled: false}
     }

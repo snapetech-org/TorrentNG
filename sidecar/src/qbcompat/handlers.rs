@@ -236,7 +236,10 @@ pub fn build_router(_state: AppState) -> Router<AppState> {
             get(app_default_save_path).post(app_default_save_path),
         )
         // Torrents
-        .route("/torrents/info", get(torrents_info))
+        .route(
+            "/torrents/info",
+            get(torrents_info).post(torrents_info_post),
+        )
         .route("/torrents/properties", get(torrents_properties))
         .route(
             "/torrents/add",
@@ -251,10 +254,16 @@ pub fn build_router(_state: AppState) -> Router<AppState> {
         .route("/torrents/delete", post(torrents_delete))
         .route("/torrents/recheck", post(torrents_recheck))
         .route("/torrents/reannounce", post(torrents_reannounce))
-        .route("/torrents/trackers", get(torrents_trackers))
+        .route(
+            "/torrents/trackers",
+            get(torrents_trackers).post(torrents_trackers_post),
+        )
         .route("/torrents/export", get(torrents_export))
         .route("/torrents/webseeds", get(torrents_webseeds))
-        .route("/torrents/files", get(torrents_files))
+        .route(
+            "/torrents/files",
+            get(torrents_files).post(torrents_files_post),
+        )
         .route("/torrents/pieceStates", get(torrents_piece_states))
         .route("/torrents/pieceHashes", get(torrents_piece_hashes))
         .route("/torrents/setCategory", post(torrents_set_category))
@@ -292,11 +301,11 @@ pub fn build_router(_state: AppState) -> Router<AppState> {
             "/torrents/toggleFirstLastPiecePrio",
             post(torrents_toggle_first_last_piece_prio),
         )
-        .route("/torrents/categories", get(categories))
+        .route("/torrents/categories", get(categories).post(categories))
         .route("/torrents/createCategory", post(create_category))
         .route("/torrents/editCategory", post(edit_category))
         .route("/torrents/removeCategories", post(remove_categories))
-        .route("/torrents/tags", get(tags))
+        .route("/torrents/tags", get(tags).post(tags))
         .route("/torrents/createTags", post(create_tags))
         .route("/torrents/deleteTags", post(delete_tags))
         // Sync / transfer
@@ -351,6 +360,7 @@ pub(crate) struct QbitLoginForm {
 pub(crate) async fn auth_login(
     State(s): State<AppState>,
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    headers: HeaderMap,
     Form(form): Form<QbitLoginForm>,
 ) -> impl IntoResponse {
     let peer_ip = peer.map(|Extension(ConnectInfo(addr))| addr.ip());
@@ -367,6 +377,7 @@ pub(crate) async fn auth_login(
                 .iter()
                 .any(|token| crate::auth::tokens_match(token, candidate))
         });
+    let api_token_login = token.is_some();
 
     let credentials = s.auth_credentials.read().await;
     let password_valid = password
@@ -397,6 +408,19 @@ pub(crate) async fn auth_login(
             s.cfg.auth.secret_key.as_deref(),
             &session_credential,
         );
+        let cookie_value = if api_token_login && !crate::auth::has_browser_request_headers(&headers)
+        {
+            s.cfg
+                .auth
+                .secret_key
+                .as_deref()
+                .map(|secret| {
+                    crate::auth::qbit_native_session_cookie_value(secret, &session_credential)
+                })
+                .unwrap_or(cookie_value)
+        } else {
+            cookie_value
+        };
         let secure_attribute = if s.cfg.auth.secure_cookies {
             "; Secure"
         } else {
@@ -2066,9 +2090,56 @@ struct InfoQuery {
     reverse: Option<bool>,
     limit: Option<usize>,
     offset: Option<usize>,
+    hashes: Option<String>,
 }
 
-async fn torrents_info(State(s): State<AppState>, Query(q): Query<InfoQuery>) -> impl IntoResponse {
+async fn torrents_info(State(s): State<AppState>, Query(q): Query<InfoQuery>) -> Response {
+    torrents_info_query(s, q).await
+}
+
+async fn torrents_info_post(State(s): State<AppState>, Form(q): Form<InfoQuery>) -> Response {
+    torrents_info_query(s, q).await
+}
+
+async fn torrents_info_query(s: AppState, q: InfoQuery) -> Response {
+    if let Some(selection) = q
+        .hashes
+        .as_deref()
+        .filter(|value| !value.eq_ignore_ascii_case("all"))
+    {
+        let hashes = match parse_hash_selection(selection) {
+            Ok(hashes) => hashes,
+            Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+        };
+        return match s
+            .db
+            .run_blocking("qbit_torrents_info_hashes", move |db| {
+                let mut rows = Vec::with_capacity(hashes.len());
+                for hash in hashes {
+                    if let Some(canonical_hash) = db.canonical_hash(&hash)? {
+                        if let Some(row) = db.get(&canonical_hash)? {
+                            rows.push(row);
+                        }
+                    }
+                }
+                Ok::<_, anyhow::Error>(rows)
+            })
+            .await
+        {
+            Ok(rows) => Json(rows.iter().map(to_qb_torrent).collect::<Vec<_>>()).into_response(),
+            Err(e) => {
+                tracing::error!(
+                    component = "qbcompat",
+                    operation = "torrents_info_hashes",
+                    result = "error",
+                    error = %crate::url_redaction::redact_display(&e),
+                    "qBit torrent list query failed"
+                );
+                metadata_read_status(&e).into_response()
+            }
+        };
+    }
+
     let status = match qbit_status_filter(q.filter.as_deref()) {
         Ok(status) => status,
         Err(status) => return status.into_response(),
@@ -2083,7 +2154,7 @@ async fn torrents_info(State(s): State<AppState>, Query(q): Query<InfoQuery>) ->
         None => None,
     };
     let params = ListParams {
-        // qBittorrent's `filter` is a finite status enum, not a free-text
+        // qBittorrent's filter is a finite status enum, not a free-text
         // search. Passing an unknown value through as ListParams::filter
         // makes the cache search torrent names and can return a successful
         // but semantically unrelated response.
@@ -2914,8 +2985,16 @@ async fn torrents_delete(State(s): State<AppState>, Form(f): Form<DeleteForm>) -
 async fn torrents_trackers(
     State(s): State<AppState>,
     Query(q): Query<std::collections::HashMap<String, String>>,
-) -> impl IntoResponse {
-    let hash = match required_resolved_hash_async(&s.db, q.get("hash").map(String::as_str)).await {
+) -> Response {
+    torrents_trackers_for_hash(s, q.get("hash").map(String::as_str)).await
+}
+
+async fn torrents_trackers_post(State(s): State<AppState>, Form(q): Form<HashQuery>) -> Response {
+    torrents_trackers_for_hash(s, q.hash.as_deref()).await
+}
+
+async fn torrents_trackers_for_hash(s: AppState, value: Option<&str>) -> Response {
+    let hash = match required_resolved_hash_async(&s.db, value).await {
         Ok(hash) => hash,
         Err(status) => return status.into_response(),
     };
@@ -2993,8 +3072,16 @@ async fn torrents_export(
 async fn torrents_files(
     State(s): State<AppState>,
     Query(q): Query<std::collections::HashMap<String, String>>,
-) -> impl IntoResponse {
-    let hash = match required_resolved_hash_async(&s.db, q.get("hash").map(String::as_str)).await {
+) -> Response {
+    torrents_files_for_hash(s, q.get("hash").map(String::as_str)).await
+}
+
+async fn torrents_files_post(State(s): State<AppState>, Form(q): Form<HashQuery>) -> Response {
+    torrents_files_for_hash(s, q.hash.as_deref()).await
+}
+
+async fn torrents_files_for_hash(s: AppState, value: Option<&str>) -> Response {
+    let hash = match required_resolved_hash_async(&s.db, value).await {
         Ok(hash) => hash,
         Err(status) => return status.into_response(),
     };

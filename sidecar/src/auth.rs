@@ -343,7 +343,11 @@ pub async fn require_auth(
         // subdomain. Require same-origin evidence for this route as well.
         if (is_mutating(&req) || path == "/ws")
             && !csrf_request_allowed(req.headers())
-            && !qbit_native_client_mutation_allowed(&req, &state.cfg.auth.api_tokens)
+            && !qbit_native_client_mutation_allowed(
+                &req,
+                &state.cfg.auth.api_tokens,
+                state.cfg.auth.secret_key.as_deref(),
+            )
         {
             return (StatusCode::FORBIDDEN, "cross-site cookie mutation rejected").into_response();
         }
@@ -405,17 +409,31 @@ pub(crate) fn session_cookie_value(secret: Option<&str>, token: &str) -> String 
         // configured; public binds reject this configuration.
         return urlencoding::encode(token).into_owned();
     };
+    signed_session_cookie_value(secret, token, false)
+}
 
+/// Mark an API-token login performed by a non-browser qBittorrent client.
+/// The marker is covered by the session MAC and is only issued for the SID
+/// compatibility login path; it never changes the browser session cookie.
+pub(crate) fn qbit_native_session_cookie_value(secret: &str, token: &str) -> String {
+    signed_session_cookie_value(secret, token, true)
+}
+
+fn signed_session_cookie_value(secret: &str, token: &str, qbit_native_client: bool) -> String {
     let expires = unix_now().saturating_add(SESSION_TTL_SECS);
     let mut nonce = [0_u8; 16];
     rand::rng().fill_bytes(&mut nonce);
     let nonce = hex::encode(nonce);
-    let payload = format!("{token}.{expires}.{nonce}");
+    let (version, payload) = if qbit_native_client {
+        ("tngq1", format!("{token}.qbit-native.{expires}.{nonce}"))
+    } else {
+        ("tng1", format!("{token}.{expires}.{nonce}"))
+    };
     let mut mac = SessionMac::new_from_slice(secret.as_bytes())
         .expect("HMAC-SHA256 accepts keys of every length");
     mac.update(payload.as_bytes());
     format!(
-        "tng1.{expires}.{nonce}.{}",
+        "{version}.{expires}.{nonce}.{}",
         hex::encode(mac.finalize().into_bytes())
     )
 }
@@ -549,13 +567,35 @@ fn verify_signed_session_at(
     value: &str,
     now: u64,
 ) -> Option<String> {
+    verify_signed_session_kind_at(secret, tokens, value, now).map(|(token, _)| token)
+}
+
+fn verify_signed_qbit_native_session(
+    secret: &str,
+    tokens: &[String],
+    value: &str,
+) -> Option<String> {
+    verify_signed_session_kind_at(secret, tokens, value, unix_now())
+        .and_then(|(token, qbit_native_client)| qbit_native_client.then_some(token))
+}
+
+fn verify_signed_session_kind_at(
+    secret: &str,
+    tokens: &[String],
+    value: &str,
+    now: u64,
+) -> Option<(String, bool)> {
     let mut parts = value.split('.');
     let version = parts.next()?;
     let expires = parts.next()?.parse::<u64>().ok()?;
     let nonce = parts.next()?;
     let signature = parts.next()?;
-    if version != "tng1"
-        || parts.next().is_some()
+    let qbit_native_client = match version {
+        "tng1" => false,
+        "tngq1" => true,
+        _ => return None,
+    };
+    if parts.next().is_some()
         || expires <= now
         || nonce.len() != 32
         || signature.len() != 64
@@ -565,13 +605,16 @@ fn verify_signed_session_at(
         return None;
     }
     let signature = hex::decode(signature).ok()?;
-    let payload_suffix = format!(".{expires}.{nonce}");
     for token in tokens {
-        let payload = format!("{token}{payload_suffix}");
+        let payload = if qbit_native_client {
+            format!("{token}.qbit-native.{expires}.{nonce}")
+        } else {
+            format!("{token}.{expires}.{nonce}")
+        };
         let mut mac = SessionMac::new_from_slice(secret.as_bytes()).ok()?;
         mac.update(payload.as_bytes());
         if mac.verify_slice(&signature).is_ok() {
-            return Some(token.clone());
+            return Some((token.clone(), qbit_native_client));
         }
     }
     None
@@ -593,7 +636,7 @@ fn is_mutating(req: &Request<Body>) -> bool {
     )
 }
 
-fn has_browser_request_headers(headers: &HeaderMap) -> bool {
+pub(crate) fn has_browser_request_headers(headers: &HeaderMap) -> bool {
     headers.contains_key("Origin")
         || headers.contains_key("Referer")
         || headers.contains_key("Sec-Fetch-Site")
@@ -655,7 +698,11 @@ fn single_header_value<'a>(
 /// authentication on API calls. They do not send browser Origin metadata. Allow
 /// that explicit non-browser proof for qB API mutations only; any request that
 /// carries browser metadata still has to pass the strict same-origin check.
-fn qbit_native_client_mutation_allowed(req: &Request<Body>, api_tokens: &[String]) -> bool {
+fn qbit_native_client_mutation_allowed(
+    req: &Request<Body>,
+    api_tokens: &[String],
+    secret: Option<&str>,
+) -> bool {
     let path = req.uri().path();
     if !is_mutating(req)
         || !(path.starts_with("/api/qb/v2/") || path.starts_with("/api/v2/"))
@@ -664,6 +711,15 @@ fn qbit_native_client_mutation_allowed(req: &Request<Body>, api_tokens: &[String
         return false;
     }
 
+    if secret
+        .is_some_and(|secret| qbit_native_session_cookie_token(req, api_tokens, secret).is_some())
+    {
+        return true;
+    }
+
+    // qBittorrent-compatible desktop and automation clients may repeat their
+    // configured API token in Basic authentication. Keep this proof scoped to
+    // qB API mutations, and never let it override browser request metadata.
     let Some(value) = req
         .headers()
         .get(header::AUTHORIZATION)
@@ -690,6 +746,22 @@ fn qbit_native_client_mutation_allowed(req: &Request<Body>, api_tokens: &[String
     api_tokens
         .iter()
         .any(|token| tokens_match(token, username) || tokens_match(token, password))
+}
+
+fn qbit_native_session_cookie_token(
+    req: &Request<Body>,
+    api_tokens: &[String],
+    secret: &str,
+) -> Option<String> {
+    let cookie = req.headers().get(header::COOKIE)?.to_str().ok()?;
+    cookie.split(';').find_map(|part| {
+        let part = part.trim();
+        let value = part
+            .strip_prefix("tng_session=")
+            .or_else(|| part.strip_prefix("SID="))?;
+        let decoded = urlencoding::decode(value).ok()?.into_owned();
+        verify_signed_qbit_native_session(secret, api_tokens, &decoded)
+    })
 }
 
 fn same_origin_authority(value: &str, host: &str, required: bool) -> bool {
@@ -905,7 +977,8 @@ mod tests {
             .unwrap();
         assert!(qbit_native_client_mutation_allowed(
             &request,
-            std::slice::from_ref(&token)
+            std::slice::from_ref(&token),
+            Some("native-client-test-signing-key")
         ));
     }
 
@@ -922,7 +995,8 @@ mod tests {
                 .unwrap();
             assert!(qbit_native_client_mutation_allowed(
                 &request,
-                std::slice::from_ref(&token)
+                std::slice::from_ref(&token),
+                Some("native-client-test-signing-key")
             ));
         }
     }
@@ -941,7 +1015,8 @@ mod tests {
             .unwrap();
         assert!(!qbit_native_client_mutation_allowed(
             &request,
-            std::slice::from_ref(&token)
+            std::slice::from_ref(&token),
+            Some("native-client-test-signing-key")
         ));
 
         let good = BASE64_STANDARD.encode("client-api-token:client-api-token");
@@ -953,7 +1028,8 @@ mod tests {
             .unwrap();
         assert!(!qbit_native_client_mutation_allowed(
             &unrelated,
-            std::slice::from_ref(&token)
+            std::slice::from_ref(&token),
+            Some("native-client-test-signing-key")
         ));
     }
 
@@ -972,7 +1048,68 @@ mod tests {
             .unwrap();
         assert!(!qbit_native_client_mutation_allowed(
             &request,
-            std::slice::from_ref(&token)
+            std::slice::from_ref(&token),
+            Some("native-client-test-signing-key")
+        ));
+    }
+
+    #[test]
+    fn signed_native_qbit_session_allows_only_non_browser_qb_mutations() {
+        let token = "client-api-token".to_owned();
+        let secret = "native-client-test-signing-key";
+        let api_tokens = std::slice::from_ref(&token);
+        let native_cookie = qbit_native_session_cookie_value(secret, &token);
+        let native_request = Request::builder()
+            .method(Method::POST)
+            .uri("/api/v2/torrents/createTags")
+            .header("Cookie", format!("tng_session={native_cookie}"))
+            .header("Sec-Fetch-Mode", "cors")
+            .body(Body::empty())
+            .unwrap();
+        assert!(qbit_native_client_mutation_allowed(
+            &native_request,
+            api_tokens,
+            Some(secret)
+        ));
+
+        let browser_request = Request::builder()
+            .method(Method::POST)
+            .uri("/api/v2/torrents/createTags")
+            .header("Cookie", format!("tng_session={native_cookie}"))
+            .header("Host", "torrentng.example")
+            .header("Origin", "https://attacker.example")
+            .header("Sec-Fetch-Site", "cross-site")
+            .body(Body::empty())
+            .unwrap();
+        assert!(!qbit_native_client_mutation_allowed(
+            &browser_request,
+            api_tokens,
+            Some(secret)
+        ));
+
+        let ordinary_cookie = session_cookie_value(Some(secret), &token);
+        let ordinary_request = Request::builder()
+            .method(Method::POST)
+            .uri("/api/v2/torrents/createTags")
+            .header("Cookie", format!("SID={ordinary_cookie}"))
+            .body(Body::empty())
+            .unwrap();
+        assert!(!qbit_native_client_mutation_allowed(
+            &ordinary_request,
+            api_tokens,
+            Some(secret)
+        ));
+
+        let native_other_route = Request::builder()
+            .method(Method::POST)
+            .uri("/api/v1/torrents")
+            .header("Cookie", format!("SID={native_cookie}"))
+            .body(Body::empty())
+            .unwrap();
+        assert!(!qbit_native_client_mutation_allowed(
+            &native_other_route,
+            api_tokens,
+            Some(secret)
         ));
     }
 

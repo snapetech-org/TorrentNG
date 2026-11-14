@@ -574,7 +574,7 @@ Implements the qBittorrent Web API v2. By default it advertises qBittorrent `5.0
 
 | Method | Path | Notes |
 |--------|------|-------|
-| `POST` | `/api/qb/v2/auth/login` | qBittorrent-compatible login probe; accepts credentials and returns `Ok.` with a `SID` cookie for clients that require qBit session shape |
+| `POST` | `/api/qb/v2/auth/login` | qBittorrent-compatible login probe; accepts credentials and returns a signed SID cookie. API-token logins without browser Origin, Referer, or Sec-Fetch-Site metadata receive a qB-scoped session for native clients; browser requests keep strict same-origin CSRF checks |
 | `POST` | `/api/qb/v2/auth/logout` | Expires the qBittorrent-compatible `SID` cookie |
 
 ### App
@@ -596,7 +596,7 @@ Implements the qBittorrent Web API v2. By default it advertises qBittorrent `5.0
 
 | Method | Path | Notes |
 |--------|------|-------|
-| `GET`  | `/api/qb/v2/torrents/info` | Filter params: `filter`, `category`, `tag`, `sort`, `reverse`, `limit`, `offset`, optional `snapshot`; default `limit` is 200 and the TorrentNG facade clamps it to 5,000; returns `X-TorrentNG-Snapshot` for stable offset pagination |
+| `GET`, `POST` | `/api/qb/v2/torrents/info` | GET query or POST form params: `filter`, `category`, `tag`, `hashes`, `sort`, `reverse`, `limit`, `offset`, optional `snapshot`; default limit is 200 and the TorrentNG facade clamps it to 5,000; returns `X-TorrentNG-Snapshot` for stable offset pagination |
 | `GET`  | `/api/qb/v2/torrents/properties` | Query: `hash`; returns cached torrent properties |
 | `POST` | `/api/qb/v2/torrents/add` | Multipart: `urls`, `savepath`, `category`, `tags`, `paused`, `stopped`, `skip_checking`, `autoTMM`, `contentLayout`, `ratioLimit`, `seedingTimeLimit`, `torrents` (file) |
 | `POST` | `/api/qb/v2/torrents/pause` / `/stop` | Form: `hashes` (pipe-separated or `all`) |
@@ -604,9 +604,9 @@ Implements the qBittorrent Web API v2. By default it advertises qBittorrent `5.0
 | `POST` | `/api/qb/v2/torrents/delete` | Form: `hashes`, `deleteFiles` |
 | `POST` | `/api/qb/v2/torrents/recheck` | Form: `hashes` |
 | `POST` | `/api/qb/v2/torrents/reannounce` | Form: `hashes` |
-| `GET`  | `/api/qb/v2/torrents/trackers` | Query: `hash` |
+| `GET`, `POST` | `/api/qb/v2/torrents/trackers` | GET query or POST form: `hash` |
 | `GET`  | `/api/qb/v2/torrents/webseeds` | Query: `hash`; backend-backed where supported, otherwise `[]` |
-| `GET`  | `/api/qb/v2/torrents/files` | Query: `hash` |
+| `GET`, `POST` | `/api/qb/v2/torrents/files` | GET query or POST form: `hash` |
 | `GET`  | `/api/qb/v2/torrents/pieceStates` | Query: `hash`; backend-backed where supported, otherwise `[]` |
 | `GET`  | `/api/qb/v2/torrents/pieceHashes` | Query: `hash`; backend-backed where supported, otherwise `[]` |
 | `GET`  | `/api/qb/v2/torrents/export` | Query: `hash`; streams `application/x-bittorrent` where the backend has the original torrent blob |
@@ -615,11 +615,11 @@ Implements the qBittorrent Web API v2. By default it advertises qBittorrent `5.0
 | `POST` | `/api/qb/v2/torrents/addTags` | Form: `hashes`, `tags` (comma-separated) |
 | `POST` | `/api/qb/v2/torrents/removeTags` | Form: `hashes`, `tags` |
 | `POST` | `/api/qb/v2/torrents/setTags` | Form: `hashes`, `tags` (comma-separated replacement) |
-| `GET`  | `/api/qb/v2/torrents/categories` | Returns `{ "Name": { "name": "Name", "savePath": "/path" } }` |
+| `GET`, `POST` | `/api/qb/v2/torrents/categories` | Returns a category map; POST is a read-only compatibility alias for clients that submit API calls as form requests |
 | `POST` | `/api/qb/v2/torrents/createCategory` | Form: `category`, `savePath` |
 | `POST` | `/api/qb/v2/torrents/editCategory` | Form: `category`, `savePath` |
 | `POST` | `/api/qb/v2/torrents/removeCategories` | Form: `categories` (newline-separated) |
-| `GET`  | `/api/qb/v2/torrents/tags` | Returns `["tag1", "tag2"]` |
+| `GET`, `POST` | `/api/qb/v2/torrents/tags` | Returns the tag list; POST is a read-only compatibility alias for clients that submit API calls as form requests |
 | `POST` | `/api/qb/v2/torrents/createTags` | Form: `tags` (comma-separated) |
 | `POST` | `/api/qb/v2/torrents/deleteTags` | Form: `tags` |
 | `POST` | `/api/qb/v2/torrents/rename` | Form: `hash`, `name` |

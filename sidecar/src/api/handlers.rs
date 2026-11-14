@@ -1093,7 +1093,7 @@ fn rtorrent_overlay_setting_key(
         .iter()
         .find(|desc| desc.command == command || desc.setter.trim_end_matches(".set") == command)
         .map(|desc| desc.key)
-        .or_else(|| match command {
+        .or(match command {
             "network.max_open_files" => Some("max_open_files"),
             "network.max_open_sockets" => Some("max_open_sockets"),
             "network.http.max_open" | "network.http.max_total_connections" => Some("http_max_open"),

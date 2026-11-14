@@ -121,12 +121,15 @@ front door (`80`) bind to `127.0.0.1` by default. Optional adapter ports
 authenticated TLS reverse proxy for remote access, and do not override the
 loopback binds without equivalent transport and access protection. Incoming
 BitTorrent peer ports remain published separately. Compatibility session
-cookies carry `Secure` by default; disable `auth.secure_cookies` only for an
-explicitly trusted loopback HTTP setup. qBittorrent-compatible native clients
-must use HTTPS and send a configured API token in either Basic-auth credential
-field when they perform mutations. Browser requests still require same-origin
-CSRF evidence; the native-client exception is limited to qB API paths and
-valid API-token credentials.
+cookies are marked Secure by default; disable the secure-cookie setting only
+for an explicitly trusted loopback HTTP setup. Remote clients must use HTTPS.
+Prefer a configured bearer API token for clients that expose an API-key field.
+qBittorrent-compatible clients that log in with an API token receive a signed,
+qB-scoped session when the login has no browser Origin, Referer, or
+Sec-Fetch-Site metadata. That session permits qB API mutations only on qB API
+paths and only while browser metadata remains absent. Clients that repeat the
+API token in Basic authentication may also use that explicit proof for qB API
+mutations. Browser requests still require strict same-origin CSRF evidence.
 
 The native, compatible-client, and Phase 1 images accept runtime `PUID` and
 `PGID` values. Generic Compose deployments default to `1000:1000`; the
