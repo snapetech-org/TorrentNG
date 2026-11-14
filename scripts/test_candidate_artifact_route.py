@@ -56,6 +56,10 @@ class CandidateArtifactRouteTests(unittest.TestCase):
             'docker save "$PHASE1_IMAGE_TAG"',
             "torrentng-phase1-image.tar.gz",
             "sha256sum -c SHA256SUMS",
+            "aquasecurity/setup-trivy@",
+            "trivy image --timeout 20m --scanners vuln --severity HIGH,CRITICAL",
+            '"$NATIVE_IMAGE_TAG"',
+            '"$PHASE1_IMAGE_TAG"',
             "actions/upload-artifact@",
             "retention-days: 30",
         ):
