@@ -37,6 +37,13 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
     def test_codeql_workflow_is_disabled(self) -> None:
         self.assertFalse((WORKFLOW_DIR / "codeql.yml").exists())
 
+    def test_aur_publish_uses_public_hosted_ssh_without_private_proxy(self) -> None:
+        source = (WORKFLOW_DIR / "release-aur.yml").read_text(encoding="utf-8")
+        self.assertIn("runs-on: ubuntu-24.04", source)
+        self.assertIn("aur.archlinux.org", source)
+        self.assertNotIn("ProxyCommand", source)
+        self.assertNotIn("10.0.2.100", source)
+
     def test_main_ci_uses_ephemeral_github_runners_and_trusted_owner_pr_gate(self) -> None:
         source = (WORKFLOW_DIR / "ci.yml").read_text(encoding="utf-8")
         self.assertIn("# ng-runner-policy: github-hosted-default-v1", source)
