@@ -17,7 +17,10 @@ from typing import Any
 
 API_ROOT = "https://api.github.com"
 API_VERSION = "2022-11-28"
-ALLOWED_DISPATCH_WORKFLOWS = {"release-aur.yml", "release-copr.yml"}
+DISPATCH_ACTIONS = {
+    "release-aur.yml": "publish-aur",
+    "release-copr.yml": "publish-copr",
+}
 
 
 class GitHubApiError(RuntimeError):
@@ -271,13 +274,21 @@ def publish(args: argparse.Namespace) -> int:
 
 
 def dispatch(args: argparse.Namespace) -> int:
-    if args.workflow not in ALLOWED_DISPATCH_WORKFLOWS:
+    action = DISPATCH_ACTIONS.get(args.workflow)
+    if action is None:
         raise RuntimeError(f"Workflow dispatch is not allowed for {args.workflow}")
     workflow = urllib.parse.quote(args.workflow, safe="")
     api_request(
         "POST",
         f"actions/workflows/{workflow}/dispatches",
-        {"ref": args.ref, "inputs": {"tag": args.tag}},
+        {
+            "ref": args.ref,
+            "inputs": {
+                "action": action,
+                "runner_pool": "github",
+                "tag": args.tag,
+            },
+        },
     )
     print(f"Dispatched {args.workflow} for {args.tag} from {args.ref}")
     return 0
