@@ -465,6 +465,11 @@ jobs:
       )
     runs-on: ${{ matrix.os == 'windows-x64' && 'windows-2022' || matrix.os == 'macos-arm64' && 'macos-15' || matrix.os == 'linux-arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     steps:
+      - name: Enable Git long paths before Windows checkout
+        if: matrix.os == 'windows-x64'
+        shell: pwsh
+        run: git config --global core.longpaths true
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
