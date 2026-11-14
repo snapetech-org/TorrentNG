@@ -20,6 +20,17 @@ to align; workflow YAML alone is insufficient.
 CodeQL remains disabled by explicit owner directive. Do not restore or reroute
 CodeQL unless the owner explicitly reverses that instruction.
 
+## Routine release soak policy — owner directive, 2026-11-14
+
+Short, transfer-churn, and 24-hour soaks are optional for routine releases.
+Missing, stale, incomplete, or failed soak evidence is informational by default
+and must not block a release. A release that specifically needs soak
+qualification opts in with `TNG_REQUIRE_SOAK=1`; certification status and
+readiness gates then require the configured soak evidence. The legacy
+`TNG_DEFER_24H_SOAK=1` flag remains supported when soak is not required.
+Releases without soak evidence make no long-duration stability claim.
+Feature-specific rollout acceptance requirements remain scoped to that feature.
+
 ## Git delivery
 
 Standing authorization applies to task commits and pushes. Commit focused

@@ -150,6 +150,30 @@ REPORT_DIR="$report_dir" BENCHMARK_DIR="$benchmark_dir" \
 grep -q '| none | PASS | - |' "$report_dir/release-readiness-policy.md"
 grep -q 'Overall status: PASS' "$report_dir/release-readiness-policy.md"
 
+# Routine release readiness must ignore missing soak reports, while an
+# explicitly soak-qualified release must continue to block on them.
+optional_soak_dir="$tmpdir/reports without soak"
+cp -a "$report_dir" "$optional_soak_dir"
+rm -f "$optional_soak_dir"/soak-202*.md \
+  "$optional_soak_dir"/transfer-churn-*.md \
+  "$optional_soak_dir"/soak-24h-*.md \
+  "$optional_soak_dir"/soak-status-*.md \
+  "$optional_soak_dir"/soak-final-*.md \
+  "$optional_soak_dir"/post-soak-release-*.md
+BENCHMARK_DIR="$benchmark_dir" "$ROOT/scripts/certification_status.sh" "$optional_soak_dir" >"$tmpdir/status-soak-optional.md"
+grep -q '| 24h soak | INFO | - |' "$tmpdir/status-soak-optional.md"
+REPORT_DIR="$optional_soak_dir" BENCHMARK_DIR="$benchmark_dir" TNG_REQUIRE_SOAK=0 \
+  "$ROOT/scripts/release_readiness_gate.sh" "$optional_soak_dir/readiness-optional-soak.md" >/dev/null
+grep -q 'Soak policy: optional for routine releases' "$optional_soak_dir/readiness-optional-soak.md"
+grep -q 'Overall status: PASS' "$optional_soak_dir/readiness-optional-soak.md"
+if REPORT_DIR="$optional_soak_dir" BENCHMARK_DIR="$benchmark_dir" TNG_REQUIRE_SOAK=1 \
+  "$ROOT/scripts/release_readiness_gate.sh" "$optional_soak_dir/readiness-required-soak.md" >/dev/null 2>&1; then
+  echo "soak-required release readiness accepted missing soak reports" >&2
+  exit 1
+fi
+grep -q 'Soak policy: required by TNG_REQUIRE_SOAK=1' "$optional_soak_dir/readiness-required-soak.md"
+grep -q '| 24h soak | MISSING | - |' "$optional_soak_dir/readiness-required-soak.md"
+
 REPORT_DIR="$report_dir" BENCHMARK_DIR="$benchmark_dir" \
   "$ROOT/scripts/post_soak_release_gate.sh" "$report_dir/post-soak-policy.md" >/dev/null
 grep -q 'certification status rollup | PASS' "$report_dir/post-soak-policy.md"
@@ -175,7 +199,9 @@ write_report "$report_dir/migration-corpus-local-release-20260518T999999Z.md" PA
 write_report "$report_dir/migration-corpus-universal-20260518T999999Z.md" PASS
 BENCHMARK_DIR="$benchmark_dir" "$ROOT/scripts/certification_status.sh" "$report_dir" >"$report_dir/status-migration-selector.md"
 grep -q '| Migration corpus | PASS_WITH_GAPS | migration-corpus-20260518T000000Z.md |' "$report_dir/status-migration-selector.md"
-grep -q '| 24h soak | PASS | soak-final-selftest.md |' "$report_dir/status-migration-selector.md"
+grep -q '| 24h soak | INFO | soak-final-selftest.md |' "$report_dir/status-migration-selector.md"
+TNG_REQUIRE_SOAK=1 BENCHMARK_DIR="$benchmark_dir" "$ROOT/scripts/certification_status.sh" "$report_dir" >"$report_dir/status-soak-required.md"
+grep -q '| 24h soak | PASS | soak-final-selftest.md |' "$report_dir/status-soak-required.md"
 TNG_DEFER_24H_SOAK=1 BENCHMARK_DIR="$benchmark_dir" "$ROOT/scripts/certification_status.sh" "$report_dir" >"$report_dir/status-soak-deferred.md"
 grep -q '| 24h soak | INFO | deferred by TNG_DEFER_24H_SOAK=1 |' "$report_dir/status-soak-deferred.md"
 write_report "$report_dir/migration-corpus-selftest.md" PASS
@@ -310,7 +336,9 @@ grep -q 'missing evidence files' "$report_dir/external-preflight-placeholders.md
 # prevents a previous PASS from masking a current RUNNING or stale report.
 write_report "$report_dir/soak-24h-newer-selftest.md" RUNNING/UNKNOWN
 BENCHMARK_DIR="$benchmark_dir" "$ROOT/scripts/certification_status.sh" "$report_dir" >"$report_dir/status-newer-soak.md"
-grep -q '| 24h soak | STALE/INCOMPLETE | soak-24h-newer-selftest.md |' "$report_dir/status-newer-soak.md"
+grep -q '| 24h soak | INFO | soak-24h-newer-selftest.md |' "$report_dir/status-newer-soak.md"
+TNG_REQUIRE_SOAK=1 BENCHMARK_DIR="$benchmark_dir" "$ROOT/scripts/certification_status.sh" "$report_dir" >"$report_dir/status-newer-soak-required.md"
+grep -q '| 24h soak | STALE/INCOMPLETE | soak-24h-newer-selftest.md |' "$report_dir/status-newer-soak-required.md"
 
 write_report "$report_dir/soak-failed-source-selftest.md" FAIL
 if SOAK_ALLOW_INCOMPLETE=1 \

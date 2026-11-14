@@ -5,6 +5,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPORT_DIR="${1:-$ROOT/certification/reports}"
 BENCHMARK_DIR="${BENCHMARK_DIR:-$ROOT/benchmarks}"
 DEFER_24H_SOAK="${TNG_DEFER_24H_SOAK:-0}"
+REQUIRE_SOAK="${TNG_REQUIRE_SOAK:-0}"
+
+if [[ "$REQUIRE_SOAK" != "0" && "$REQUIRE_SOAK" != "1" ]]; then
+  echo "TNG_REQUIRE_SOAK must be 0 or 1" >&2
+  exit 2
+fi
 
 latest() {
   local pattern="$1"
@@ -69,6 +75,17 @@ row() {
   printf '| %s | %s | %s |\n' "$name" "$status" "$sample"
 }
 
+soak_row() {
+  local name="$1"
+  local status="$2"
+  local sample="$3"
+  if [[ "$REQUIRE_SOAK" == "1" ]]; then
+    printf '| %s | %s | %s |\n' "$name" "$status" "$sample"
+  else
+    printf '| %s | INFO | %s |\n' "$name" "$sample"
+  fi
+}
+
 row_excluding() {
   local name="$1"
   local pattern="$2"
@@ -86,7 +103,7 @@ row_excluding() {
 
 row_24h_soak() {
   local file status sample active finalized_status final_file raw_file
-  if [[ "$DEFER_24H_SOAK" == "1" ]]; then
+  if [[ "$DEFER_24H_SOAK" == "1" && "$REQUIRE_SOAK" != "1" ]]; then
     printf '| %s | %s | %s |\n' "24h soak" "INFO" "deferred by TNG_DEFER_24H_SOAK=1"
     return
   fi
@@ -106,7 +123,7 @@ row_24h_soak() {
   }; then
     file="$final_file"
     finalized_status="$(overall "$file")"
-    printf '| %s | %s | %s |\n' "24h soak" "$finalized_status" "$(basename "$file")"
+    soak_row "24h soak" "$finalized_status" "$(basename "$file")"
     return
   fi
 
@@ -124,7 +141,20 @@ row_24h_soak() {
       fi
     fi
   fi
-  printf '| %s | %s | %s |\n' "24h soak" "$status" "$sample"
+  soak_row "24h soak" "$status" "$sample"
+}
+
+row_soak_report() {
+  local name="$1"
+  local pattern="$2"
+  local file status sample
+  file="$(latest "$pattern")"
+  status="$(overall "$file")"
+  sample="-"
+  if [[ -n "$file" && -f "$file" ]]; then
+    sample="$(basename "$file")"
+  fi
+  soak_row "$name" "$status" "$sample"
 }
 
 storage_index_has() {
@@ -172,6 +202,11 @@ echo
 echo "- Date UTC: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "- Report directory: $REPORT_DIR"
 echo "- Benchmark directory: $BENCHMARK_DIR"
+if [[ "$REQUIRE_SOAK" == "1" ]]; then
+  echo "- Soak policy: required by TNG_REQUIRE_SOAK=1"
+else
+  echo "- Soak policy: optional for routine releases; set TNG_REQUIRE_SOAK=1 to require soak evidence"
+fi
 echo
 echo "| Gate | Status | Latest report |"
 echo "|---|---|---|"
@@ -195,11 +230,11 @@ row "Universal compatibility" 'universal-compat-*.md'
 row_excluding "Universal live compatibility" 'universal-live-*.md' "$REPORT_DIR" 'universal-live-soak-ready.md'
 row_excluding "Migration corpus" 'migration-corpus-*.md' "$REPORT_DIR" 'migration-corpus-local-release-*' 'migration-corpus-universal-*'
 row "External evidence preflight" 'external-evidence-preflight-*.md'
-row "Short soak" 'soak-202*.md'
-row "Transfer churn soak" 'transfer-churn-*.md'
+row_soak_report "Short soak" 'soak-202*.md'
+row_soak_report "Transfer churn soak" 'transfer-churn-*.md'
 row_24h_soak
-row "Soak status" 'soak-status-*.md'
-row "Soak finalization" 'soak-final-*.md'
+row_soak_report "Soak status" 'soak-status-*.md'
+row_soak_report "Soak finalization" 'soak-final-*.md'
 row "Security review" 'security-review-*.md'
 row "Security scan" 'security-scan-*.md'
 row "TorrentNG client" 'native-engine-*.md'
@@ -218,7 +253,7 @@ storage_index_row "Storage indexed io_uring evidence" 'io_uring capability/gradu
 storage_index_row "Storage indexed move/import evidence" 'move/import'
 row "Pre-engine release report" 'pre-engine-release-*.md'
 row "Pre-engine suite" 'pre-engine-suite-*.md'
-row "Post-soak release gate" 'post-soak-release-*.md'
+row_soak_report "Post-soak release gate" 'post-soak-release-*.md'
 row "Certification burndown" 'certification-burndown-*.md'
 row "Release readiness" 'release-readiness-*.md'
 row "Certification bundle" 'certification-bundle-*.md'

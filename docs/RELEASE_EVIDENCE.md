@@ -3,6 +3,17 @@
 This runbook records older qualification results and the operator sequence for
 establishing release readiness on an exact source revision.
 
+## Current soak policy
+
+Routine releases do not require short, transfer-churn, or 24-hour soak evidence.
+Missing or incomplete soak rows are informational by default and do not block
+the release-readiness gate. Set `TNG_REQUIRE_SOAK=1` when a release-specific
+risk or claim requires soak qualification; the certification status,
+preflight, and readiness scripts then enforce the configured soak rows. The
+legacy `TNG_DEFER_24H_SOAK=1` flag remains supported when soak is optional.
+Without soak evidence, the release must not claim long-duration stability.
+Feature-specific rollout gates remain independently applicable.
+
 The previously published worktree qualification snapshot is at `1dea3ea`; older runtime product and
 LVM evidence remains tied to the commit recorded by each report. GitHub Actions
 evidence cited below is historical hosted-run evidence. A `main` ruleset was
@@ -187,8 +198,9 @@ The local release gate may report `PASS_WITH_WARNINGS` while external evidence
 is missing. That is expected before the next sections are complete.
 Use the external preflight report to check whether the current host has Docker,
 public-transfer opt-in, corpus files, and a writable storage target before
-launching live gates. The current qualification deliberately omits the long
-soak; set `TNG_DEFER_24H_SOAK=1` so the report records that policy.
+launching live gates. Routine releases do not require a long soak; no defer
+flag is needed. Set `TNG_REQUIRE_SOAK=1` only when this release explicitly
+needs soak qualification.
 For CI or release-blocking host validation, promote preflight warnings to
 failures:
 
@@ -303,10 +315,11 @@ Monitor it:
 scripts/soak_status.sh
 ```
 
-The soak runner records health and qBit sync HTTP status plus process RSS. A
-passing report is required before making a strict production-readiness or
-stability claim. A short local run is useful for smoke coverage but cannot
-substitute for the configured 24-hour sample window or target-device evidence.
+The soak runner records health and qBit sync HTTP status plus process RSS.
+Routine releases do not require a soak. If a release opts into a 24-hour soak
+with `TNG_REQUIRE_SOAK=1`, it needs a passing finalized report. A release
+without soak evidence makes no 24-hour stability claim, and a short local run
+does not substitute for the configured sample window.
 
 Finalize it after completion:
 
@@ -322,12 +335,13 @@ When the warning rows are resolved, run:
 scripts/release_readiness_gate.sh
 ```
 
-This gate fails on any `FAIL`, `MISSING`, `PASS_WITH_*`, `SKIP`,
-`STALE/INCOMPLETE`, or running/unknown certification row. Use the paired
-burndown report for exact remediation.
+This gate fails on any required `FAIL`, `MISSING`, `PASS_WITH_*`, `SKIP`,
+`STALE/INCOMPLETE`, or running/unknown certification row. Soak rows are
+informational by default. Set `TNG_REQUIRE_SOAK=1` to make soak evidence
+required for this release. Use the paired burndown report for remediation.
 
-For a local-only release scope where public-swarm, real-device, and 24h soak
-evidence are intentionally out of scope, run:
+For a local-only readiness run where public-swarm and real-device evidence are
+intentionally out of scope, run:
 
 ```sh
 TNG_RELEASE_SCOPE=local scripts/release_readiness_gate.sh
@@ -335,8 +349,9 @@ TNG_RELEASE_SCOPE=local scripts/release_readiness_gate.sh
 
 This does not mark external evidence as passed. It removes the documented
 opt-in rows from the blocking set for that readiness report while leaving them
-visible in `scripts/certification_status.sh` and the burndown report. Use the
-default strict scope for public releases.
+visible in `scripts/certification_status.sh` and the burndown report. Soak is
+optional in both local and routine public-release scopes unless
+`TNG_REQUIRE_SOAK=1` is set.
 
 To refresh status, burndown, strict readiness, and the evidence bundle in one
 release-blocking command, run:

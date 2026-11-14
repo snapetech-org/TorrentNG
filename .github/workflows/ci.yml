@@ -145,7 +145,9 @@ jobs:
           RUSTUP_TOOLCHAIN: stable
         run: cargo clippy --locked -p torrentngd --bin torrentngd --features full-compat -- -D warnings
 
-      - name: Run certification script self-tests
+      - name: Run certification script self-tests (routine releases do not require soak)
+        env:
+          TNG_REQUIRE_SOAK: "0"
         run: |
           bash scripts/certification_policy_selftest.sh
           bash scripts/certification_bundle_selftest.sh

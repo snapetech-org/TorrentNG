@@ -16,9 +16,10 @@ trap 'rm -f "$status_report"' EXIT
 "$ROOT/scripts/certification_burndown.sh" "$burndown_report" >/dev/null
 
 nonclean="$(
-  awk -F'|' -v scope="$RELEASE_SCOPE" '
+  awk -F'|' -v scope="$RELEASE_SCOPE" -v require_soak="${TNG_REQUIRE_SOAK:-0}" '
     function local_scope_ignored(name, status) {
       if (scope != "local") return 0;
+      if (require_soak == "1" && tolower(name) ~ /soak/) return 0;
       if (name == "Universal compatibility" && status == "PASS_WITH_SKIPS") return 1;
       if (name == "Universal live compatibility" && status == "PASS_WITH_SKIPS") return 1;
       if (name == "External evidence preflight") return 1;
@@ -53,11 +54,16 @@ nonclean="$(
   echo "- Report directory: $REPORT_DIR"
   echo "- Burndown report: $(basename "$burndown_report")"
   echo "- Scope: $RELEASE_SCOPE"
+  if [[ "${TNG_REQUIRE_SOAK:-0}" == "1" ]]; then
+    echo "- Soak policy: required by TNG_REQUIRE_SOAK=1"
+  else
+    echo "- Soak policy: optional for routine releases; set TNG_REQUIRE_SOAK=1 to require it"
+  fi
   if [[ "$RELEASE_SCOPE" == "local" ]]; then
     echo "- Scope policy: external opt-in evidence rows are documented but not release-blocking for this local readiness run"
   fi
-  if [[ "${TNG_DEFER_24H_SOAK:-0}" == "1" ]]; then
-    echo "- Soak policy: 24h soak explicitly deferred for this qualification run; no stability claim is made"
+  if [[ "${TNG_DEFER_24H_SOAK:-0}" == "1" && "${TNG_REQUIRE_SOAK:-0}" != "1" ]]; then
+    echo "- 24h soak: explicitly deferred for this qualification run; no stability claim is made"
   fi
   echo
   echo "## Non-Clean Certification Rows"

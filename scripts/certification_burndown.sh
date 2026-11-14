@@ -53,10 +53,10 @@ action_for() {
       printf 'Populate `testdata/migration-corpus/{qbittorrent,transmission,deluge,utorrent,biglybt,tixati,rtorrent,generic}` with real exported artifacts, then run `TNG_REQUIRE_MIGRATION_CORPUS=1 scripts/migration_corpus_certification.sh`.'
       ;;
     "External evidence preflight:PASS_WITH_WARNINGS")
-      printf 'Open the latest external preflight report, satisfy WARN rows, then rerun `TNG_EXTERNAL_PREFLIGHT_STRICT=1 scripts/external_evidence_preflight.sh` before starting long live/corpus/soak gates.'
+      printf 'Open the latest external preflight report and satisfy required WARN rows, then rerun `TNG_EXTERNAL_PREFLIGHT_STRICT=1 scripts/external_evidence_preflight.sh`. Soak is optional for routine releases; set `TNG_REQUIRE_SOAK=1` when this release needs soak evidence.'
       ;;
     "24h soak:STALE/INCOMPLETE")
-      printf 'Start a fresh 24h soak with `scripts/start_24h_soak.sh`, monitor it with `scripts/soak_status.sh`, then finalize with `SOAK_MIN_SAMPLES=1200 RESTORE_NORMAL=1 scripts/finalize_soak.sh <report>`. If transfer-churn soak supersedes this release requirement, remove the stale 24h row from release policy instead.'
+      printf 'This report is informational for routine releases. If this release explicitly requires a 24h soak, set `TNG_REQUIRE_SOAK=1`, start it with `scripts/start_24h_soak.sh`, monitor with `scripts/soak_status.sh`, and finalize with `SOAK_MIN_SAMPLES=1200 RESTORE_NORMAL=1 scripts/finalize_soak.sh <report>`.'
       ;;
     "Local release gate:PASS_WITH_WARNINGS")
       printf 'Rerun `scripts/local_release_gate.sh` after warning rows are resolved. Set `TNG_STORAGE_MATRIX_TARGETS` for real-device storage release probes.'

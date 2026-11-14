@@ -9,6 +9,12 @@ CORPUS_MANIFEST="$CORPUS_DIR/manifest.toml"
 STORAGE_TARGET="${TNG_STORAGE_BENCH_DIR:-}"
 STRICT="${TNG_EXTERNAL_PREFLIGHT_STRICT:-0}"
 DEFER_24H_SOAK="${TNG_DEFER_24H_SOAK:-0}"
+REQUIRE_SOAK="${TNG_REQUIRE_SOAK:-0}"
+
+if [[ "$REQUIRE_SOAK" != "0" && "$REQUIRE_SOAK" != "1" ]]; then
+  echo "TNG_REQUIRE_SOAK must be 0 or 1" >&2
+  exit 2
+fi
 
 mkdir -p "$(dirname "$OUT")"
 
@@ -87,7 +93,11 @@ done
   echo "- Corpus directory: $CORPUS_DIR"
   echo "- Storage target: ${STORAGE_TARGET:-unset}"
   echo "- Strict mode: $STRICT"
-  echo "- 24h soak deferred: $DEFER_24H_SOAK"
+  if [[ "$REQUIRE_SOAK" == "1" ]]; then
+    echo "- Soak policy: required by TNG_REQUIRE_SOAK=1"
+  else
+    echo "- Soak policy: optional for routine releases"
+  fi
   echo
   echo "## Checks"
   echo
@@ -141,7 +151,7 @@ else
 fi
 
 SOAK_PID_FILE="${TNG_24H_SOAK_PID_FILE:-$ROOT/.run/soak-24h.pid}"
-if [[ "$DEFER_24H_SOAK" == "1" ]]; then
+if [[ "$DEFER_24H_SOAK" == "1" && "$REQUIRE_SOAK" != "1" ]]; then
   mark "24h soak" "INFO" "deferred by TNG_DEFER_24H_SOAK=1; this qualification run makes no 24-hour stability claim"
 else
   completed_soak="$(find "$REPORT_DIR" -maxdepth 1 -type f -name 'soak-final-*.md' -printf '%T@\t%p\n' 2>/dev/null \
@@ -164,8 +174,10 @@ else
   if [[ "$exit_status" -ne 0 ]]; then
     if [[ -n "$soak_process" ]]; then
       mark "24h soak" "PASS" "active: $soak_process"
+    elif [[ "$REQUIRE_SOAK" == "1" ]]; then
+      mark "24h soak" "WARN" "no passing active or completed soak-24h evidence detected; this release requires TNG_REQUIRE_SOAK=1 evidence"
     else
-      mark "24h soak" "WARN" "no active or completed soak-24h evidence detected; use scripts/start_24h_soak.sh"
+      mark "24h soak" "INFO" "no active or completed soak-24h evidence; optional for routine releases; set TNG_REQUIRE_SOAK=1 to require it"
     fi
   fi
 fi

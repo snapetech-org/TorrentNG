@@ -6,6 +6,13 @@ Exercise TorrentNG's repository-owned behavior with repeatable headless checks, 
 
 "Bug free" cannot be proven by a finite test run. The release standard is therefore: no known open release-blocking defect; every required source and runtime gate has fresh, reviewable evidence tied to the exact release commit and artifact; and the strict release-readiness gate reports `PASS`. Missing, stale, skipped, warning, or failed required evidence blocks a public release. Local unit tests alone are not a release qualification.
 
+Routine releases do not require short, transfer-churn, or 24-hour soak
+evidence. Those rows are informational by default. Set `TNG_REQUIRE_SOAK=1`
+when a release explicitly needs soak qualification; the certification status
+and readiness gates then treat soak evidence as required. A release without
+soak evidence makes no long-duration stability claim. Feature-specific rollout
+requirements remain scoped to their feature.
+
 ## Security scanning policy
 
 Per the owner directive dated 2026-10-30, CodeQL analysis is disabled for
@@ -96,7 +103,7 @@ Run against the exact merged commit/artifact on suitable, authorized infrastruct
 
 - Dedicated physical storage targets for the supported storage matrix, durability, io_uring, and real-root move/import gates.
 - Local disposable client matrix plus opted-in public legal-torrent transfers and required public-network behavior.
-- Source- and image-bound 24-hour soak; add loaded-swarm/transfer soak where that behavior is claimed or required.
+- Optional source- and image-bound soak when a release-specific risk or stability claim requires it; add loaded-swarm/transfer soak only when that behavior is claimed or required.
 - Crash-cut, recovery, real-client interoperability, target-OS/package, browser, and network-condition checks not represented by local unit tests.
 - Fresh security/hosted CI evidence and any private-runner-only release steps.
 
@@ -116,11 +123,16 @@ Agents must report exact commands, revisions, results, and artifact/log paths. C
 - [ ] Candidate is a clean, immutable commit; every report and binary/image names that full SHA/digest.
 - [ ] All required source, feature, sidecar, desktop, WebUI, API, migration, storage, recovery, security, dependency, and artifact gates pass.
 - [ ] Hosted CI and declared MSRV checks pass on the candidate; any private-resource gates run on the required target.
-- [ ] Required real-device, client/public-swarm, crash/recovery, and soak gates have fresh passing evidence; no required row is skipped, stale, warning, or missing.
+- [ ] Required real-device, client/public-swarm, crash/recovery, and any explicitly selected soak gates have fresh passing evidence; no required row is skipped, stale, warning, or missing.
 - [ ] No open release-blocking defect; all known exceptions have an owner, rationale, and expiry.
 - [ ] `scripts/release_evidence_suite.sh` and `scripts/release_readiness_gate.sh` pass in strict scope against the same evidence directory.
 
 ## Current execution record
+
+The dated runs below are historical snapshots. Any statement that soak evidence
+was a mandatory release blocker reflects the policy in effect for that run;
+current routine releases do not require soak unless `TNG_REQUIRE_SOAK=1` is
+explicitly selected.
 
 ### Run on 2026-10-25
 

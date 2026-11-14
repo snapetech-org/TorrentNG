@@ -4,6 +4,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPORT_DIR="${REPORT_DIR:-$ROOT/certification/reports}"
 OUT="${1:-$REPORT_DIR/post-soak-release-$(date -u +%Y%m%dT%H%M%SZ).md}"
+REQUIRE_SOAK="${TNG_REQUIRE_SOAK:-0}"
+
+if [[ "$REQUIRE_SOAK" != "0" && "$REQUIRE_SOAK" != "1" ]]; then
+  echo "TNG_REQUIRE_SOAK must be 0 or 1" >&2
+  exit 2
+fi
 
 mkdir -p "$(dirname "$OUT")"
 
@@ -185,6 +191,11 @@ certification_status_gate() {
   echo "- Date UTC: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "- Commit: $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
   echo "- Report directory: $REPORT_DIR"
+  if [[ "$REQUIRE_SOAK" == "1" ]]; then
+    echo "- Soak policy: required by TNG_REQUIRE_SOAK=1"
+  else
+    echo "- Soak policy: optional for routine releases"
+  fi
   echo
   echo "## Checks"
   echo
@@ -192,8 +203,12 @@ certification_status_gate() {
   echo "|---|---|---|"
 } >"$OUT"
 
-if [[ "${TNG_DEFER_24H_SOAK:-0}" == "1" ]]; then
-  mark "soak finalization" "INFO" "deferred by TNG_DEFER_24H_SOAK=1; post-soak evidence is not claimed"
+if [[ "$REQUIRE_SOAK" != "1" ]]; then
+  if [[ "${TNG_DEFER_24H_SOAK:-0}" == "1" ]]; then
+    mark "soak finalization" "INFO" "deferred by TNG_DEFER_24H_SOAK=1; optional for routine releases and no stability claim is made"
+  else
+    mark "soak finalization" "INFO" "optional for routine releases; set TNG_REQUIRE_SOAK=1 to require post-soak evidence"
+  fi
 else
   gate "soak finalization" 'soak-final-*.md'
 fi

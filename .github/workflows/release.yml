@@ -1,4 +1,6 @@
 # ng-runner-policy: github-hosted-default-v1
+# Routine releases do not wait for soak evidence. A release-specific soak
+# requirement is opt-in through TNG_REQUIRE_SOAK=1 certification gates.
 name: Release
 run-name: action:${{ inputs.action }}:pool:${{ inputs.runner_pool }}:tag:${{ inputs.release_tag }}
 
