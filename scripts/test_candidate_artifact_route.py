@@ -49,6 +49,13 @@ class CandidateArtifactRouteTests(unittest.TestCase):
             "-f deploy/docker/Dockerfile",
             'docker save "$IMAGE_TAG"',
             "sha256sum rtorrentng-compatible-image.tar.gz > rtorrentng-compatible-image.tar.gz.sha256",
+            "-f deploy/native/Dockerfile",
+            'docker save "$NATIVE_IMAGE_TAG"',
+            "torrentng-native-image.tar.gz",
+            "-f deploy/docker/Dockerfile.phase1",
+            'docker save "$PHASE1_IMAGE_TAG"',
+            "torrentng-phase1-image.tar.gz",
+            "sha256sum -c SHA256SUMS",
             "actions/upload-artifact@",
             "retention-days: 30",
         ):

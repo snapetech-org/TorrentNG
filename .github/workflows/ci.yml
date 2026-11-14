@@ -841,7 +841,7 @@ jobs:
       inputs.pr_number == '' &&
       inputs.pr_sha == '' &&
       inputs.target_run_id == ''
-    timeout-minutes: 60
+    timeout-minutes: 120
     runs-on: ubuntu-24.04
     env:
       CANDIDATE_SHA: ${{ github.sha }}
@@ -864,6 +864,8 @@ jobs:
           printf 'SMOKE_ROOT=%s/smoke\n' "$task_root" >> "$GITHUB_ENV"
           printf 'SMOKE_CONFIG=%s/smoke-config.toml\n' "$task_root" >> "$GITHUB_ENV"
           printf 'IMAGE_TAG=torrentng-compatible-candidate:%s\n' "${CANDIDATE_SHA:0:12}" >> "$GITHUB_ENV"
+          printf 'NATIVE_IMAGE_TAG=torrentng-native-candidate:%s\n' "${CANDIDATE_SHA:0:12}" >> "$GITHUB_ENV"
+          printf 'PHASE1_IMAGE_TAG=torrentng-phase1-candidate:%s\n' "${CANDIDATE_SHA:0:12}" >> "$GITHUB_ENV"
 
       - name: Checkout exact candidate SHA
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1016,6 +1018,105 @@ jobs:
             printf -- '- Image ID: `%s`\n' "$image_id"
             printf -- '- Image archive SHA-256: `%s`\n' "$(awk '{print $1}' "$BUILD_BUNDLE/rtorrentng-compatible-image.tar.gz.sha256")"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build native engine image candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --pull --network host \
+            --build-arg "TORRENTNG_SOURCE_REVISION=$CANDIDATE_SHA" \
+            -f deploy/native/Dockerfile \
+            -t "$NATIVE_IMAGE_TAG" .
+          image_id="$(docker image inspect --format '{{.Id}}' "$NATIVE_IMAGE_TAG")"
+          docker save "$NATIVE_IMAGE_TAG" | gzip -1 > "$BUILD_BUNDLE/torrentng-native-image.tar.gz"
+          (
+            cd "$BUILD_BUNDLE"
+            sha256sum torrentng-native-image.tar.gz > torrentng-native-image.tar.gz.sha256
+          )
+          python3 - "$BUILD_BUNDLE/torrentng-native-image.json" "$NATIVE_IMAGE_TAG" "$image_id" <<'PY'
+          import datetime
+          import json
+          import os
+          import pathlib
+          import sys
+
+          output, image_tag, image_id = sys.argv[1:]
+          metadata = {
+              "artifact": "torrentng-native-engine-image",
+              "built_at_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              "candidate_sha": os.environ["CANDIDATE_SHA"].lower(),
+              "image_id": image_id,
+              "image_tag": image_tag,
+              "workflow_run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "workflow_repository": os.environ["GITHUB_REPOSITORY"],
+              "saved_image": "torrentng-native-image.tar.gz",
+          }
+          pathlib.Path(output).write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
+          PY
+          {
+            printf '\n## Native engine image candidate\n\n'
+            printf -- '- Source SHA: %s\n' "$CANDIDATE_SHA"
+            printf -- '- Image tag: `%s`\n' "$NATIVE_IMAGE_TAG"
+            printf -- '- Image ID: `%s`\n' "$image_id"
+            printf -- '- Image archive SHA-256: `%s`\n' "$(awk '{print $1}' "$BUILD_BUNDLE/torrentng-native-image.tar.gz.sha256")"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build Phase 1 image candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --pull --network host \
+            --build-arg "TORRENTNG_SOURCE_REVISION=$CANDIDATE_SHA" \
+            -f deploy/docker/Dockerfile.phase1 \
+            -t "$PHASE1_IMAGE_TAG" .
+          image_id="$(docker image inspect --format '{{.Id}}' "$PHASE1_IMAGE_TAG")"
+          docker save "$PHASE1_IMAGE_TAG" | gzip -1 > "$BUILD_BUNDLE/torrentng-phase1-image.tar.gz"
+          (
+            cd "$BUILD_BUNDLE"
+            sha256sum torrentng-phase1-image.tar.gz > torrentng-phase1-image.tar.gz.sha256
+          )
+          python3 - "$BUILD_BUNDLE/torrentng-phase1-image.json" "$PHASE1_IMAGE_TAG" "$image_id" <<'PY'
+          import datetime
+          import json
+          import os
+          import pathlib
+          import sys
+
+          output, image_tag, image_id = sys.argv[1:]
+          metadata = {
+              "artifact": "torrentng-phase1-image",
+              "built_at_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              "candidate_sha": os.environ["CANDIDATE_SHA"].lower(),
+              "image_id": image_id,
+              "image_tag": image_tag,
+              "workflow_run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "workflow_repository": os.environ["GITHUB_REPOSITORY"],
+              "saved_image": "torrentng-phase1-image.tar.gz",
+          }
+          pathlib.Path(output).write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
+          PY
+          {
+            printf '\n## Phase 1 image candidate\n\n'
+            printf -- '- Source SHA: %s\n' "$CANDIDATE_SHA"
+            printf -- '- Image tag: `%s`\n' "$PHASE1_IMAGE_TAG"
+            printf -- '- Image ID: `%s`\n' "$image_id"
+            printf -- '- Image archive SHA-256: `%s`\n' "$(awk '{print $1}' "$BUILD_BUNDLE/torrentng-phase1-image.tar.gz.sha256")"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify candidate image archives and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          (
+            cd "$BUILD_BUNDLE"
+            sha256sum -c rtorrentng-compatible-image.tar.gz.sha256
+            sha256sum -c torrentng-native-image.tar.gz.sha256
+            sha256sum -c torrentng-phase1-image.tar.gz.sha256
+            sha256sum torrentngd torrentngd-linux-x64.tar.gz \
+              rtorrentng-compatible-image.tar.gz torrentng-native-image.tar.gz \
+              torrentng-phase1-image.tar.gz > SHA256SUMS
+            sha256sum -c SHA256SUMS
+          )
 
       - name: Upload GitHub-hosted candidate artifact
         id: upload-candidate

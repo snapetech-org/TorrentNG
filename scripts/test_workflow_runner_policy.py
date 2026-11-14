@@ -94,6 +94,8 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             '[[ "$candidate_sha" == "${GITHUB_SHA,,}" ]]',
             "cargo build --release --locked -p torrentngd",
             "scripts/backend_burndown_native_release_smoke.sh",
+            "-f deploy/native/Dockerfile", "torrentng-native-image.tar.gz",
+            "-f deploy/docker/Dockerfile.phase1", "torrentng-phase1-image.tar.gz",
             "actions/upload-artifact@", "retention-days: 30",
         ):
             self.assertIn(condition, body)
