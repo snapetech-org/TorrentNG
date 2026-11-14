@@ -1,5 +1,5 @@
 import { LocalizedErrorText, LocalizedText } from '../lib/LocalizedText'
-import { useInterfaceLanguage } from '../lib/interfaceLocale'
+import { selectedTorrentCountSource, useInterfaceLanguage } from '../lib/interfaceLocale'
 import { getRegionalLocale } from '../lib/localeFormat'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -67,7 +67,7 @@ export function BulkEditDialog({ hashes, onClose }: Props) {
           <div style={{ flex: 1 }}>
             <h2 id="bulk-edit-title" style={{ margin: 0, color: 'var(--text)', fontWeight: 700, fontSize: 15 }}><LocalizedText source="Edit selected torrents" /></h2>
             <div id="bulk-edit-description" style={{ color: 'var(--faint)', fontSize: 12 }}>
-              <LocalizedText source="{count} selected" parameters={{ count: hashes.length.toLocaleString(getRegionalLocale()) }} />
+              <LocalizedText source={selectedTorrentCountSource(hashes.length)} parameters={{ count: hashes.length.toLocaleString(getRegionalLocale()) }} />
             </div>
           </div>
           {busy && <span role="status" aria-live="polite" style={{

@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "reviewType": "independent terminology cross-review",
+  "repository": "snapetech-org/torrentng",
+  "pullRequest": 243,
+  "liveHead": "5dd6e073d67bff8f58d3d9859c3b6411d5cd8c2f",
+  "liveTree": "fd1c3d9ad03e742ee6dfe261a1e95eaa1fbbb95b",
+  "bundlePath": "/mnt/disks/scratch/task-worktrees/localization-20261030/torrentng/docs/reviews/localization-pr243-populated-review-2026-11-01/terminology-followup-2026-11-02.json",
+  "bundleSha256": "e6e4504dc53f3abb52561bfd53e4adb6ea9124144e45c8a8c11797529803adfb",
+  "bundleReviewedAt": "2026-11-02T00:35:18Z",
+  "catalogFileHashes": {
+    "webui/src/lib/locale-catalogs/fr.ts": "307c1e0d97fce911361cab2bc7ad9524803f16ff2066427a9121391f69a6d9af",
+    "webui/src/lib/locale-catalogs/vi.ts": "b8bca0eeffe703a56cdbe864bee67f78a40381bdb1b38d70a6ccbc86f17ea9c2"
+  },
+  "cells": [
+    {
+      "sourceId": "ui.2c366eda72badf17",
+      "locale": "fr",
+      "key": "Pending autosave · changes: {count} · live: {live} · restart: {restart}.",
+      "sourceSha256": "2c366eda72badf17dc316a8b1175e413d5c4885616a1862952fafebd540f0556",
+      "currentTarget": "Sauvegarde automatique en attente · modifications : {count} · applicables sans redémarrage : {live} · redémarrage : {restart}.",
+      "currentTargetSha256": "da689ced5f0deadedf76a007400e1bc2b165527f551ca62214c9616eb6f8c3b3",
+      "previousTarget": "Sauvegarde automatique en attente · modifications : {count} · live : {live} · redémarrage : {restart}.",
+      "previousTargetSha256": "c1a24f5294fae96b1fb4d32ce7eeffdaf84acb8a23625102a67923aee32f2454",
+      "verdict": "accepted",
+      "suggestion": null,
+      "confidence": "high",
+      "reason": "The code computes liveDirtyCount = dirtySettings.length - restartDirtyCount. This is the count of changed settings that do not require restart. “applicables sans redémarrage” conveys that meaning, and plural form agrees with “modifications”.",
+      "contextPaths": [
+        "webui/src/components/EnginePanel.tsx"
+      ],
+      "contextBlobsAtHead": [
+        "c4fdb6873bd92524f2474b925655e6115d842966"
+      ],
+      "placeholderCheck": "exact"
+    },
+    {
+      "sourceId": "ui.e2f19f7c2f11f163",
+      "locale": "fr",
+      "key": "Pending autosave · changes: {count} · live: {live} · restart: {restart} · custom lines edited.",
+      "sourceSha256": "e2f19f7c2f11f16374013a15885b2d005ff5a04245f1e9d9816dd2ca929a64c5",
+      "currentTarget": "Sauvegarde automatique en attente · modifications : {count} · applicables sans redémarrage : {live} · redémarrage : {restart} · lignes personnalisées modifiées.",
+      "currentTargetSha256": "a880cdf1dfb8104e1857b6742258cb6627b4e95209c55efeeb6ebe9a20c09da5",
+      "previousTarget": "Sauvegarde automatique en attente · modifications : {count} · live : {live} · redémarrage : {restart} · lignes personnalisées modifiées.",
+      "previousTargetSha256": "1c600b56db53b7509cd533df0e5f6be152719edcad2ca2520b29c031a25b0418",
+      "verdict": "accepted",
+      "suggestion": null,
+      "confidence": "high",
+      "reason": "Same computed live-dirty count as the short variant; “lignes personnalisées modifiées” accurately preserves the additional custom-lines suffix.",
+      "contextPaths": [
+        "webui/src/components/EnginePanel.tsx"
+      ],
+      "contextBlobsAtHead": [
+        "c4fdb6873bd92524f2474b925655e6115d842966"
+      ],
+      "placeholderCheck": "exact"
+    },
+    {
+      "sourceId": "ui.1d87e1c4de97aaa0",
+      "locale": "vi",
+      "key": "Tracker",
+      "sourceSha256": "1d87e1c4de97aaa0a711fbec00cbc5289be757d97b742ba60e9ed57ca184f85b",
+      "currentTarget": "tracker",
+      "currentTargetSha256": "7ae4495c83dd7323b71c94739ddc7a45dfe3cb6a851c31fc1d040cdd47ced985",
+      "previousTarget": "Trình theo dõi",
+      "previousTargetSha256": "4dc48135ff92d248d1e2f2865025e4d59b245825645e3be05fe08f6e8caab7e9",
+      "verdict": "accepted",
+      "suggestion": null,
+      "confidence": "high",
+      "reason": "The label names the BitTorrent tracker concept: a torrent’s tracker URL and a tracker-match filter. The Vietnamese catalog consistently borrows “tracker” in related labels, so the lowercase target matches established terminology.",
+      "contextPaths": [
+        "webui/src/components/TorrentPropertiesDialog.tsx",
+        "webui/src/components/RatioGroupsPanel.tsx"
+      ],
+      "contextBlobsAtHead": [
+        "2409b8045563a3d3faa11d931cb8f23afce73d30",
+        "adf1ab359636ef20f211564eb3ad7ec0b56259f6"
+      ],
+      "placeholderCheck": "none expected; none present"
+    }
+  ],
+  "summary": {
+    "accepted": 3,
+    "correctionNeeded": 0,
+    "held": 0,
+    "nativeSpeakerSignoff": "not performed",
+    "catalogsEdited": false
+  }
+}

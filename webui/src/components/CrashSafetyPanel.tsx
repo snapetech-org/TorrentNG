@@ -875,7 +875,7 @@ function PolicyEditor({ index, policy, onChange, onRemove }: {
         </div>
         <div>
           <button type="button" style={secondaryButtonStyle} onClick={onRemove}
-            aria-label={t(policy.path.trim() ? 'Remove folder policy {index} for {path}' : 'Remove folder policy {index}', { index: index + 1, path: policy.path.trim() })}
+            aria-label={t(policy.path.trim() ? 'Remove folder policy {index} for {path}' : 'Remove folder policy {index}', { index: index + 1, path: `\u2068${policy.path.trim()}\u2069` })}
             {...textProps(policy.path.trim() ? 'Remove folder policy {index} for {path}' : 'Remove folder policy {index}')}>
             <LocalizedText source="Remove" />
           </button>

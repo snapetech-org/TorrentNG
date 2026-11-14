@@ -1,5 +1,5 @@
 import { LocalizedText } from '../lib/LocalizedText'
-import { useInterfaceLanguage } from '../lib/interfaceLocale'
+import { selectedTorrentCountSource, useInterfaceLanguage } from '../lib/interfaceLocale'
 import { formatRegionalNumber, getRegionalLocale } from '../lib/localeFormat'
 import { useRef, useEffect, useMemo, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
@@ -739,12 +739,16 @@ export function TorrentTable({
                 aria-label={
                   allVisible ? localize('Deselect all')
                     : isSelectingAllMatching ? localize('Selecting all matching torrents…')
-                      : localize('Select all {count} torrents matching the current filter', { count: formatRegionalNumber(total) })
+                      : total === 1
+                        ? localize('Select the matching torrent')
+                        : localize('Select all {count} torrents matching the current filter', { count: formatRegionalNumber(total) })
                 }
                 title={
                   allVisible ? localize('Deselect all')
                     : total > torrents.length
-                      ? localize('Select all {count} torrents matching the current filter (not just the {loaded} loaded so far)', { count: formatRegionalNumber(total), loaded: formatRegionalNumber(torrents.length) })
+                      ? total === 1
+                        ? localize('Select the matching torrent even though it is not loaded yet')
+                        : localize('Select all {count} torrents matching the current filter (not just the {loaded} loaded so far)', { count: formatRegionalNumber(total), loaded: formatRegionalNumber(torrents.length) })
                       : localize('Select all visible torrents')
                 }
                 checked={allVisible}
@@ -881,7 +885,7 @@ export function TorrentTable({
                 color: 'var(--accent-text)', borderRadius: 999, padding: '0 7px',
                 fontSize: 10, fontWeight: 800, textTransform: 'none', letterSpacing: 0,
               }}>
-                {isSelectingAllMatching ? <LocalizedText source="Selecting…" /> : localize('{count} selected', { count: formatRegionalNumber(selected.size) })}
+                {isSelectingAllMatching ? <LocalizedText source="Selecting…" /> : localize(selectedTorrentCountSource(selected.size), { count: formatRegionalNumber(selected.size) })}
               </span>
             )}
             {columnsOpen && (
@@ -952,21 +956,43 @@ export function TorrentTable({
             const isSelected = selected.has(t.hash)
             const isDetail = detailHash === t.hash
             const accent = rowAccent(t)
+            const rowLabelId = `torrent-row-${encodeURIComponent(t.hash)}`
+            const checkboxLabelId = `${rowLabelId}-checkbox`
             const cells: Record<ColKey, React.ReactNode> = {
               check: (
-                <input
-                  type="checkbox"
-                  aria-label={localize(isSelected ? 'Deselect {name}' : 'Select {name}', { name: t.name })}
-                  {...textProps(isSelected ? 'Deselect {name}' : 'Select {name}')}
-                  checked={isSelected}
-                  tabIndex={-1}
-                  onClick={event => {
-                    event.stopPropagation()
-                    onSelect(t.hash, selectionMode(event, false), true)
-                  }}
-                  onChange={() => undefined}
-                  style={{ accentColor: 'var(--accent)', cursor: 'pointer' }}
-                />
+                <>
+                  <input
+                    type="checkbox"
+                    aria-labelledby={checkboxLabelId}
+                    checked={isSelected}
+                    tabIndex={-1}
+                    onClick={event => {
+                      event.stopPropagation()
+                      onSelect(t.hash, selectionMode(event, false), true)
+                    }}
+                    onChange={() => undefined}
+                    style={{ accentColor: 'var(--accent)', cursor: 'pointer' }}
+                  />
+                  <span id={checkboxLabelId} className="tng-visually-hidden">
+                    <LocalizedText
+                      source={isSelected ? 'Deselect {name}' : 'Select {name}'}
+                      parameters={{ name: t.name }}
+                      undParameters={['name']}
+                    />
+                  </span>
+                  <span id={rowLabelId} className="tng-visually-hidden">
+                    <LocalizedText
+                      source={t.message ? '{name}, {status}. {message}' : '{name}, {status}'}
+                      parameters={{
+                        name: t.name,
+                        status: accessibleLabel,
+                        ...(t.message ? { message: t.message } : {}),
+                      }}
+                      parameterLanguages={{ status: textProps(accessibleSource).lang }}
+                      undParameters={t.message ? ['name', 'message'] : ['name']}
+                    />
+                  </span>
+                </>
               ),
               kind: (
                 <span role="img" aria-label={localize(kind.label)} title={localize(kind.label)} {...textProps(kind.label)} style={{
@@ -987,14 +1013,16 @@ export function TorrentTable({
                       fontWeight: isSelected || isDetail ? 650 : 500,
                     }}
                     title={t.name}
+                    dir="auto"
+                    lang="und"
                   >
-                    {t.name}
+                    <bdi dir="auto" lang="und">{t.name}</bdi>
                   </span>
                   {t.message && (
                     <span style={{
                       overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                       color: 'var(--warning)', fontSize: 10,
-                    }} title={t.message}>{t.message}</span>
+                    }} title={t.message} dir="auto" lang="und"><bdi dir="auto" lang="und">{t.message}</bdi></span>
                   )}
                 </span>
               ),
@@ -1024,10 +1052,10 @@ export function TorrentTable({
               downloaded: <span style={{ color: 'var(--muted)' }}>{fmtSize(t.down_total)}</span>,
               uploaded: <span style={{ color: 'var(--muted)' }}>{fmtSize(t.up_total)}</span>,
               priority: <span style={{ color: 'var(--faint)' }} title={localize('Priority value {priority}', { priority: formatRegionalNumber(t.priority) })} {...textProps(priority.source)}>{localize(priority.source, priority.parameters)}</span>,
-              category: <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.category || '—'}</span>,
-              tags: <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.tags}>{t.tags || '—'}</span>,
-              tracker: <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.tracker_url ? maskAnnounceUrl(t.tracker_url) : undefined}>{trackerHost(t.tracker_url)}</span>,
-              path: <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.base_path || t.directory}>{shortPath(t.base_path || t.directory)}</span>,
+              category: <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}><bdi dir="auto" lang="und">{t.category || '—'}</bdi></span>,
+              tags: <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.tags} dir="auto" lang="und"><bdi dir="auto" lang="und">{t.tags || '—'}</bdi></span>,
+              tracker: <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.tracker_url ? maskAnnounceUrl(t.tracker_url) : undefined} dir="ltr" lang="und"><bdi dir="ltr" lang="und">{trackerHost(t.tracker_url)}</bdi></span>,
+              path: <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.base_path || t.directory} dir="ltr" lang="und"><bdi dir="ltr" lang="und">{shortPath(t.base_path || t.directory)}</bdi></span>,
               actions: null,
             }
             const rowBg = isDetail || isSelected ? 'var(--selected)'
@@ -1039,9 +1067,7 @@ export function TorrentTable({
                 role="row"
                 aria-rowindex={pageOffset + item.index + 2}
                 aria-selected={isSelected}
-                aria-label={t.message
-                  ? localize('{name}, {status}. {message}', { name: t.name, status: accessibleLabel, message: t.message })
-                  : localize('{name}, {status}', { name: t.name, status: accessibleLabel })}
+                aria-labelledby={rowLabelId}
                 tabIndex={focusedHash === t.hash || (!focusedHash && item.index === 0) ? 0 : -1}
                 ref={node => {
                   if (node) rowRefs.current.set(t.hash, node)
@@ -1050,8 +1076,6 @@ export function TorrentTable({
                 onFocus={() => setFocusedHash(t.hash)}
                 data-status={labelSource.toLowerCase()}
                 data-detail={isDetail ? 'true' : 'false'}
-                title={localize('{action} {name}. Shift-click for a range; Control/Command-click to add or remove.', { action: localize(isSelected ? 'Deselect' : 'Select'), name: t.name })}
-                {...textProps('{action} {name}. Shift-click for a range; Control/Command-click to add or remove.')}
                 onClick={event => onSelect(t.hash, selectionMode(event))}
                 onContextMenu={e => {
                   e.preventDefault()
@@ -1124,12 +1148,13 @@ function ProgressCell({ value }: { value: number | null }) {
   if (value === null) {
     return <span aria-label={localize("Progress unavailable")} style={{ color: 'var(--faint)' }} {...textProps("Progress unavailable")}>—</span>
   }
+  const percent = `${formatRegionalNumber(value, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`
   return (
-    <span role="progressbar" aria-label={localize("Torrent progress")} aria-valuemin={0} aria-valuemax={100} aria-valuenow={value} title={`${formatRegionalNumber(value, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`} style={{
+    <span role="progressbar" aria-label={localize("Torrent progress")} aria-valuemin={0} aria-valuemax={100} aria-valuenow={value} title={`\u2066${percent}\u2069`} style={{
       display: 'grid', gap: 3, width: '100%', minWidth: 0,
     }} {...textProps("Torrent progress")}>
       <span style={{ color: value >= 100 ? 'var(--success)' : 'var(--muted)', fontSize: 11, lineHeight: 1 }}>
-        {formatRegionalNumber(value, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%
+        <bdi dir="ltr" lang={getRegionalLocale() ?? 'und'}>{percent}</bdi>
       </span>
       <span style={{
         display: 'block', height: 3, borderRadius: 99, overflow: 'hidden',

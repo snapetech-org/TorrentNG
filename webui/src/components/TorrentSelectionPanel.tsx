@@ -1,6 +1,6 @@
 import { LocalizedText } from '../lib/LocalizedText'
 import { useInterfaceLanguage } from '../lib/interfaceLocale'
-import { formatRegionalNumber } from '../lib/localeFormat'
+import { formatRegionalNumber, getRegionalLocale } from '../lib/localeFormat'
 import { isFinalizing, type TorrentSummary } from '../api/client'
 import { DetailDockControls, type DetailPosition } from './DetailDockControls'
 
@@ -112,7 +112,7 @@ export function TorrentSelectionPanel({
           <h2 id="selection-workspace-title" style={{ margin: 0, display: 'block', fontWeight: 800, fontSize: 13, color: 'var(--text)', lineHeight: 1.3 }}>
             <LocalizedText source="Selection workspace" /></h2>
           <span style={{ display: 'block', color: 'var(--accent-text)', fontSize: 11, marginTop: 3, fontWeight: 700 }}>
-            {formatRegionalNumber(selectedCount)} <LocalizedText source="torrents selected" /></span>
+            <bdi dir="ltr" lang={getRegionalLocale() ?? 'und'}>{formatRegionalNumber(selectedCount)}</bdi> <LocalizedText source="torrents selected" /></span>
         </div>
         <DetailDockControls position={position} onChange={onPositionChange} />
         <button type="button" onClick={onClose} title={localize("Hide details")} aria-label={localize("Hide details")} style={{
@@ -159,7 +159,7 @@ export function TorrentSelectionPanel({
                 color: status.color, borderColor: `color-mix(in srgb, ${status.color} 40%, var(--border))`,
                 background: `color-mix(in srgb, ${status.color} 10%, transparent)`,
               }}>
-                <LocalizedText source={status.label} /> <strong>{formatRegionalNumber(count)}</strong>
+                <LocalizedText source={status.label} /> <strong><bdi dir="ltr" lang={getRegionalLocale() ?? 'und'}>{formatRegionalNumber(count)}</bdi></strong>
               </span>
             )) : <span style={{ color: 'var(--faint)', fontSize: 11 }}><LocalizedText source="No summary data loaded." /></span>}
           </div>
@@ -168,9 +168,9 @@ export function TorrentSelectionPanel({
         <section className="tng-selection-section" aria-labelledby="selection-values-heading">
           <h3 id="selection-values-heading" className="tng-selection-section-title"><LocalizedText source="Shared values" /></h3>
           <div className="tng-selection-values">
-            <ValueRow label="Category" value={['None', 'Mixed'].includes(category) ? localize(category) : category} />
-            <ValueRow label="Save path" value={['None', 'Mixed'].includes(location) ? localize(location) : location} mono />
-            <ValueRow label="Tags" value={tags.length ? tags.join(', ') : localize('None')} />
+            <ValueRow label="Category" value={['None', 'Mixed'].includes(category) ? localize(category) : category} raw={!['None', 'Mixed'].includes(category)} />
+            <ValueRow label="Save path" value={['None', 'Mixed'].includes(location) ? localize(location) : location} mono raw={!['None', 'Mixed'].includes(location)} />
+            <ValueRow label="Tags" value={tags.length ? tags.join(', ') : localize('None')} raw={tags.length > 0} />
           </div>
         </section>
 
@@ -194,8 +194,8 @@ export function TorrentSelectionPanel({
           <section className="tng-selection-section" aria-labelledby="selection-included-heading">
             <h3 id="selection-included-heading" className="tng-selection-section-title"><LocalizedText source="Included" /></h3>
             <div className="tng-selection-names">
-              {names.map(name => <span key={name} title={name}>{name}</span>)}
-              {selectedCount > names.length && <span className="tng-selection-more">+ {formatRegionalNumber(selectedCount - names.length)} <LocalizedText source="more" /></span>}
+              {names.map(name => <span key={name} title={name} dir="auto" lang="und"><bdi dir="auto" lang="und">{name}</bdi></span>)}
+              {selectedCount > names.length && <span className="tng-selection-more">+ <bdi dir="ltr" lang={getRegionalLocale() ?? 'und'}>{formatRegionalNumber(selectedCount - names.length)}</bdi> <LocalizedText source="more" /></span>}
             </div>
           </section>
         )}
@@ -214,16 +214,23 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'ac
   return (
     <div className="tng-selection-stat">
       <span><LocalizedText source={label} /></span>
-      <strong data-tone={tone}>{value}</strong>
+      <strong data-tone={tone}><bdi dir="ltr" lang={getRegionalLocale() ?? 'und'}>{value}</bdi></strong>
     </div>
   )
 }
 
-function ValueRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+function ValueRow({ label, value, mono = false, raw = false }: { label: string; value: string; mono?: boolean; raw?: boolean }) {
   return (
     <div className="tng-selection-value-row">
       <span><LocalizedText source={label} /></span>
-      <strong className={mono ? 'tng-selection-mono' : undefined} title={value}>{value}</strong>
+      <strong
+        className={mono ? 'tng-selection-mono' : undefined}
+        title={raw ? value : undefined}
+        dir={raw ? (mono ? 'ltr' : 'auto') : undefined}
+        lang={raw ? 'und' : undefined}
+      >
+        {raw ? <bdi dir={mono ? 'ltr' : 'auto'} lang="und">{value}</bdi> : value}
+      </strong>
     </div>
   )
 }

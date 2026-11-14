@@ -123,15 +123,15 @@ export function CategoriesPanel() {
                     width: 7, height: 7, borderRadius: '50%', background: cat.save_path ? 'var(--success)' : 'var(--warning)',
                     flexShrink: 0,
                   }} />
-                  <span style={{ fontSize: 13, color: 'var(--text)', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cat.name}</span>
+                  <span dir="auto" lang="und" style={{ fontSize: 13, color: 'var(--text)', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}><bdi dir="auto" lang="und">{cat.name}</bdi></span>
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--faint)', fontFamily: 'monospace', marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {cat.save_path || <LocalizedText source="No save path" />}
+                  {cat.save_path ? <bdi dir="ltr" lang="und">{cat.save_path}</bdi> : <LocalizedText source="No save path" />}
                 </div>
               </div>
               <button
                 type="button"
-                aria-label={translateInterface('Edit category {name}', { name: cat.name })}
+                aria-label={translateInterface('Edit category {name}', { name: `\u2068${cat.name}\u2069` })}
                 {...interfaceTextProps('Edit category {name}')}
                 onClick={() => startEdit(cat)}
                 disabled={save.isPending || del.isPending}
@@ -139,7 +139,7 @@ export function CategoriesPanel() {
               ><LocalizedText source="Edit" /></button>
               <button
                 type="button"
-                aria-label={translateInterface('Delete category {name}', { name: cat.name })}
+                aria-label={translateInterface('Delete category {name}', { name: `\u2068${cat.name}\u2069` })}
                 {...interfaceTextProps('Delete category {name}')}
                 onClick={() => del.mutate(cat.name)}
                 disabled={save.isPending || del.isPending}

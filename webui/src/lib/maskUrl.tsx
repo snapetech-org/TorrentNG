@@ -61,9 +61,11 @@ export function TrackerUrl({ url, mono = true }: { url: string; mono?: boolean }
           fontFamily: mono ? 'monospace' : undefined,
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
         }}
+        dir={revealed ? 'ltr' : undefined}
+        lang={revealed ? 'und' : undefined}
         title={revealed ? url : t('Credential hidden — select Show to reveal')}
       >
-        {revealed ? url : maskAnnounceUrl(url)}
+        <bdi dir="ltr" lang="und">{revealed ? url : maskAnnounceUrl(url)}</bdi>
       </span>
       <button type="button" onClick={() => setRevealed(v => !v)} style={BTN} title={t(revealed ? 'Hide credential' : 'Reveal credential')} {...textProps(revealed ? 'Hide credential' : 'Reveal credential')}>
         {revealed ? <span {...textProps('Hide')}>{t('Hide')}</span> : <span {...textProps('Show')}>{t('Show')}</span>}

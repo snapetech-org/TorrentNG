@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "application": "TorrentNG",
+  "pullRequest": "https://github.com/snapetech-org/TorrentNG/pull/243",
+  "reviewedAt": "2026-11-02T00:35:18Z",
+  "priorReviewHead": "9677bcedccd88443b27834682737db3476aa4185",
+  "hashAlgorithm": "SHA-256 of the UTF-8 cell value",
+  "reviewer": "Codex machine semantic review; not qualified native-speaker signoff",
+  "qualifiedNativeSignoff": false,
+  "cells": [
+    {
+      "sourceId": "ui.2c366eda72badf17",
+      "locale": "fr",
+      "key": "Pending autosave · changes: {count} · live: {live} · restart: {restart}.",
+      "sourceSha256": "2c366eda72badf17dc316a8b1175e413d5c4885616a1862952fafebd540f0556",
+      "previousTarget": "Sauvegarde automatique en attente · modifications : {count} · live : {live} · redémarrage : {restart}.",
+      "previousTargetSha256": "c1a24f5294fae96b1fb4d32ce7eeffdaf84acb8a23625102a67923aee32f2454",
+      "target": "Sauvegarde automatique en attente · modifications : {count} · applicables sans redémarrage : {live} · redémarrage : {restart}.",
+      "targetSha256": "da689ced5f0deadedf76a007400e1bc2b165527f551ca62214c9616eb6f8c3b3",
+      "disposition": "correction_applied_pending_independent_review",
+      "confidence": "moderate",
+      "context": "webui/src/components/EnginePanel.tsx computes liveDirtyCount as dirty settings minus restart-required settings. The new label says these changes apply without restarting, rather than using the ambiguous borrowed term live.",
+      "placeholders": "{count}, {live}, and {restart} preserved"
+    },
+    {
+      "sourceId": "ui.e2f19f7c2f11f163",
+      "locale": "fr",
+      "key": "Pending autosave · changes: {count} · live: {live} · restart: {restart} · custom lines edited.",
+      "sourceSha256": "e2f19f7c2f11f16374013a15885b2d005ff5a04245f1e9d9816dd2ca929a64c5",
+      "previousTarget": "Sauvegarde automatique en attente · modifications : {count} · live : {live} · redémarrage : {restart} · lignes personnalisées modifiées.",
+      "previousTargetSha256": "1c600b56db53b7509cd533df0e5f6be152719edcad2ca2520b29c031a25b0418",
+      "target": "Sauvegarde automatique en attente · modifications : {count} · applicables sans redémarrage : {live} · redémarrage : {restart} · lignes personnalisées modifiées.",
+      "targetSha256": "a880cdf1dfb8104e1857b6742258cb6627b4e95209c55efeeb6ebe9a20c09da5",
+      "disposition": "correction_applied_pending_independent_review",
+      "confidence": "moderate",
+      "context": "webui/src/components/EnginePanel.tsx computes liveDirtyCount as dirty settings minus restart-required settings. The new label says these changes apply without restarting, rather than using the ambiguous borrowed term live.",
+      "placeholders": "{count}, {live}, and {restart} preserved"
+    },
+    {
+      "sourceId": "ui.1d87e1c4de97aaa0",
+      "locale": "vi",
+      "key": "Tracker",
+      "sourceSha256": "1d87e1c4de97aaa0a711fbec00cbc5289be757d97b742ba60e9ed57ca184f85b",
+      "previousTarget": "Trình theo dõi",
+      "previousTargetSha256": "4dc48135ff92d248d1e2f2865025e4d59b245825645e3be05fe08f6e8caab7e9",
+      "target": "tracker",
+      "targetSha256": "7ae4495c83dd7323b71c94739ddc7a45dfe3cb6a851c31fc1d040cdd47ced985",
+      "disposition": "correction_applied_pending_independent_review",
+      "confidence": "high",
+      "context": "TorrentPropertiesDialog.tsx uses this label for torrent.tracker_url; RatioGroupsPanel.tsx also uses Tracker as the tracker-match field label. The Vietnamese catalog already uses the borrowed technical term in `Các tracker` and other tracker labels.",
+      "protectedLiterals": "The product term `tracker` is retained; no placeholders are present."
+    }
+  ],
+  "catalogSha256": {
+    "webui/src/lib/locale-catalogs/fr.ts": "307c1e0d97fce911361cab2bc7ad9524803f16ff2066427a9121391f69a6d9af",
+    "webui/src/lib/locale-catalogs/vi.ts": "b8bca0eeffe703a56cdbe864bee67f78a40381bdb1b38d70a6ccbc86f17ea9c2"
+  },
+  "independentCrossReview": {
+    "status": "accepted",
+    "reviewedHead": "5dd6e073d67bff8f58d3d9859c3b6411d5cd8c2f",
+    "evidence": "docs/reviews/localization-pr243-populated-review-2026-11-01/terminology-crossreview-2026-11-02.json",
+    "sha256": "41b34b3aee0f8883bcab23f9929e6620e7ed19b71bb3c3e39f09877fae7012b6",
+    "cells": 3,
+    "accepted": 3,
+    "correctionNeeded": 0,
+    "held": 0,
+    "qualifiedNativeSignoff": false
+  },
+  "browserReviewAtCurrentHead": false,
+  "testsBuildsAndCi": "not run"
+}

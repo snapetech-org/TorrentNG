@@ -1,5 +1,5 @@
 import { getRegionalLocale } from '../lib/localeFormat'
-import { useInterfaceLanguage } from '../lib/interfaceLocale'
+import { selectedTorrentCountSource, useInterfaceLanguage } from '../lib/interfaceLocale'
 interface Props {
   selectedCount: number
   onAdd: () => void
@@ -105,7 +105,7 @@ export function TorrentToolbar({
         background: selectedCount > 0 ? 'var(--accent-soft)' : 'transparent',
         fontWeight: selectedCount > 0 ? 800 : 600,
       }}>
-        {busy ? localized('Working...') : selectedCount > 0 ? localized('{count} selected', { count: selectedCount.toLocaleString(getRegionalLocale()) }) : localized('No selection')}
+        {busy ? localized('Working...') : selectedCount > 0 ? localized(selectedTorrentCountSource(selectedCount), { count: selectedCount.toLocaleString(getRegionalLocale()) }) : localized('No selection')}
       </span>
       {selectedCount > 0 && (
         <button

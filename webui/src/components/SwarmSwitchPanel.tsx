@@ -44,7 +44,7 @@ function HashList({ items }: { items: { label: string; value: string }[] }) {
 
 export function SwarmSwitchPanel({ hash, showUnsupported = false, onRemoved }: { hash: string; showUnsupported?: boolean; onRemoved?: () => void }) {
   const qc = useQueryClient()
-  const { language } = useInterfaceLanguage()
+  const { language, t, textProps } = useInterfaceLanguage()
   const id = useId()
   const titleId = `${id}-title`
   const contentId = `${id}-content`
@@ -148,7 +148,7 @@ export function SwarmSwitchPanel({ hash, showUnsupported = false, onRemoved }: {
         {!linked && <>
           <label htmlFor={`${id}-candidate`} style={{ display: 'grid', gap: 5 }}><LocalizedText source="Public candidate" />
             <select id={`${id}-candidate`} value={variant} disabled={busy} style={{ ...button, minWidth: 0, width: '100%', boxSizing: 'border-box' }} aria-describedby={`${id}-candidate-help`} onChange={e => { setVariant(e.target.value as SwarmVariant); setComparison(undefined); setFileData(undefined); setFileName(undefined); setMessage(undefined); setNotice(undefined) }}>
-              {variants.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              {variants.map(([value, label]) => <option key={value} value={value} {...textProps(label)}>{t(label)}</option>)}
             </select>
           </label>
           <p id={`${id}-candidate-help`} style={{ margin: 0, color: 'var(--muted)' }}><LocalizedText source="Different packaging can mean a different swarm. A supplied torrent must prove identical content and file paths. V1 torrents also need matching piece sizes and hashes." /></p>
