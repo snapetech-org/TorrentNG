@@ -34,9 +34,6 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         self.assertIn("matrix.os == 'linux-arm64' && 'ubuntu-24.04-arm'", source)
         self.assertNotIn('"group":"ng-shared-main-jit"', source)
 
-    def test_codeql_workflow_is_disabled(self) -> None:
-        self.assertFalse((WORKFLOW_DIR / "codeql.yml").exists())
-
     def test_aur_publish_uses_public_hosted_ssh_without_private_proxy(self) -> None:
         source = (WORKFLOW_DIR / "release-aur.yml").read_text(encoding="utf-8")
         self.assertIn("runs-on: ubuntu-24.04", source)

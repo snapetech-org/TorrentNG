@@ -15,11 +15,9 @@ requirements remain scoped to their feature.
 
 ## Security scanning policy
 
-Per the owner directive dated 2026-10-30, CodeQL analysis is disabled for
-snapetech-org repositories. TorrentNG intentionally has no
-`.github/workflows/codeql.yml`, and the runner-policy test keeps it absent.
-Historical CodeQL results remain archival; they are not current release
-evidence. The owner directive dated 2026-11-12 allows GitHub-hosted runners
+CodeQL is allowed (owner directive, 2026-11-21); the 2026-10-30 disable is
+withdrawn. CodeQL results count as release evidence only for the exact
+candidate revision they analysed. The owner directive dated 2026-11-12 allows GitHub-hosted runners
 again: standard builds, tests, security scans, and release jobs use compatible
 GitHub-hosted labels by default. Keep OS and architecture requirements intact.
 Use private JIT only for checks that need task-specific private hardware,

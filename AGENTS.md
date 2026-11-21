@@ -17,8 +17,8 @@ The shared policy and inventory live in
 source routing, deployed broker policy, runner-group access, and live capacity
 to align; workflow YAML alone is insufficient.
 
-CodeQL remains disabled by explicit owner directive. Do not restore or reroute
-CodeQL unless the owner explicitly reverses that instruction.
+CodeQL is allowed (owner directive, 2026-11-21); the 2026-10-30 disable is
+withdrawn.
 
 ## Routine release soak policy — owner directive, 2026-11-14
 
